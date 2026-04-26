@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7
+    container_name: papergraph-redis
+    ports:
+      - "6379:6379"
+
+  neo4j:
+    image: neo4j:5
+    container_name: papergraph-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/password1234
+    volumes:
+      - neo4j_data:/data
+
+volumes:
+  neo4j_data:

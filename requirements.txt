@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+redis
+neo4j
+python-dotenv
+pydantic-settings
+httpx
+xmltodict
