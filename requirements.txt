@@ -6,3 +6,5 @@ python-dotenv
 pydantic-settings
 httpx
 xmltodict
+chromadb
+sentence-transformers
