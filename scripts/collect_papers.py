@@ -25,8 +25,7 @@ SAVE_FIELDS = [
     "Keyword", "Keyword2", "ISSN", "DOI", "Pubyear", "JournalName", "Author",
 ]
 
-MAX_TOTAL = 1000
-MIN_THRESHOLD = 300
+MAX_TOTAL = 1200
 ROW_COUNT = 100
 MAX_RETRIES = 3
 CURRENT_YEAR = datetime.now().year
@@ -150,34 +149,20 @@ async def main() -> None:
     all_papers: list[dict] = []
     year_range_used = 1
 
-    print(f"=== ScienceON 생명공학 논문 수집 시작 (목표: {MAX_TOTAL}건) ===")
-    print(f"    기간: {CURRENT_YEAR - 2}~{CURRENT_YEAR - 1} (1년치)\n")
+    year_range_used = 2
 
-    # ── 1년치 수집 ──────────────────────────────────────────
+    print(f"=== ScienceON 생명공학 논문 수집 시작 (목표: {MAX_TOTAL}건) ===")
+    print(f"    기간: {CURRENT_YEAR - 3}~{CURRENT_YEAR - 1} (2년치)\n")
+
+    # ── 2년치 직접 수집 ─────────────────────────────────────
     for keyword in KEYWORDS:
         if len(seen_cns) >= MAX_TOTAL:
             break
-        print(f"\n▶ [{keyword}] 1년치 수집 중 ({CURRENT_YEAR - 2}~{CURRENT_YEAR - 1})...")
-        papers = await _collect_keyword(client, keyword, seen_cns, years=1)
+        print(f"\n▶ [{keyword}] 2년치 수집 중 ({CURRENT_YEAR - 3}~{CURRENT_YEAR - 1})...")
+        papers = await _collect_keyword(client, keyword, seen_cns, years=2)
         all_papers.extend(papers)
 
-    print(f"\n── 1년치 수집 완료: {len(seen_cns)}건 ──")
-
-    # ── 300건 미만이면 2년치로 자동 확장 ──────────────────────
-    if len(seen_cns) < MAX_TOTAL:
-        year_range_used = 2
-        print(
-            f"→ {len(seen_cns)}건 < {MAX_TOTAL}건 "
-            f"→ 2년치({CURRENT_YEAR - 3}~{CURRENT_YEAR - 1})로 확장해 나머지 채움\n"
-        )
-        for keyword in KEYWORDS:
-            if len(seen_cns) >= MAX_TOTAL:
-                break
-            print(f"\n▶ [{keyword}] 2년치 추가 수집 중 ({CURRENT_YEAR - 3}~{CURRENT_YEAR - 1})...")
-            papers = await _collect_keyword(client, keyword, seen_cns, years=2)
-            all_papers.extend(papers)
-
-        print(f"\n── 2년치 수집 완료: {len(seen_cns)}건 ──")
+    print(f"\n── 2년치 수집 완료: {len(seen_cns)}건 ──")
 
     # ── 저장 ────────────────────────────────────────────────
     output = {

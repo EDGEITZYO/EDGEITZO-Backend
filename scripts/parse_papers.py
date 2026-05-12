@@ -133,6 +133,11 @@ def main() -> None:
 
     parsed_papers = [parse_paper(p) for p in raw_papers]
 
+    # Abstract 없는 논문 제거 후 최대 1,000건
+    before = len(parsed_papers)
+    parsed_papers = [p for p in parsed_papers if p.get("Abstract")][:1000]
+    print(f"Abstract 필터: {before}건 → {len(parsed_papers)}건 (제거: {before - len(parsed_papers)}건)")
+
     output = {
         "meta": {
             "parsed_at": datetime.now().isoformat(),
