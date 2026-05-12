@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import json
 import httpx
 
 from app.core.settings import settings
@@ -22,13 +25,24 @@ class ScienceOnClient:
         query: str,
         page: int = 1,
         size: int = 10,
+        search_field: str = "TI",
+        start_year: int | None = None,
+        end_year: int | None = None,
     ) -> str:
         params = self._build_common_params()
+        search_query: dict = {search_field: query}
+        if start_year is not None and end_year is not None:
+            search_query["PY"] = f"{start_year}~{end_year}"
+        elif start_year is not None:
+            search_query["PY"] = str(start_year)
+        elif end_year is not None:
+            search_query["PY"] = str(end_year)
+
         params.update(
             {
                 "action": "search",
                 "target": "ARTI",
-                "searchQuery": f'{{"TI":"{query}"}}',
+                "searchQuery": json.dumps(search_query, ensure_ascii=False),
                 "sortField": "pubyear",
                 "curPage": page,
                 "rowCount": size,
