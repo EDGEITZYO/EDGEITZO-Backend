@@ -1,3 +1,4 @@
+# Python 3.11 이상 필요
 fastapi
 uvicorn[standard]
 redis
@@ -8,3 +9,11 @@ httpx
 xmltodict
 chromadb
 sentence-transformers
+sqlalchemy[asyncio]
+asyncpg
+alembic
+celery
+fastapi-users[sqlalchemy]
+authlib
+pytest
+pytest-asyncio

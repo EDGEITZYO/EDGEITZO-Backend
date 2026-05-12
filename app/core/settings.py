@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     semantic_scholar_base_url: str = "https://api.semanticscholar.org/graph/v1"
     semantic_scholar_api_key: str = ""
 
+    database_url: str = "postgresql+asyncpg://user:password@localhost:5432/edgeitzo"
+
+    kakao_client_id: str = ""
+    kakao_client_secret: str = ""
+
+    jwt_secret_key: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
