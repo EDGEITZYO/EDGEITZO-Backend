@@ -55,7 +55,7 @@ logs/
 # =========================
 
 # Neo4j local data
-data/
+data/raw/*.json
 neo4j_data/
 
 # Redis dump
