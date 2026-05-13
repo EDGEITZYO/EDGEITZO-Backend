@@ -26,6 +26,21 @@ data/parsed/scienceon_parsed.json
 
 ---
 
+### 키워드 정규화
+
+`Keyword`에 섞여 있는 영어 키워드는 `Keyword2`로 이동하고, `Keyword`에는 한국어 키워드만 남긴다.
+기술 약어가 포함된 한국어 키워드(`3D 프린팅`, `DNA 메틸화`, `NaOH 흡수제` 등)는 의미 보존을 위해 `Keyword`에 유지한다.
+
+```bash
+python scripts/normalize_keywords.py
+```
+
+- 입력: `data/parsed/scienceon_parsed.json`
+- 출력: `data/parsed/scienceon_keywords_normalized.json`
+- 원본 추적용 필드인 `keyword_raw`, `keyword2_raw`는 변경하지 않는다.
+
+---
+
 
 ### 데이터 파일 구조 (`scienceon_parsed.json`)
 
