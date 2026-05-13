@@ -14,9 +14,9 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_PROJECT_ROOT / ".env")
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from app.integrations.scienceon.client import ScienceOnClient  # noqa: E402
-from app.integrations.scienceon.normalizer import _find_records  # noqa: E402
-from app.integrations.scienceon.parser import parse_scienceon_xml  # noqa: E402
+from app.integrations.scienceon.client import ScienceOnClient
+from app.integrations.scienceon.normalizer import _find_records
+from app.integrations.scienceon.parser import parse_scienceon_xml
 
 KEYWORDS = ["생명공학", "바이오", "유전자", "단백질", "세포공학", "줄기세포", "효소", "미생물"]
 
@@ -31,7 +31,7 @@ MAX_RETRIES = 3
 CURRENT_YEAR = datetime.now().year
 OUTPUT_PATH = _PROJECT_ROOT / "data" / "raw" / "scienceon_raw.json"
 
-
+# API 응답의 [{"@metaCode": "CN", "#text": "..."}] 구조를 {"CN": "..."} flat dict로 변환
 def _flatten_record(record: dict) -> dict:
     """item 리스트 구조 → {metaCode: text} flat dict 변환"""
     items = record.get("item", [])
@@ -43,12 +43,12 @@ def _flatten_record(record: dict) -> dict:
         if isinstance(item, dict) and item.get("@metaCode")
     }
 
-
+# flat dict에서 저장할 필드(SAVE_FIELDS)만 골라 추출
 def _extract_fields(record: dict) -> dict:
     flat = _flatten_record(record)
     return {field: flat.get(field) for field in SAVE_FIELDS}
 
-
+# 응답 JSON의 statusCode가 200 또는 없으면 정상으로 판단
 def _is_api_ok(parsed: dict) -> bool:
     try:
         meta = parsed.get("MetaData") or {}
@@ -57,7 +57,7 @@ def _is_api_ok(parsed: dict) -> bool:
     except Exception:
         return True
 
-
+# API 단일 페이지 호출, 실패 시 최대 3회 exponential backoff 재시도
 async def _fetch_page(
     client: ScienceOnClient,
     keyword: str,
@@ -84,7 +84,7 @@ async def _fetch_page(
             await asyncio.sleep(wait)
     return None
 
-
+# 키워드 1개로 페이지네이션하며 CN 기준 중복 제거해 논문 수집
 async def _collect_keyword(
     client: ScienceOnClient,
     keyword: str,
@@ -138,7 +138,7 @@ async def _collect_keyword(
 
 
 async def main() -> None:
-    from app.core.settings import settings  # noqa: E402 (.env 로드 후 import)
+    from app.core.settings import settings
 
     if not settings.scienceon_client_id or not settings.scienceon_token:
         print("[오류] SCIENCEON_CLIENT_ID 또는 SCIENCEON_TOKEN이 .env에 설정되지 않았습니다.")
@@ -183,6 +183,6 @@ async def main() -> None:
 
     print(f"\n=== 수집 완료: {len(all_papers)}건 → {OUTPUT_PATH} ===")
 
-
+# 8개 키워드 순회하며 1,200건 채워지면 중단, raw JSON으로 저장
 if __name__ == "__main__":
     asyncio.run(main())
