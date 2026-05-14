@@ -41,6 +41,24 @@ python scripts/normalize_keywords.py
 
 ---
 
+### Neo4j 노드·엣지 스키마 설계 및 적재
+
+정규화된 키워드 파일을 기준으로 논문, 키워드, 저자, 저널, 발행연도 그래프를 구성한다.
+
+```bash
+python scripts/load_neo4j_graph.py
+```
+
+- 입력: `data/parsed/scienceon_keywords_normalized.json`
+- 핵심 노드: `Paper`, `Keyword`, `Author`, `Journal`, `Year`
+- 핵심 엣지: `HAS_KEYWORD`, `RELATED_TO`, `AUTHORED`, `PUBLISHED_IN`, `PUBLISHED_IN_YEAR`
+- 재적재가 필요하면 `--reset` 옵션을 사용한다.
+- 실제 적재 전 생성될 노드·엣지 수만 확인하려면 `--dry-run` 옵션을 사용한다.
+
+세부 스키마는 `docs/neo4j-graph-schema.md`를 기준으로 한다.
+
+---
+
 
 ### 데이터 파일 구조 (`scienceon_parsed.json`)
 
