@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 
+from app.api.v1.auth import router as auth_router
 from app.api.v1.health import router as health_router
 from app.api.v1.search import router as search_router
 from app.api.v1.test import router as test_router
@@ -15,9 +16,10 @@ from app.api.v1.semanticscholar import router as semantic_scholar_router
 
 
 app = FastAPI(
-    title="PaperGraph Agent API",
+    title="Bio-me API",
     description="LLM + RAG 기반 국내 연구자/논문 탐색 백엔드",
     version="0.1.0",
+    swagger_ui_parameters={"persistAuthorization": True},
 )
 
 
@@ -29,6 +31,7 @@ def root():
     )
 
 
+app.include_router(auth_router, prefix="/api/v1", tags=["Auth"])
 app.include_router(health_router, prefix="/api/v1", tags=["Health"])
 app.include_router(search_router, prefix="/api/v1", tags=["Search"])
 app.include_router(test_router, prefix="/api/v1", tags=["Test"])

@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     redis_host: str = "localhost"
     redis_port: int = 6379
+    redis_password: str = ""
 
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
@@ -28,8 +29,22 @@ class Settings(BaseSettings):
 
     kakao_client_id: str = ""
     kakao_client_secret: str = ""
+    kakao_redirect_uri: str = ""
+
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = ""
 
     jwt_secret_key: str = ""
+    jwt_access_expire_minutes: int = 30
+    jwt_refresh_expire_days: int = 7
+
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+
+    frontend_url: str = "http://localhost:3000"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
