@@ -17,3 +17,8 @@ fastapi-users[sqlalchemy]
 authlib
 pytest
 pytest-asyncio
+PyJWT
+bcrypt
+python-multipart
+aiosmtplib
+email-validator

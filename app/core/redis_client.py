@@ -6,6 +6,7 @@ def get_redis_client():
     client = redis.Redis(
         host=settings.redis_host,
         port=settings.redis_port,
-        decode_responses=True
+        password=settings.redis_password or None,
+        decode_responses=True,
     )
     return client
