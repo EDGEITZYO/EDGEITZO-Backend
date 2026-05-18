@@ -73,7 +73,7 @@ chromadb/
 # =========================
 # AI / Model / Embedding
 # =========================
-models/
+/models/
 embeddings/
 *.npy
 *.pt
