@@ -18,14 +18,14 @@ OUTPUT_PATH = _PROJECT_ROOT / "data" / "parsed" / "scienceon_parsed.json"
 
 
 # ── 공통 정제 ──────────────────────────────────────────────
-
+# HTML 특수문자 디코딩 후 앞뒤 공백 제거
 def _clean(value: str | None) -> str | None:
     if value is None:
         return None
     cleaned = unescape(str(value)).strip()
     return cleaned or None
 
-
+# Abstract의 줄바꿈을 공백으로, 연속 공백을 단일 공백으로 정리
 def _clean_abstract(value: str | None) -> str | None:
     if value is None:
         return None
@@ -36,7 +36,7 @@ def _clean_abstract(value: str | None) -> str | None:
 
 
 # ── 필드별 정제 ────────────────────────────────────────────
-
+# ; 포함이면 세미콜론 split, 없으면 dot split으로 자동 분기해 리스트 반환
 def _parse_keyword(value: str | None) -> tuple[list[str], str | None]:
     """(parsed_list, raw_original) 반환. ; 포함이면 semicolon split, 아니면 dot split."""
     raw = value
@@ -46,21 +46,21 @@ def _parse_keyword(value: str | None) -> tuple[list[str], str | None]:
         return _split_semicolon_text(value), raw
     return _split_dot_text(value), raw
 
-
+# Keyword2는 구분자 판단 없이 항상 dot split
 def _parse_keyword2(value: str | None) -> tuple[list[str], str | None]:
     raw = value
     if not value:
         return [], None
     return _split_dot_text(value), raw
 
-
+# 세미콜론으로 split해 ISSN 리스트 반환
 def _parse_issn(value: str | None) -> list[str] | None:
     if not value:
         return None
     result = _split_semicolon_text(value)
     return result or None
 
-
+# http:// 또는 https://로 시작하는 값만 유효한 DOI로 처리
 def _parse_doi(value: str | None) -> str | None:
     if not value:
         return None
@@ -69,7 +69,7 @@ def _parse_doi(value: str | None) -> str | None:
         return stripped
     return None
 
-
+# 문자열 연도 값을 정수로 변환
 def _parse_pubyear(value: str | None) -> int | None:
     if not value:
         return None
@@ -80,7 +80,7 @@ def _parse_pubyear(value: str | None) -> int | None:
 
 
 # ── 논문 단건 정제 ─────────────────────────────────────────
-
+# 논문 1건의 모든 필드에 정제 함수 적용해 dict 반환
 def parse_paper(raw: dict) -> dict:
     kw_list, kw_raw = _parse_keyword(raw.get("Keyword"))
     kw2_list, kw2_raw = _parse_keyword2(raw.get("Keyword2"))
@@ -105,7 +105,7 @@ def parse_paper(raw: dict) -> dict:
 
 
 # ── 통계 출력 ──────────────────────────────────────────────
-
+# 필드별 null 건수와 비율 통계 출력
 def print_stats(papers: list[dict]) -> None:
     total = len(papers)
     check_fields = [
@@ -121,7 +121,7 @@ def print_stats(papers: list[dict]) -> None:
 
 
 # ── 메인 ───────────────────────────────────────────────────
-
+# raw JSON 로드 → 전체 정제 → Abstract null 제거 → 최대 1,000건 저장
 def main() -> None:
     if not INPUT_PATH.exists():
         print(f"[오류] 입력 파일 없음: {INPUT_PATH}")
