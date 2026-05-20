@@ -64,6 +64,10 @@ services:
     command: celery -A app.celery_app worker --loglevel=info
     env_file:
       - .env
+    environment:
+      # host.docker.internal = macOS 호스트 → 로컬 Homebrew Redis(비밀번호 있음)와 동일한 인스턴스 사용
+      CELERY_BROKER_URL: redis://:120809@host.docker.internal:6379/1
+      CELERY_RESULT_BACKEND: redis://:120809@host.docker.internal:6379/2
     depends_on:
       redis:
         condition: service_healthy
