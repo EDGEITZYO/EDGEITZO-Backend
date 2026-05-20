@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"
 
+    # 토큰 블랙리스트 전용 Redis DB
+    redis_blacklist_db: int = 3
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

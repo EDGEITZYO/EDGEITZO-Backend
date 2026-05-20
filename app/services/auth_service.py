@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -6,7 +7,15 @@ from redis import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.email import generate_code, send_verification_email
-from app.core.security import create_access_token, create_refresh_token, hash_password, verify_password
+from app.core.security import (
+    _decode_without_blacklist_check,
+    add_to_blacklist,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
 from app.core.settings import settings
 from app.models.user import User
 from app.repositories.user_repository import (
@@ -213,6 +222,53 @@ async def oauth_callback_service(
         create_refresh_token(str(user.id)),
         is_new_user,
     )
+
+
+async def refresh_tokens(refresh_token: str) -> dict[str, Any]:
+    payload = decode_token(refresh_token)
+    if not payload:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않은 refresh 토큰입니다")
+
+    if payload.get("type") != "refresh":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="refresh 토큰이 아닙니다")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않은 토큰 페이로드입니다")
+
+    # Rotation: 이전 refresh jti 블랙리스트 등록
+    old_jti = payload.get("jti")
+    exp = payload.get("exp")
+    if old_jti and exp:
+        remaining = exp - int(datetime.now(timezone.utc).timestamp())
+        add_to_blacklist(old_jti, remaining)
+
+    return {
+        "access_token": create_access_token(user_id),
+        "refresh_token": create_refresh_token(user_id),
+        "token_type": "bearer",
+    }
+
+
+async def logout(access_token: str, refresh_token: str | None = None) -> None:
+    now = int(datetime.now(timezone.utc).timestamp())
+
+    # access 블랙리스트 (블랙리스트 체크 없이 디코드 — 이미 무효화됐을 수 있으므로)
+    payload = _decode_without_blacklist_check(access_token)
+    if payload:
+        jti = payload.get("jti")
+        exp = payload.get("exp", 0)
+        if jti:
+            add_to_blacklist(jti, max(exp - now, 0))
+
+    # refresh 블랙리스트 (선택)
+    if refresh_token:
+        payload = _decode_without_blacklist_check(refresh_token)
+        if payload:
+            jti = payload.get("jti")
+            exp = payload.get("exp", 0)
+            if jti:
+                add_to_blacklist(jti, max(exp - now, 0))
 
 
 async def create_profile_service(

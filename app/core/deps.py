@@ -19,7 +19,8 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="인증이 필요합니다",
         )
-    user_id = decode_token(credentials.credentials)
+    payload = decode_token(credentials.credentials)
+    user_id = payload.get("sub") if payload else None
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
