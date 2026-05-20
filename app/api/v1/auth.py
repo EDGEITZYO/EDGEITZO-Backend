@@ -1,5 +1,8 @@
-from fastapi import APIRouter, Depends, Query
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from redis import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -7,14 +10,19 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.redis_client import get_redis_client
 from app.core.response import success_response
+from app.core.security import bearer_scheme, decode_token
 from app.core.settings import settings
 from app.models.user import User
 from app.schemas.auth import (
     EmailCheckRequest,
     LoginRequest,
+    LogoutRequest,
     ProfileCreateRequest,
+    RefreshTokenRequest,
+    RefreshTokenResponse,
     RegisterRequest,
     SendCodeRequest,
+    StartResponse,
     TokenResponse,
     VerifyCodeRequest,
 )
@@ -22,7 +30,9 @@ from app.services.auth_service import (
     create_profile_service,
     email_check_service,
     login_service,
+    logout,
     oauth_callback_service,
+    refresh_tokens,
     register_service,
     send_code_service,
     verify_code_service,
@@ -223,3 +233,74 @@ async def create_profile(
 ):
     result = await create_profile_service(db, current_user, body.model_dump())
     return success_response(data=result, message="프로필이 저장되었습니다. 서비스를 시작합니다")
+
+
+@router.post(
+    "/refresh",
+    response_model=RefreshTokenResponse,
+    summary="토큰 갱신 (Rotation)",
+    description=(
+        "Refresh 토큰으로 새 Access + Refresh 토큰을 발급합니다.\n\n"
+        "- 이전 Refresh 토큰은 즉시 블랙리스트에 등록됩니다 (Rotation)\n"
+        "- 탈취된 Refresh 토큰으로 재사용 시 401 반환"
+    ),
+    responses={
+        200: {"description": "새 토큰 발급 성공"},
+        401: {"description": "유효하지 않거나 이미 사용된 refresh 토큰"},
+    },
+)
+async def refresh(body: RefreshTokenRequest):
+    result = await refresh_tokens(body.refresh_token)
+    return RefreshTokenResponse(**result)
+
+
+@router.post(
+    "/logout",
+    summary="로그아웃",
+    description=(
+        "Access 토큰과 선택적으로 Refresh 토큰을 블랙리스트에 등록합니다.\n\n"
+        "**JWT Bearer 토큰 인증 필수**\n\n"
+        "- Access 토큰: 남은 만료 시간만큼 블랙리스트 TTL 설정\n"
+        "- Refresh 토큰: body에 포함 시 함께 무효화"
+    ),
+    responses={
+        200: {"description": "로그아웃 성공"},
+        401: {"description": "JWT 토큰 없음 또는 만료"},
+    },
+)
+async def logout_endpoint(
+    body: LogoutRequest,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    current_user: User = Depends(get_current_user),
+):
+    if not credentials:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="인증이 필요합니다")
+    await logout(credentials.credentials, body.refresh_token)
+    return success_response(message="로그아웃되었습니다")
+
+
+@router.get(
+    "/start",
+    response_model=StartResponse,
+    summary="시작하기 — 인증 상태 분기",
+    description=(
+        "Authorization 헤더의 Access 토큰 유효성을 확인하여 이동할 경로를 안내합니다.\n\n"
+        "- 토큰 없음 또는 무효: `{authenticated: false, next_route: '/login'}`\n"
+        "- 유효한 토큰: `{authenticated: true, next_route: '/main', user_id: '...'}`"
+    ),
+)
+async def start(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+):
+    if not credentials:
+        return StartResponse(authenticated=False, next_route="/login")
+
+    payload = decode_token(credentials.credentials)
+    if not payload or payload.get("type") != "access":
+        return StartResponse(authenticated=False, next_route="/login")
+
+    return StartResponse(
+        authenticated=True,
+        next_route="/main",
+        user_id=payload.get("sub"),
+    )
