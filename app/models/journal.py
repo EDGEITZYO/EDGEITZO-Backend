@@ -17,6 +17,7 @@ class Journal(Base):
     sjr_score = Column(Float, nullable=True)
     sjr_best_quartile = Column(String(2), nullable=True)
     h_index = Column(Integer, nullable=True)
+    sjr_year = Column(Integer, nullable=True, index=True)
     sci_indexed = Column(Boolean, default=False, nullable=False)
     kci_indexed = Column(Boolean, default=False, nullable=False)
     if_value = Column(Float, nullable=True)

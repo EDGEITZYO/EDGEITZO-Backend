@@ -43,12 +43,12 @@ from app.core.database import AsyncSessionLocal  # noqa: E402
 from app.models.journal import Journal  # noqa: E402
 
 # DB insert 시 제외할 컬럼 (DataFrame 연산용이지 모델 컬럼 아님)
-_DF_ONLY_COLS = {"sjr_year", "issn_raw", "categories_raw"}
+_DF_ONLY_COLS = {"issn_raw", "categories_raw"}
 
 # upsert 시 갱신할 컬럼 (id, sjr_sourceid 제외)
 _UPSERT_COLS = [
     "title", "type", "issn", "publisher",
-    "sjr_score", "sjr_best_quartile", "h_index",
+    "sjr_score", "sjr_best_quartile", "h_index", "sjr_year",
     "sci_indexed", "kci_indexed", "if_value",
     "categories", "country", "coverage", "updated_at",
 ]
