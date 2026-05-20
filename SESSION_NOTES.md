@@ -97,6 +97,60 @@ await session.execute(select(Journal).where(Journal.sci_indexed == True))
 
 ---
 
+## 세션 3/3 — Celery 인스턴스 + health 태스크
+
+### 생성된 파일
+| 파일 | 역할 |
+|------|------|
+| `app/celery_app.py` | Celery 인스턴스 (broker=Redis DB1, backend=Redis DB2) |
+| `app/tasks/__init__.py` | 태스크 패키지 초기화 |
+| `app/tasks/health.py` | ping / echo / add 검증용 태스크 3종 |
+| `scripts/test_celery.py` | 로컬에서 태스크 동작 검증 스크립트 |
+
+### 새 태스크 추가 방법
+1. `app/tasks/` 아래 새 모듈 생성 (예: `app/tasks/embedding.py`)
+2. `app/celery_app.py`의 `include` 리스트에 등록:
+   ```python
+   include=[
+       "app.tasks.health",
+       "app.tasks.embedding",  # 추가
+   ]
+   ```
+3. Docker 워커 재빌드: `docker compose up -d --build celery_worker`
+
+### Redis DB 번호 컨벤션
+| DB | 용도 |
+|----|------|
+| 0 | auth 캐시 (예약) |
+| 1 | Celery broker |
+| 2 | Celery result backend |
+| 3+ | 향후 다른 용도 |
+
+### 현재 등록된 태스크
+| task name | 설명 |
+|-----------|------|
+| `health.ping` | 단순 pong 반환 |
+| `health.echo` | 입력 메시지 그대로 반환 |
+| `health.add` | x + y 계산, task_id 포함 반환 |
+
+### 트러블슈팅 기록 — Redis 이중화 문제
+| 문제 | 원인 | 해결 |
+|------|------|------|
+| 태스크 timeout | 로컬 Homebrew Redis(localhost:6379, 비밀번호 있음)와 Docker Redis(redis:6379, 비밀번호 없음)가 공존 → 테스트 스크립트와 워커가 서로 다른 Redis를 바라봄 | docker-compose celery_worker에 `CELERY_BROKER_URL: redis://:120809@host.docker.internal:6379/1` 설정 (워커가 호스트 Redis 사용) |
+| AuthenticationError | 로컬 Redis에 비밀번호 필요 | `.env`에 `CELERY_BROKER_URL=redis://:120809@localhost:6379/1` 추가 |
+
+### 동작 검증 명령
+```bash
+# 워커 로그 확인
+docker logs papergraph-celery-worker --tail=20
+
+# 태스크 테스트
+DOCKER_HOST=unix:///Users/yuri/.docker/run/docker.sock \
+  .venv1/bin/python scripts/test_celery.py
+```
+
+---
+
 ## 공통 주의사항
 
 - **venv**: `.venv1` (Python 3.11) 사용
