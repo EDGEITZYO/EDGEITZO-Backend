@@ -63,6 +63,49 @@ class GraphRepository:
         }
 
     @staticmethod
+    def _list_property(value: Any) -> list[str]:
+        if value is None:
+            return []
+        values = value if isinstance(value, list) else [value]
+        return [str(item) for item in values if item]
+
+    @staticmethod
+    def _paper_detail_to_dict(
+        paper: Any,
+        *,
+        journal: Any | None = None,
+        authors: list[str] | None = None,
+        keywords: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        paper_data = dict(paper)
+        journal_data = dict(journal) if journal is not None else {}
+
+        paper_issn = GraphRepository._list_property(paper_data.get("issn"))
+        journal_issn = GraphRepository._list_property(journal_data.get("issn"))
+        journal_name = journal_data.get("name") or paper_data.get("journal_name")
+
+        return {
+            "paper_cn": paper_data.get("cn"),
+            "db_code": paper_data.get("db_code"),
+            "title": paper_data.get("title"),
+            "title_en": paper_data.get("title_en"),
+            "abstract": paper_data.get("abstract"),
+            "abstract_en": paper_data.get("abstract_en"),
+            "doi": paper_data.get("doi"),
+            "pubyear": paper_data.get("pubyear"),
+            "journal_name": journal_name,
+            "issn": paper_issn,
+            "journal": {
+                "name": journal_name,
+                "issn": journal_issn or paper_issn,
+            }
+            if journal_name
+            else None,
+            "authors": [name for name in authors or [] if name],
+            "keywords": keywords or [],
+        }
+
+    @staticmethod
     def _paper_graph_node(paper: Any, *, is_center: bool = False) -> dict[str, Any]:
         data = dict(paper)
         cn = data.get("cn")
@@ -403,3 +446,53 @@ class GraphRepository:
             "nodes": list(unique_nodes.values()),
             "edges": edges,
         }
+
+    def find_paper_detail(self, paper_cn: str) -> Optional[dict[str, Any]]:
+        paper_query = """
+        MATCH (p:Paper {cn: $paper_cn})
+        OPTIONAL MATCH (p)-[:PUBLISHED_IN]->(j:Journal)
+        RETURN p AS paper, j AS journal
+        LIMIT 1
+        """
+        author_query = """
+        MATCH (a:Author)-[r:AUTHORED]->(p:Paper {cn: $paper_cn})
+        RETURN a.name AS name
+        ORDER BY r.order ASC, a.name ASC
+        """
+        keyword_query = """
+        MATCH (p:Paper {cn: $paper_cn})-[r:HAS_KEYWORD]->(k:Keyword)
+        RETURN k.key AS key,
+               k.name AS name,
+               k.normalized_name AS normalized_name,
+               k.lang AS lang,
+               k.source_field AS source_field,
+               r.source_field AS relationship_source_field
+        ORDER BY k.lang ASC, k.name ASC
+        """
+
+        with self.driver.session() as session:
+            paper_record = session.run(paper_query, paper_cn=paper_cn).single()
+            if paper_record is None:
+                return None
+
+            author_records = list(session.run(author_query, paper_cn=paper_cn))
+            keyword_records = list(session.run(keyword_query, paper_cn=paper_cn))
+
+        keywords = [
+            {
+                "key": record["key"],
+                "name": record["name"],
+                "normalized_name": record["normalized_name"],
+                "lang": record["lang"],
+                "source_field": record["source_field"] or record["relationship_source_field"],
+            }
+            for record in keyword_records
+            if record["name"]
+        ]
+
+        return self._paper_detail_to_dict(
+            paper_record["paper"],
+            journal=paper_record["journal"],
+            authors=[record["name"] for record in author_records],
+            keywords=keywords,
+        )
