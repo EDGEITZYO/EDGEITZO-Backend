@@ -79,6 +79,7 @@ data/parsed/scienceon_keywords_normalized.json
 ```text
 (:Journal {
   name,
+  issn,       // list[str] | null — SJR journals 테이블 매칭 키
   loaded_at
 })
 ```

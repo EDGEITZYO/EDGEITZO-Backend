@@ -122,7 +122,7 @@ class GraphRepository:
             "label": "Journal",
             "name": name,
             "is_center": False,
-            "properties": {"name": name},
+            "properties": {"name": name, "issn": data.get("issn")},
         }
 
     @staticmethod
