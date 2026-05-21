@@ -19,8 +19,6 @@ _COST_KEY_DAILY_PREFIX = "llm:cost:daily"
 _PRICING: dict[str, dict[str, float]] = {
     "claude-sonnet-4-5": {"input": 3.0, "output": 15.0},
     "claude-haiku-4-5": {"input": 1.0, "output": 5.0},
-    "gpt-4o": {"input": 2.5, "output": 10.0},
-    "gpt-4o-mini": {"input": 0.15, "output": 0.6},
 }
 
 _BUDGET_MICRO_USD = int(settings.llm_budget_total_usd * 1_000_000)
@@ -65,18 +63,6 @@ async def _call_claude(
     return resp.content[0].text, resp.usage.input_tokens, resp.usage.output_tokens
 
 
-async def _call_openai(
-    messages: list[dict], model: str, temperature: float, max_tokens: int
-) -> tuple[str, int, int]:
-    from openai import AsyncOpenAI
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
-    resp = await client.chat.completions.create(
-        model=model, messages=messages, temperature=temperature, max_tokens=max_tokens
-    )
-    usage = resp.usage
-    return resp.choices[0].message.content, usage.prompt_tokens, usage.completion_tokens
-
-
 async def chat(
     messages: list[dict],
     model: str,
@@ -102,10 +88,7 @@ async def chat(
             return LLMResponse(cached=True, **json.loads(hit))
 
     # 3. API 호출
-    if model.startswith("claude"):
-        text, input_tokens, output_tokens = await _call_claude(messages, model, temperature, max_tokens)
-    else:
-        text, input_tokens, output_tokens = await _call_openai(messages, model, temperature, max_tokens)
+    text, input_tokens, output_tokens = await _call_claude(messages, model, temperature, max_tokens)
 
     # 4. 비용 계산 + 누적 (실패해도 호출 결과는 반환)
     cost_micro = _calc_cost_micro_usd(model, input_tokens, output_tokens)

@@ -59,7 +59,6 @@ class Settings(BaseSettings):
 
     # LLM
     anthropic_api_key: str = ""
-    openai_api_key: str = ""
     llm_default_model: str = "claude-haiku-4-5"
     llm_budget_total_usd: float = 30.0
 
