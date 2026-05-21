@@ -26,6 +26,8 @@ class SemanticScholarClient:
                     "abstract",
                     "year",
                     "citationCount",
+                    "venue",
+                    "journal",
                     "authors",
                 ]
             ),

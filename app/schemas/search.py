@@ -29,8 +29,16 @@ class PaperAuthor(BaseModel):
 class CredibilityInfo(BaseModel):
     badge: Literal["high", "medium", "low", "unknown"] = "unknown"
     citation_count: Optional[int] = None
+    citation_badge: Optional[str] = None
     impact_factor: Optional[float] = None
+    impact_factor_badge: Optional[str] = None
     kci_registered: Optional[bool] = None
+    kci_badge: Optional[str] = None
+    sci_indexed: Optional[bool] = None
+    sci_badge: Optional[str] = None
+    sjr_quartile: Optional[str] = None
+    sjr_score: Optional[float] = None
+    h_index: Optional[int] = None
     summary: Optional[str] = None
 
 
@@ -42,6 +50,7 @@ class PaperSearchItem(BaseModel):
     abstract: Optional[str] = None
     keywords: list[str] = Field(default_factory=list)
     journal_name: Optional[str] = None
+    issn: Optional[str] = None
     source: str
     credibility: CredibilityInfo
     score: float
