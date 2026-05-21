@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     llm_default_model: str = "claude-haiku-4-5"
     llm_budget_total_usd: float = 30.0
 
+    # CrossRef polite mode
+    crossref_contact_email: str = "yuri12120771@gmail.com"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
