@@ -160,7 +160,7 @@ def build_graph_payload(data: dict[str, Any], *, limit: int | None = None) -> Gr
     paper_keyword_rows: list[dict[str, Any]] = []
     author_rows: list[dict[str, Any]] = []
     paper_author_rows: list[dict[str, Any]] = []
-    journal_rows: list[dict[str, Any]] = []
+    journal_issn_map: dict[str, set[str]] = {}  # journal_name → 수집된 ISSN 집합
     paper_journal_rows: list[dict[str, Any]] = []
     year_rows: list[dict[str, Any]] = []
     paper_year_rows: list[dict[str, Any]] = []
@@ -177,7 +177,8 @@ def build_graph_payload(data: dict[str, Any], *, limit: int | None = None) -> Gr
             skipped_papers += 1
             continue
 
-        issn = _string_list(paper.get("ISSN")) or None
+        issn_list = _string_list(paper.get("ISSN"))
+        issn = issn_list or None
         pubyear = _to_int(paper.get("Pubyear"))
         journal_name = _clean_text(paper.get("JournalName"))
 
@@ -240,7 +241,8 @@ def build_graph_payload(data: dict[str, Any], *, limit: int | None = None) -> Gr
             )
 
         if journal_name:
-            journal_rows.append({"name": journal_name, "loaded_at": loaded_at})
+            # Paper.issn을 Journal에 부여 (SJR 매칭 키)
+            journal_issn_map.setdefault(journal_name, set()).update(issn_list)
             paper_journal_rows.append(
                 {"paper_cn": cn, "journal_name": journal_name, "loaded_at": loaded_at}
             )
@@ -260,13 +262,22 @@ def build_graph_payload(data: dict[str, Any], *, limit: int | None = None) -> Gr
         for (from_key, to_key, lang_pair), paper_count in related_counter.items()
     ]
 
+    journal_rows = [
+        {
+            "name": name,
+            "issn": sorted(issns) if issns else None,
+            "loaded_at": loaded_at,
+        }
+        for name, issns in journal_issn_map.items()
+    ]
+
     return GraphPayload(
         papers=paper_rows,
         keywords=_merge_unique(keyword_rows, "key"),
         paper_keywords=paper_keyword_rows,
         authors=_merge_unique(author_rows, "name"),
         paper_authors=paper_author_rows,
-        journals=_merge_unique(journal_rows, "name"),
+        journals=journal_rows,
         paper_journals=paper_journal_rows,
         years=_merge_unique(year_rows, "value"),
         paper_years=paper_year_rows,
@@ -366,7 +377,8 @@ def load_payload(session: Any, payload: GraphPayload, *, batch_size: int) -> Non
     journal_query = """
     UNWIND $rows AS row
     MERGE (j:Journal {name: row.name})
-    SET j.loaded_at = row.loaded_at
+    SET j.issn = row.issn,
+        j.loaded_at = row.loaded_at
     """
 
     paper_journal_query = """
