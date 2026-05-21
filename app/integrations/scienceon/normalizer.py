@@ -1,16 +1,5 @@
-from app.schemas.search import (
-    CredibilityInfo,
-    PaperAuthor,
-    PaperSearchItem,
-)
-
-
-def _safe_list(value):
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return value
-    return [value]
+from app.schemas.search import PaperAuthor, PaperSearchItem
+from app.services.credibility_service import calculate_credibility
 
 
 def _split_semicolon_text(value: str | None) -> list[str]:
@@ -25,10 +14,24 @@ def _split_dot_text(value: str | None) -> list[str]:
     return [item.strip() for item in str(value).split(".") if item.strip()]
 
 
+def _first_value(record: dict, keys: list[str]):
+    for key in keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _parse_int(value) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(str(value).replace(",", "").strip())
+    except ValueError:
+        return None
+
+
 def _find_records(node):
-    """
-    ScienceON XML 파싱 결과에서 record 리스트를 최대한 방어적으로 탐색
-    """
     if isinstance(node, list):
         return node
 
@@ -61,9 +64,8 @@ def _find_records(node):
             nested = _find_records(value)
             if nested:
                 return nested
-        elif isinstance(value, list) and value:
-            if isinstance(value[0], dict):
-                return value
+        elif isinstance(value, list) and value and isinstance(value[0], dict):
+            return value
 
     return []
 
@@ -83,12 +85,7 @@ def normalize_scienceon_search_response(parsed: dict) -> list[PaperSearchItem]:
         authors = []
         for idx, author_name in enumerate(authors_raw):
             affiliation = affiliations_raw[idx] if idx < len(affiliations_raw) else None
-            authors.append(
-                PaperAuthor(
-                    name=author_name,
-                    affiliation=affiliation,
-                )
-            )
+            authors.append(PaperAuthor(name=author_name, affiliation=affiliation))
 
         pubyear = record.get("Pubyear")
         try:
@@ -96,24 +93,32 @@ def normalize_scienceon_search_response(parsed: dict) -> list[PaperSearchItem]:
         except ValueError:
             year = None
 
-        fulltext_flag = str(record.get("FulltextFlag", "0"))
-        _ = fulltext_flag == "2"  # 필요 시 추후 필드 확장
-
+        journal_name = record.get("JournalName")
+        citation_count = _parse_int(
+            _first_value(
+                record,
+                [
+                    "CitationCount",
+                    "citationCount",
+                    "CitedCount",
+                    "CitedByCount",
+                    "CitedCnt",
+                ],
+            )
+        )
         item = PaperSearchItem(
             paper_id=record.get("CN") or record.get("DOI") or "unknown",
-            title=record.get("Title") or record.get("Title2") or "제목 없음",
+            title=record.get("Title") or record.get("Title2") or "Untitled",
             authors=authors,
             year=year,
             abstract=record.get("Abstract") or record.get("Abstract2"),
             keywords=keywords_raw,
-            journal_name=record.get("JournalName"),
+            journal_name=journal_name,
+            issn=record.get("ISSN"),
             source="scienceon",
-            credibility=CredibilityInfo(
-                badge="unknown",
-                citation_count=None,
-                impact_factor=None,
-                kci_registered=None,
-                summary="ScienceON 원본 검색 결과",
+            credibility=calculate_credibility(
+                citation_count=citation_count,
+                journal_name=journal_name,
             ),
             score=0.0,
         )

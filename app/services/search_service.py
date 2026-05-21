@@ -1,3 +1,5 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.settings import settings
 from app.integrations.semanticscholar.client import SemanticScholarClient
 from app.integrations.semanticscholar.normalizer import (
@@ -11,6 +13,7 @@ from app.schemas.search import (
     SearchPapersRequest,
     SearchPapersResponse,
 )
+from app.services.credibility_service import enrich_items_with_credibility
 
 
 def _apply_basic_scoring(items: list[PaperSearchItem]) -> list[PaperSearchItem]:
@@ -23,11 +26,10 @@ def _apply_basic_scoring(items: list[PaperSearchItem]) -> list[PaperSearchItem]:
             elif item.year >= 2021:
                 score += 0.1
 
-        if item.credibility.citation_count:
-            if item.credibility.citation_count >= 50:
-                score += 0.2
-            elif item.credibility.citation_count >= 10:
-                score += 0.1
+        if item.credibility.badge == "high":
+            score += 0.2
+        elif item.credibility.badge == "medium":
+            score += 0.1
 
         score += min(len(item.keywords) * 0.03, 0.15)
         item.score = round(score, 2)
@@ -67,7 +69,10 @@ async def _search_scienceon_if_available(query: str, page: int, size: int) -> li
         return []
 
 
-async def search_papers_service(request: SearchPapersRequest) -> SearchPapersResponse:
+async def search_papers_service(
+    request: SearchPapersRequest,
+    db: AsyncSession | None = None,
+) -> SearchPapersResponse:
     items: list[PaperSearchItem] = []
 
     semantic_items = await _search_semantic_scholar(
@@ -82,6 +87,12 @@ async def search_papers_service(request: SearchPapersRequest) -> SearchPapersRes
         size=request.size,
     )
     items.extend(scienceon_items)
+
+    if db is not None:
+        try:
+            items = await enrich_items_with_credibility(items, db)
+        except Exception:
+            pass
 
     items = _apply_basic_scoring(items)
     items = _sort_items(items)

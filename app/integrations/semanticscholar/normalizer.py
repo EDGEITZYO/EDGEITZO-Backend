@@ -1,8 +1,19 @@
-from app.schemas.search import (
-    CredibilityInfo,
-    PaperAuthor,
-    PaperSearchItem,
-)
+from app.schemas.search import PaperAuthor, PaperSearchItem
+from app.services.credibility_service import calculate_credibility
+
+
+def _extract_journal_name(record: dict) -> str | None:
+    journal = record.get("journal")
+    if isinstance(journal, dict):
+        journal_name = journal.get("name")
+        if journal_name:
+            return journal_name
+
+    venue = record.get("venue")
+    if isinstance(venue, str) and venue.strip():
+        return venue.strip()
+
+    return None
 
 
 def normalize_semantic_scholar_search_response(payload: dict) -> list[PaperSearchItem]:
@@ -10,41 +21,29 @@ def normalize_semantic_scholar_search_response(payload: dict) -> list[PaperSearc
     items: list[PaperSearchItem] = []
 
     for record in data:
-        authors = []
-        for author in record.get("authors", []):
-            authors.append(
-                PaperAuthor(
-                    name=author.get("name", "Unknown"),
-                    affiliation=None,
-                )
+        authors = [
+            PaperAuthor(
+                name=author.get("name", "Unknown"),
+                affiliation=None,
             )
+            for author in record.get("authors", [])
+        ]
 
         citation_count = record.get("citationCount")
-
-        badge = "unknown"
-        if citation_count is not None:
-            if citation_count >= 50:
-                badge = "high"
-            elif citation_count >= 10:
-                badge = "medium"
-            else:
-                badge = "low"
-
+        journal_name = _extract_journal_name(record)
         item = PaperSearchItem(
             paper_id=record.get("paperId", "unknown"),
-            title=record.get("title", "제목 없음"),
+            title=record.get("title", "Untitled"),
             authors=authors,
             year=record.get("year"),
             abstract=record.get("abstract"),
             keywords=[],
-            journal_name=None,
+            journal_name=journal_name,
+            issn=None,
             source="semantic_scholar",
-            credibility=CredibilityInfo(
-                badge=badge,
+            credibility=calculate_credibility(
                 citation_count=citation_count,
-                impact_factor=None,
-                kci_registered=False,
-                summary="Semantic Scholar 검색 결과",
+                journal_name=journal_name,
             ),
             score=0.0,
         )

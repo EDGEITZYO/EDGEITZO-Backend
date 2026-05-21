@@ -1,5 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import get_db
 from app.core.response import success_response
 from app.schemas.common import ApiErrorResponse, ApiResponse
 from app.schemas.search import SearchPapersRequest, SearchPapersResponse
@@ -18,8 +20,11 @@ router = APIRouter()
     summary="논문 검색",
     description="자연어 검색어와 필터 조건을 받아 논문 검색 결과를 반환합니다.",
 )
-async def search_papers(request: SearchPapersRequest):
-    result = await search_papers_service(request)
+async def search_papers(
+    request: SearchPapersRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await search_papers_service(request, db)
 
     return success_response(
         data=result,
