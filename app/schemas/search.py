@@ -54,6 +54,18 @@ class PaperSearchItem(BaseModel):
     source: str
     credibility: CredibilityInfo
     score: float
+    detail_available: bool = Field(
+        default=False,
+        description="Whether this search item can open the local paper detail API",
+    )
+    detail_paper_cn: Optional[str] = Field(
+        default=None,
+        description="Neo4j Paper.cn value for /api/v1/papers/{paper_cn}",
+    )
+    detail_url: Optional[str] = Field(
+        default=None,
+        description="Backend detail endpoint path when detail_available is true",
+    )
 
 
 class SearchPapersResponse(BaseModel):

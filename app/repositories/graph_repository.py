@@ -496,3 +496,19 @@ class GraphRepository:
             authors=[record["name"] for record in author_records],
             keywords=keywords,
         )
+
+    def find_existing_paper_cns(self, paper_cns: list[str]) -> set[str]:
+        candidates = list(dict.fromkeys(cn for cn in paper_cns if cn))
+        if not candidates:
+            return set()
+
+        query = """
+        MATCH (p:Paper)
+        WHERE p.cn IN $paper_cns
+        RETURN p.cn AS cn
+        """
+
+        with self.driver.session() as session:
+            records = list(session.run(query, paper_cns=candidates))
+
+        return {record["cn"] for record in records if record["cn"]}
