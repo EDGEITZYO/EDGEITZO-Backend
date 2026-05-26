@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     # 토큰 블랙리스트 전용 Redis DB
     redis_blacklist_db: int = 3
 
+    # KCI
+    kci_api_key: str = ""
+    kci_base_url: str = "https://open.kci.go.kr/po/openapi/openApiSearch.kci"
+
     # LLM
     anthropic_api_key: str = ""
     llm_default_model: str = "claude-haiku-4-5"

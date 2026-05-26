@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 
@@ -33,6 +33,10 @@ class Paper(Base):
     )
     db_code = Column(String(20), nullable=True)
     source = Column(String(30), nullable=True)
+    degree = Column(String(30), nullable=True)
+    affiliation = Column(String(500), nullable=True)
+    publisher = Column(String(500), nullable=True)
+    fulltext_flag = Column(Boolean, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
