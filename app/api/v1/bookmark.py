@@ -1,0 +1,126 @@
+from typing import Literal, Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.core.deps import get_current_user
+from app.core.response import success_response
+from app.models.user import User
+from app.schemas.bookmark import (
+    BookmarkCheckResponse,
+    BookmarkCreate,
+    BookmarkListResponse,
+    BookmarkResponse,
+)
+from app.schemas.common import ApiErrorResponse, ApiResponse
+from app.services.bookmark_service import (
+    add_bookmark,
+    check_bookmark,
+    get_bookmarks,
+    remove_bookmark,
+)
+
+router = APIRouter(prefix="/bookmarks", tags=["Bookmark"])
+
+
+@router.get(
+    "",
+    response_model=ApiResponse[BookmarkListResponse],
+    responses={401: {"model": ApiErrorResponse}},
+    summary="북마크 목록 조회",
+    description=(
+        "사용자의 북마크 목록을 반환합니다.\n\n"
+        "**정렬 (`sort`)**\n"
+        "- `bookmark_latest`: 최신 북마크 순 (기본)\n"
+        "- `bookmark_oldest`: 오래된 북마크 순\n"
+        "- `pubyear_latest`: 출판연도 최신 순\n"
+        "- `pubyear_oldest`: 출판연도 오래된 순\n\n"
+        "**논문 유형 필터 (`paper_type_filter`)**\n"
+        "- `all`: 전체 (기본, excluded_non_stem 포함)\n"
+        "- `journal`: 학술지 논문\n"
+        "- `thesis`: 학위논문 (박사+석사 통합)\n"
+        "- `conference`: 학술대회 (현재 데이터 없음)\n\n"
+        "**검색 (`search_query`)**: 제목·저자·키워드 부분일치, 완전/접두/부분 순 우선"
+    ),
+)
+async def list_bookmarks(
+    folder_id: Optional[UUID] = Query(default=None, description="폴더 필터 (미지정 시 전체)"),
+    sort: Literal[
+        "bookmark_latest", "bookmark_oldest", "pubyear_latest", "pubyear_oldest"
+    ] = Query(default="bookmark_latest"),
+    paper_type_filter: Literal["all", "journal", "thesis", "conference"] = Query(
+        default="all"
+    ),
+    search_query: Optional[str] = Query(default=None, description="제목/저자/키워드 검색"),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    data = await get_bookmarks(
+        db,
+        current_user.id,
+        folder_id=folder_id,
+        page=page,
+        size=size,
+        sort=sort,
+        paper_type_filter=paper_type_filter,
+        search_query=search_query or None,
+    )
+    return success_response(data=data, message="ok")
+
+
+@router.post(
+    "",
+    response_model=ApiResponse[BookmarkResponse],
+    responses={401: {"model": ApiErrorResponse}, 422: {"model": ApiErrorResponse}},
+    summary="북마크 추가",
+    description="논문을 북마크에 추가합니다. 이미 북마크된 경우 200을 반환합니다 (idempotent).",
+)
+async def create_bookmark(
+    body: BookmarkCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    bm = await add_bookmark(db, current_user.id, body.paper_id, body.folder_id)
+    return success_response(
+        data=BookmarkResponse.model_validate(bm),
+        message="북마크에 추가되었습니다",
+    )
+
+
+@router.delete(
+    "/{paper_id}",
+    response_model=ApiResponse[None],
+    responses={401: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
+    summary="북마크 삭제",
+)
+async def delete_bookmark(
+    paper_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    deleted = await remove_bookmark(db, current_user.id, paper_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="북마크가 없습니다")
+    return success_response(message="북마크가 삭제되었습니다")
+
+
+@router.get(
+    "/check/{paper_id}",
+    response_model=ApiResponse[BookmarkCheckResponse],
+    responses={401: {"model": ApiErrorResponse}},
+    summary="북마크 여부 확인",
+)
+async def check_bookmark_status(
+    paper_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    bookmarked = await check_bookmark(db, current_user.id, paper_id)
+    return success_response(
+        data=BookmarkCheckResponse(paper_id=paper_id, bookmarked=bookmarked),
+        message="ok",
+    )

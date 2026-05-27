@@ -99,6 +99,7 @@ def parse_paper(raw: dict) -> dict:
         "ISSN":         _parse_issn(raw.get("ISSN")),
         "DOI":          _parse_doi(raw.get("DOI")),
         "Pubyear":      _parse_pubyear(raw.get("Pubyear")),
+        "Pubdate":      raw.get("Pubdate") or None,
         "JournalName":  _clean(raw.get("JournalName")),
         "Author":       _split_semicolon_text(raw.get("Author")) or None,
     }
@@ -111,7 +112,7 @@ def print_stats(papers: list[dict]) -> None:
     check_fields = [
         "Title", "Title2", "Abstract", "Abstract2",
         "Keyword", "Keyword2", "ISSN", "DOI",
-        "Pubyear", "JournalName", "Author",
+        "Pubyear", "Pubdate", "JournalName", "Author",
     ]
     print(f"\n{'필드':<14} {'null 건수':>10} {'null 비율':>10}")
     print("-" * 36)

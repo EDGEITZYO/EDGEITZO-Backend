@@ -1,0 +1,432 @@
+[
+  {
+    "name": "한국과학교육학회지 = Journal of the Korean Association for Science Education",
+    "issns": [
+      "1226-5187",
+      "2288-8489"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "한국임상치위생학회지 = Korean journal of clinical dental hygiene",
+    "issns": [
+      "2287-9641",
+      "2465-7743"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "신재생에너지 = New & Renewable Energy",
+    "issns": [
+      "1738-3935",
+      "2713-9999"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "Composites research = 복합재료",
+    "issns": [
+      "2288-2103",
+      "2288-2111"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "Journal of the convergence on culture technology : JCCT = 문화기술의 융합",
+    "issns": [
+      "2384-0358",
+      "2384-0366"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "유기물자원화 = Journal of the Korea Organic Resources Recycling Association",
+    "issns": [
+      "1225-6498",
+      "2508-3015"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "미래기술융합논문지 = Journal of Advanced Technology Convergence",
+    "issns": [
+      "2951-2468"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "청정기술 = Clean technology",
+    "issns": [
+      "1598-9712",
+      "2288-0690"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "한국해양생명과학회지 = Journal of marine life science",
+    "issns": [
+      "2508-7134"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "Journal of dental rehabilitation and applied science = 구강회복응용과학지",
+    "issns": [
+      "2384-4353",
+      "2384-4272"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "JKSDH : Journal of Korean Society of Dental Hygiene = 한국치위생학회지",
+    "issns": [
+      "2287-1705",
+      "2288-2294"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "벤처창업연구= Asia-Pacific journal of business and venturing",
+    "issns": [
+      "1975-7557",
+      "2671-9509"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "풍력에너지저널 = Journal of wind energy",
+    "issns": [
+      "2093-5099",
+      "2733-9467"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "산업융합연구 = Journal of industrial convergence",
+    "issns": [
+      "2635-8875",
+      "2672-0124"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "드라이브ㆍ컨트롤 = Journal of drive and control",
+    "issns": [
+      "2671-7972",
+      "2671-7980"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "자원환경지질 = Economic and environmental geology",
+    "issns": [
+      "1225-7281",
+      "2288-7962"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "大韓造船學會 論文集 = Journal of the society of naval architects of korea",
+    "issns": [
+      "1225-1143",
+      "2287-7355"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "한국항공운항학회지 = Journal of the Korean Society for Aviation and Aeronautics",
+    "issns": [
+      "1225-9705",
+      "2466-1791"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "경영정보학연구 = Information systems review",
+    "issns": [
+      "2982-6551"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "Journal of the Korean Applied Science and Technology = 한국응용과학기술학회지",
+    "issns": [
+      "1225-9098",
+      "2288-1069"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "한국전자통신학회 논문지 = The Journal of the Korea Institute of Electronic Communication Sciences",
+    "issns": [
+      "1975-8170",
+      "2288-2189"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "한국광학회지 = Korean journal of optics and photonics",
+    "issns": [
+      "1225-6285",
+      "2287-321x"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "The journal of Bigdata = 한국빅데이터학회지",
+    "issns": [
+      "2508-1829",
+      "2713-6361"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "항공우주시스템공학회지  = Journal of aerospace system engineering",
+    "issns": [
+      "1976-6300",
+      "2508-7150"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "Journal of Korean Tunnelling and Underground Space Association = 한국터널지하공간학회논문집",
+    "issns": [
+      "2233-8292",
+      "2287-4747"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "무역학회지 = Korean trade review",
+    "issns": [
+      "1226-2765"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "한국경제지리학회지 = Journal of the Economic Geographical Society of Korea",
+    "issns": [
+      "1226-8968",
+      "2713-9115"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "플랜트 저널 = Plant journal",
+    "issns": [
+      "1976-8702"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "한국문헌정보학회지 = Journal of the Korean Society for Library and Information Science",
+    "issns": [
+      "1225-598x"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "한국구조물진단유지관리공학회 논문집 = Journal of the Korea Institute for Structural Maintenance and Inspection",
+    "issns": [
+      "2234-6937",
+      "2287-6979"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "Journal of the Korean Recycled Construction Resources Institute = 한국건설순환자원학회 논문집",
+    "issns": [
+      "2288-3320",
+      "2288-369x"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "한국지반환경공학회논문집 = Journal of the Korean Geoenvironmental Society",
+    "issns": [
+      "1598-0820"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "사물인터넷융복합논문지 = Journal of internet of things and convergence",
+    "issns": [
+      "2799-4791"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "감성과학 = Science of emotion & sensibility",
+    "issns": [
+      "1226-8593",
+      "2383-613x"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "The Transactions of the Korea Information Processing Society",
+    "issns": [
+      "3022-7011"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "대한건축학회논문집 = Journal of the architectural institute of korea",
+    "issns": [
+      "2733-6239",
+      "2733-6247"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "한국가금학회지 = Korean journal of poultry science",
+    "issns": [
+      "1225-6625",
+      "2287-5387"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "The journal of the institute of internet, broadcasting and communication : JIIBC",
+    "issns": [
+      "2289-0238",
+      "2289-0246"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "Journal of Internet Computing and Services = 인터넷정보학회논문지",
+    "issns": [
+      "1598-0170",
+      "2287-1136"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "韓國ITS學會 論文誌 = Journal of Korean Society of Intelligent Transport Systems",
+    "issns": [
+      "1738-0774",
+      "2384-1729"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "韓國軍事科學技術學會誌 = Journal of the Korea Institute of Military Science and Technology",
+    "issns": [
+      "1598-9127",
+      "2636-0640"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "생물정신의학 = Korean journal of biological psychiatry",
+    "issns": [
+      "1225-8709",
+      "2005-7571"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "Journal of KIBIM = 한국BIM학회논문집",
+    "issns": [
+      "2288-1697"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "韓國컴퓨터情報學會論文誌 = Journal of the Korea Society of Computer and Information",
+    "issns": [
+      "1598-849x",
+      "2383-9945"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "한국과학교육학회지 = Journal of the Korean association for science education",
+    "issns": [
+      "1226-5187"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "한국전산구조공학회논문집 = Journal of the computational structural engineering institute of Korea",
+    "issns": [
+      "1229-3059",
+      "2287-2302"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "Journal of Korean biological nursing science",
+    "issns": [
+      "2383-6415",
+      "2383-6423"
+    ],
+    "cns": [
+      "JAKO202308955062842",
+      "JAKO202308955061043"
+    ],
+    "reason": "no art_id in citations checkpoint"
+  },
+  {
+    "name": "정신신체의학 = Korean journal of psychosomatic medicine",
+    "issns": [
+      "1225-6471"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "한국의류학회지 = Journal of the Korean Society of Clothing and Textiles",
+    "issns": [
+      "1225-1151",
+      "2234-0793"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "대한화학회지 = Journal of the Korean Chemical Society",
+    "issns": [
+      "1017-2548"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "海洋環境安全學會誌 = Journal of the Korean society of marine environment & safety",
+    "issns": [
+      "1229-3431",
+      "2287-3341"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "한국응용곤충학회지 = Korean journal of applied entomology",
+    "issns": [
+      "1225-0171",
+      "2287-545x"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "생물환경조절학회지 = Journal of bio-environment control",
+    "issns": [
+      "1229-4675",
+      "2765-3641"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "도시과학 = Journal of urban science",
+    "issns": [
+      "2287-9153"
+    ],
+    "reason": "not in journals table"
+  },
+  {
+    "name": "The Korean journal of medicine = 대한내과학회지",
+    "issns": [
+      "1738-9364",
+      "2289-0769"
+    ],
+    "reason": "not in journals table"
+  }
+]

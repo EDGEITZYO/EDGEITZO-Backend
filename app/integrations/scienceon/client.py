@@ -77,3 +77,12 @@ class ScienceOnClient:
             response = await client.get(self.base_url, params=params)
             response.raise_for_status()
             return response.text
+
+    async def browse_article(self, cn: str) -> str:
+        """CN으로 논문 상세 조회. CitedDocumentInfo(참고문헌) 포함."""
+        params = self._build_common_params()
+        params.update({"action": "browse", "target": "ARTI", "cn": cn})
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(self.base_url, params=params)
+            response.raise_for_status()
+            return response.text

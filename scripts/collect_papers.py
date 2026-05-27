@@ -22,7 +22,7 @@ KEYWORDS = ["생명공학", "바이오", "유전자", "단백질", "세포공학
 
 SAVE_FIELDS = [
     "CN", "DBCode", "Title", "Title2", "Abstract", "Abstract2",
-    "Keyword", "Keyword2", "ISSN", "DOI", "Pubyear", "JournalName", "Author",
+    "Keyword", "Keyword2", "ISSN", "DOI", "Pubyear", "Pubdate", "JournalName", "Author",
 ]
 
 MAX_TOTAL = 1200

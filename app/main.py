@@ -2,7 +2,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 
 from app.api.v1.auth import router as auth_router
+from app.api.v1.bookmark import router as bookmark_router
+from app.api.v1.bookmark_folder import router as bookmark_folder_router
 from app.api.v1.health import router as health_router
+from app.api.v1.paper import router as paper_router
 from app.api.v1.graph import router as graph_router
 from app.api.v1.search import router as search_router
 from app.api.v1.test import router as test_router
@@ -33,6 +36,9 @@ def root():
 
 
 app.include_router(auth_router, prefix="/api/v1", tags=["Auth"])
+app.include_router(bookmark_router, prefix="/api/v1", tags=["Bookmark"])
+app.include_router(bookmark_folder_router, prefix="/api/v1", tags=["Bookmark"])
+app.include_router(paper_router, prefix="/api/v1", tags=["Paper"])
 app.include_router(health_router, prefix="/api/v1", tags=["Health"])
 app.include_router(graph_router, prefix="/api/v1", tags=["Graph"])
 app.include_router(search_router, prefix="/api/v1", tags=["Search"])
