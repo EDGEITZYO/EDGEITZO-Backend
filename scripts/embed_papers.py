@@ -12,6 +12,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_PROJECT_ROOT / ".env")
 sys.path.insert(0, str(_PROJECT_ROOT))
 
+import argparse
+
 import chromadb
 import torch
 from sentence_transformers import SentenceTransformer
@@ -70,6 +72,10 @@ def _batches(lst: list, size: int):
 
 # 모델 로드 → ChromaDB 연결 → 100건 배치 단위로 임베딩 후 upsert, 완료 통계 출력
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--reset", action="store_true", help="기존 컬렉션 삭제 후 재생성")
+    args = parser.parse_args()
+
     if not INPUT_PATH.exists():
         print(f"[오류] 입력 파일 없음: {INPUT_PATH}")
         sys.exit(1)
@@ -84,9 +90,15 @@ def main() -> None:
     model = SentenceTransformer(MODEL_NAME, device=device)
 
     print(f"ChromaDB 연결: {settings.chroma_host}:{settings.chroma_port}")
-    client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
-    client.heartbeat()
-    collection = client.get_or_create_collection(
+    chroma_client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+    chroma_client.heartbeat()
+    if args.reset:
+        try:
+            chroma_client.delete_collection(COLLECTION_NAME)
+            print(f"Collection '{COLLECTION_NAME}' 기존 데이터 삭제 완료")
+        except Exception:
+            pass
+    collection = chroma_client.get_or_create_collection(
         name=COLLECTION_NAME,
         metadata={"hnsw:space": "cosine"},
     )

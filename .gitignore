@@ -59,8 +59,13 @@ data/raw/*.json
 data/parsed/*.json
 neo4j_data/
 
-# SJR raw CSV (대용량 파일 — 커밋 제외)
+# Raw CSV / 대용량 데이터 파일 — 커밋 제외
 data/sjr_raw/*.csv
+data/kci_raw/*.csv
+
+# 체크포인트 / 미매칭 로그 — 로컬 실행용, 커밋 제외
+data/checkpoints/*.json
+data/unmatched/*.json
 
 # Redis dump
 dump.rdb

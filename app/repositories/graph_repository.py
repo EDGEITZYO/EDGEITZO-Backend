@@ -190,6 +190,7 @@ class GraphRepository:
         MATCH (:Keyword {key: $keyword_key})-[r:RELATED_TO]-(related:Keyword)
         WHERE r.paper_count >= $min_paper_count
         OPTIONAL MATCH (related)<-[:HAS_KEYWORD]-(p:Paper)
+        WHERE (p.paper_type IS NULL OR p.paper_type <> 'excluded_non_stem')
         RETURN related AS keyword,
                r AS relationship,
                count(DISTINCT p) AS paper_count
@@ -237,11 +238,13 @@ class GraphRepository:
         keyword_query = """
         MATCH (k:Keyword {key: $keyword_key})
         OPTIONAL MATCH (p:Paper)-[:HAS_KEYWORD]->(k)
+        WHERE (p.paper_type IS NULL OR p.paper_type <> 'excluded_non_stem')
         RETURN k AS keyword, count(DISTINCT p) AS total_count
         """
 
         papers_query = """
         MATCH (:Keyword {key: $keyword_key})<-[:HAS_KEYWORD]-(p:Paper)
+        WHERE (p.paper_type IS NULL OR p.paper_type <> 'excluded_non_stem')
         OPTIONAL MATCH (a:Author)-[authored:AUTHORED]->(p)
         WITH p, a, authored
         ORDER BY authored.order ASC
