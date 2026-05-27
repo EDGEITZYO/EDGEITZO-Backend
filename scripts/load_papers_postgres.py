@@ -58,6 +58,16 @@ def _safe_str(val: Any, max_len: int) -> str | None:
     return s[:max_len] if s else None
 
 
+def _fmt_pubdate(val: Any) -> str | None:
+    """'20250601' → '2025.06.01'. 형식 불일치 시 None."""
+    if not val:
+        return None
+    s = str(val).strip()
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}.{s[4:6]}.{s[6:8]}"
+    return None
+
+
 def _safe_list(val: Any) -> list[str] | None:
     if not val or not isinstance(val, list):
         return None
@@ -104,6 +114,7 @@ def build_records(papers: list[dict]) -> list[dict[str, Any]]:
             "keywords_ko": _safe_list(p.get("Keyword")),
             "keywords_en": _safe_list(p.get("Keyword2")),
             "pubyear": p.get("Pubyear") if isinstance(p.get("Pubyear"), int) else None,
+            "pubdate": _fmt_pubdate(p.get("Pubdate")),
             "paper_type": None,
             "citation_count": 0,
             "journal_id": None,

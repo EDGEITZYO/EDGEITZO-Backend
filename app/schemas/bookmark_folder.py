@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -16,5 +17,8 @@ class BookmarkFolderResponse(BaseModel):
     id: UUID
     name: str
     created_at: datetime
+    paper_count: int = 0
+    representative_keywords: list[str] = []
+    updated_at: Optional[datetime] = None   # 폴더 내 마지막 북마크 시각
 
     model_config = {"from_attributes": True}

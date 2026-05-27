@@ -16,9 +16,9 @@ from app.schemas.common import ApiErrorResponse, ApiResponse
 from app.services.bookmark_folder_service import (
     create_folder,
     delete_folder,
-    get_folders,
     update_folder,
 )
+from app.services.bookmark_service import get_folders_enriched
 
 router = APIRouter(prefix="/bookmark-folders", tags=["Bookmark"])
 
@@ -28,17 +28,19 @@ router = APIRouter(prefix="/bookmark-folders", tags=["Bookmark"])
     response_model=ApiResponse[list[BookmarkFolderResponse]],
     responses={401: {"model": ApiErrorResponse}},
     summary="폴더 목록 조회",
-    description="사용자의 북마크 폴더 목록을 반환합니다.",
+    description=(
+        "사용자의 북마크 폴더 목록을 반환합니다.\n\n"
+        "- `paper_count`: 폴더 내 북마크 수\n"
+        "- `representative_keywords`: 폴더 내 논문 키워드 상위 2개\n"
+        "- `updated_at`: 마지막 북마크 추가 시각"
+    ),
 )
 async def list_folders(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    folders = await get_folders(db, current_user.id)
-    return success_response(
-        data=[BookmarkFolderResponse.model_validate(f) for f in folders],
-        message="ok",
-    )
+    folders = await get_folders_enriched(db, current_user.id)
+    return success_response(data=folders, message="ok")
 
 
 @router.post(
@@ -54,7 +56,11 @@ async def create_bookmark_folder(
 ):
     folder = await create_folder(db, current_user.id, body.name)
     return success_response(
-        data=BookmarkFolderResponse.model_validate(folder),
+        data=BookmarkFolderResponse(
+            id=folder.id,
+            name=folder.name,
+            created_at=folder.created_at,
+        ),
         message="폴더가 생성되었습니다",
     )
 
@@ -75,7 +81,11 @@ async def update_bookmark_folder(
     if not folder:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="폴더를 찾을 수 없습니다")
     return success_response(
-        data=BookmarkFolderResponse.model_validate(folder),
+        data=BookmarkFolderResponse(
+            id=folder.id,
+            name=folder.name,
+            created_at=folder.created_at,
+        ),
         message="폴더명이 수정되었습니다",
     )
 

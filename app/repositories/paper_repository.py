@@ -31,6 +31,18 @@ async def get_doi_by_paper_id(db: AsyncSession, paper_id: str) -> str | None:
     return normalize_doi(raw) if raw else None
 
 
+async def get_paper_meta(db: AsyncSession, paper_id: str) -> tuple[str | None, str | None, str | None]:
+    """paper_id → (db_code, kci_art_id, doi). KCI/CrossRef 분기에 사용."""
+    result = await db.execute(
+        select(Paper.db_code, Paper.kci_art_id, Paper.doi).where(Paper.id == paper_id)
+    )
+    row = result.one_or_none()
+    if not row:
+        return None, None, None
+    db_code, kci_art_id, doi = row
+    return db_code, kci_art_id, normalize_doi(doi) if doi else None
+
+
 async def paper_exists_by_doi(db: AsyncSession, doi: str) -> bool:
     """DOI로 papers 테이블 존재 여부 확인 (in_service 판별용)."""
     bare = normalize_doi(doi)

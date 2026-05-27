@@ -24,6 +24,8 @@ class Paper(Base):
     keywords_ko = Column(ARRAY(String(200)), nullable=True)
     keywords_en = Column(ARRAY(String(200)), nullable=True)
     pubyear = Column(Integer, nullable=True, index=True)
+    pubdate = Column(String(10), nullable=True)
+    kci_art_id = Column(String(50), nullable=True, index=True)
     paper_type = Column(String(50), nullable=True)
     citation_count = Column(Integer, default=0, nullable=False)
     journal_id = Column(
