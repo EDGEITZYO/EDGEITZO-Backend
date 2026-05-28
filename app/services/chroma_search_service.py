@@ -131,7 +131,8 @@ class ChromaSearchService:
         self._ready = True
 
     def _semantic_search(self, query: str, n: int) -> list[tuple[str, float]]:
-        query_vec = self._model.encode(query, convert_to_numpy=True).tolist()
+        # BGE-m3-ko 권장: 쿼리 임베딩 시 "query: " prefix
+        query_vec = self._model.encode(f"query: {query}", convert_to_numpy=True).tolist()
         results = self._collection.query(
             query_embeddings=[query_vec],
             n_results=min(n, self._collection.count()),
