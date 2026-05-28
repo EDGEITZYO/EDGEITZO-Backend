@@ -1,3 +1,4 @@
+from __future__ import annotations
 from app.schemas.search import PaperAuthor, PaperSearchItem
 from app.services.credibility_service import calculate_credibility
 

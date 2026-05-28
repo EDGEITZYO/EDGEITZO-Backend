@@ -22,3 +22,7 @@ bcrypt
 python-multipart
 aiosmtplib
 email-validator
+konlpy
+rank-bm25
+eval_type_backport
+langgraph

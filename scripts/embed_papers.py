@@ -20,7 +20,8 @@ from sentence_transformers import SentenceTransformer
 
 from app.core.settings import settings  # noqa: E402
 
-INPUT_PATH = _PROJECT_ROOT / "data" / "parsed" / "scienceon_keywords_normalized.json"
+DEFAULT_INPUT_PATH = _PROJECT_ROOT / "data" / "parsed" / "scienceon_preprocessed.json"
+_FALLBACK_INPUT_PATH = _PROJECT_ROOT / "data" / "parsed" / "scienceon_keywords_normalized.json"
 MODEL_NAME = "dragonkue/BGE-m3-ko"
 COLLECTION_NAME = "papers"
 BATCH_SIZE = 100
@@ -33,11 +34,13 @@ def _select_device() -> str:
         return "cuda"
     return "cpu"
 
-# Title + Abstract + Keyword 리스트를 공백으로 이어 임베딩용 단일 텍스트 생성
+# Title(2회) + Abstract + Keyword 리스트를 공백으로 이어 임베딩용 단일 텍스트 생성
+# 제목을 2회 반복해 벡터가 제목 의미에 더 집중하도록 가중치 부여
 def _build_text(paper: dict) -> str:
     parts: list[str] = []
     if paper.get("Title"):
         parts.append(paper["Title"])
+        parts.append(paper["Title"])  # 제목 가중치
     if paper.get("Abstract"):
         parts.append(paper["Abstract"])
     keywords = paper.get("Keyword")
@@ -74,13 +77,23 @@ def _batches(lst: list, size: int):
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--reset", action="store_true", help="기존 컬렉션 삭제 후 재생성")
+    parser.add_argument("--input", default=None, help="입력 JSON 파일 경로 (기본: scienceon_preprocessed.json)")
     args = parser.parse_args()
 
-    if not INPUT_PATH.exists():
-        print(f"[오류] 입력 파일 없음: {INPUT_PATH}")
+    if args.input:
+        input_path = Path(args.input)
+    elif DEFAULT_INPUT_PATH.exists():
+        input_path = DEFAULT_INPUT_PATH
+        print(f"[전처리 데이터 사용] {input_path.name}")
+    else:
+        input_path = _FALLBACK_INPUT_PATH
+        print(f"[원본 데이터 사용] {input_path.name}")
+
+    if not input_path.exists():
+        print(f"[오류] 입력 파일 없음: {input_path}")
         sys.exit(1)
 
-    data = json.loads(INPUT_PATH.read_text(encoding="utf-8"))
+    data = json.loads(input_path.read_text(encoding="utf-8"))
     papers: list[dict] = data.get("papers", data) if isinstance(data, dict) else data
     print(f"입력: {len(papers)}건 로드")
 

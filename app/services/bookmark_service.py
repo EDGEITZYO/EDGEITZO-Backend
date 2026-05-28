@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections import Counter
 from typing import Literal
 from uuid import UUID

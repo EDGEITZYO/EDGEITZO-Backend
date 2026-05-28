@@ -17,6 +17,8 @@ from app.core.exceptions import (
 from app.core.response import success_response
 from app.api.v1.scienceon import router as scienceon_router
 from app.api.v1.semanticscholar import router as semantic_scholar_router
+from app.api.v1.keyword_search import router as keyword_search_router
+from app.api.v1.keyword_map import router as keyword_map_router
 
 
 app = FastAPI(
@@ -49,5 +51,6 @@ app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
 
 app.include_router(scienceon_router, prefix="/api/v1", tags=["ScienceON"])
-
 app.include_router(semantic_scholar_router, prefix="/api/v1", tags=["SemanticScholar"])
+app.include_router(keyword_search_router, prefix="/api/v1", tags=["KeywordSearch"])
+app.include_router(keyword_map_router, prefix="/api/v1", tags=["KeywordMap"])
