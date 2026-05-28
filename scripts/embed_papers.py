@@ -36,6 +36,7 @@ def _select_device() -> str:
 
 # Title(2회) + Abstract + Keyword 리스트를 공백으로 이어 임베딩용 단일 텍스트 생성
 # 제목을 2회 반복해 벡터가 제목 의미에 더 집중하도록 가중치 부여
+# BGE-m3-ko 권장: 문서 임베딩 시 "passage: " prefix
 def _build_text(paper: dict) -> str:
     parts: list[str] = []
     if paper.get("Title"):
@@ -46,7 +47,7 @@ def _build_text(paper: dict) -> str:
     keywords = paper.get("Keyword")
     if keywords:
         parts.append(" ".join(keywords))
-    return " ".join(parts)
+    return f"passage: {' '.join(parts)}"
 
 # ChromaDB 저장용 8개 필드 정제 (None → "", list → ";".join())
 def _build_metadata(paper: dict) -> dict:

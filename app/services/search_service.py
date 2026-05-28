@@ -16,7 +16,8 @@ from app.services.credibility_service import enrich_items_with_credibility
 logger = logging.getLogger(__name__)
 
 
-# C-2: LLM 쿼리 확장 — 관련 학술 용어를 추가해 임베딩 품질 향상
+# C-2: HyDE 쿼리 확장 — 사용자 쿼리를 가상 논문 초록으로 변환해 임베딩 공간 정렬
+# 짧은 쿼리와 긴 논문 초록 간 길이/표현 불균형 해소
 async def expand_query_for_embedding(query: str) -> str:
     try:
         from app.services.llm.client import chat
@@ -24,20 +25,24 @@ async def expand_query_for_embedding(query: str) -> str:
             messages=[{
                 "role": "user",
                 "content": (
-                    f"다음 학술 검색어를 관련 학술 용어로 확장하라.\n"
-                    f"원본: \"{query}\"\n"
-                    f"규칙: 관련 개념어, 영문 용어 추가. 원본 의미 유지. 15단어 이내.\n"
-                    f"확장된 검색어만 반환 (설명 없이):"
+                    f"다음 검색어에 대해 가상의 한국어 학술 논문 초록을 작성하라.\n"
+                    f"검색어: \"{query}\"\n\n"
+                    f"규칙:\n"
+                    f"- 3~4문장의 자연스러운 논문 초록 형식\n"
+                    f"- 연구 배경, 방법, 결과 흐름 포함\n"
+                    f"- 실제 학술 용어 사용 (한글, 필요시 영문 병기)\n"
+                    f"- 가상의 수치나 구체적 결론은 만들지 말 것\n\n"
+                    f"초록만 반환 (제목, 설명, 따옴표 없이):"
                 ),
             }],
             model=settings.llm_default_model,
-            temperature=0.0,
-            max_tokens=100,
+            temperature=0.3,
+            max_tokens=300,
         )
-        expanded = resp.text.strip()
-        return f"{query} {expanded}" if expanded else query
+        hypothetical = resp.text.strip()
+        return f"{query} {hypothetical}" if hypothetical else query
     except Exception as e:
-        logger.warning("쿼리 확장 실패, 원본 사용: %s", e)
+        logger.warning("HyDE 쿼리 확장 실패, 원본 사용: %s", e)
         return query
 
 
