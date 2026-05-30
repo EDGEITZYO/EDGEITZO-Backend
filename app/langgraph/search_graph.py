@@ -50,7 +50,7 @@ SLOT_QUESTIONS: Dict[str, Dict[str, Any]] = {
             {"label": "최근 3년 (2023~현재)", "value": "3Y"},
             {"label": "최근 5년 (2021~현재)", "value": "5Y"},
             {"label": "최근 10년 (2016~현재)", "value": "10Y"},
-            {"label": "전체", "value": "ALL"},
+            {"label": "전체", "value": "YEAR_ALL"},
             {"label": "건너뛰기", "value": "SKIP"},
         ],
         "allow_multiple": False,
@@ -100,9 +100,23 @@ async def node_intent_extractor(state: SearchState) -> SearchState:
 위 입력에서 아래 슬롯에 해당하는 값을 추출하라.
 
 슬롯 정의:
-- research_purpose: "연구주제탐색"|"논문작성참고"|"랩미팅발표"|"최신트렌드"|"기타"
-- paper_scope: "KCI"|"SCI"|"ALL"|"ANY"
-- pub_year_range: "3Y"|"5Y"|"10Y"|"ALL"|"SKIP"
+- research_purpose:
+    "연구주제탐색" (방향 탐색 중, 주제를 아직 못 정함)
+  | "논문작성참고" (논문 작성 중, 선행연구·인용 논문 필요)
+  | "랩미팅발표" (랩미팅·발표 준비, 최근 주요 연구 파악)
+  | "최신트렌드" (분야 동향·트렌드 파악, 리뷰·메타분석 위주)
+  | "기타"
+- paper_scope:
+    "KCI" (국내 학술지, KCI 등재, 한국 논문)
+  | "SCI" (국제 학술지, SCI·SSCI·AHCI, 해외 논문)
+  | "ALL" (둘 다 포함, 국내외 모두, 제한 없음)
+  | "ANY" (상관없음, 아무거나)
+- pub_year_range:
+    "3Y" (최근 3년, 2023년 이후)
+  | "5Y" (최근 5년, 2021년 이후)
+  | "10Y" (최근 10년, 2016년 이후)
+  | "YEAR_ALL" (전체, 연도 제한 없음, 오래된 논문도 포함)
+  | "SKIP" (건너뛰기, 모르겠음, 연도 상관없음)
 - advanced_filter: 구체화도와 무관한 추가 조건 문자열 (예: "한국 저자만")
 - topic_change: 주제 변경 의도인지 (true/false)
 - off_topic: 논문 탐색과 무관한 입력인지 (true/false)

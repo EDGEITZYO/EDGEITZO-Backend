@@ -127,7 +127,7 @@ async def chat_search(request: ChatRequest):
                 slots["research_purpose"] = opt_value
             elif opt_value in ("KCI", "SCI", "ALL", "ANY"):
                 slots["paper_scope"] = opt_value
-            elif opt_value in ("3Y", "5Y", "10Y", "SKIP"):
+            elif opt_value in ("3Y", "5Y", "10Y", "YEAR_ALL", "SKIP"):
                 slots["pub_year_range"] = opt_value
             elif opt_value == "confirm_keywords":
                 pass  # 키워드는 이미 슬롯에 있음
