@@ -45,10 +45,10 @@ class SearchState(TypedDict):
     keyword_candidates: Optional[List[KeywordCandidate]]
     advanced_filters: Dict[str, Any]
     messages: List[Dict[str, Any]]
-    question_count: int
     search_preview: SearchPreview
     final_search_params: Optional[SearchParams]
     search_ready: bool
+    keyword_mode: Optional[str]  # "edit" | "add" | None — GAP-8 키워드 수정/추가 모드
     # 응답 빌더 출력 (그래프 내부 전달용)
     ai_message: str
     options: List[Dict[str, Any]]

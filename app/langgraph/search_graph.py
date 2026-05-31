@@ -50,7 +50,7 @@ SLOT_QUESTIONS: Dict[str, Dict[str, Any]] = {
             {"label": "최근 3년 (2023~현재)", "value": "3Y"},
             {"label": "최근 5년 (2021~현재)", "value": "5Y"},
             {"label": "최근 10년 (2016~현재)", "value": "10Y"},
-            {"label": "전체", "value": "ALL"},
+            {"label": "전체", "value": "YEAR_ALL"},
             {"label": "건너뛰기", "value": "SKIP"},
         ],
         "allow_multiple": False,
@@ -100,9 +100,23 @@ async def node_intent_extractor(state: SearchState) -> SearchState:
 위 입력에서 아래 슬롯에 해당하는 값을 추출하라.
 
 슬롯 정의:
-- research_purpose: "연구주제탐색"|"논문작성참고"|"랩미팅발표"|"최신트렌드"|"기타"
-- paper_scope: "KCI"|"SCI"|"ALL"|"ANY"
-- pub_year_range: "3Y"|"5Y"|"10Y"|"ALL"|"SKIP"
+- research_purpose:
+    "연구주제탐색" (방향 탐색 중, 주제를 아직 못 정함)
+  | "논문작성참고" (논문 작성 중, 선행연구·인용 논문 필요)
+  | "랩미팅발표" (랩미팅·발표 준비, 최근 주요 연구 파악)
+  | "최신트렌드" (분야 동향·트렌드 파악, 리뷰·메타분석 위주)
+  | "기타"
+- paper_scope:
+    "KCI" (국내 학술지, KCI 등재, 한국 논문)
+  | "SCI" (국제 학술지, SCI·SSCI·AHCI, 해외 논문)
+  | "ALL" (둘 다 포함, 국내외 모두, 제한 없음)
+  | "ANY" (상관없음, 아무거나)
+- pub_year_range:
+    "3Y" (최근 3년, 2023년 이후)
+  | "5Y" (최근 5년, 2021년 이후)
+  | "10Y" (최근 10년, 2016년 이후)
+  | "YEAR_ALL" (전체, 연도 제한 없음, 오래된 논문도 포함)
+  | "SKIP" (건너뛰기, 모르겠음, 연도 상관없음)
 - advanced_filter: 구체화도와 무관한 추가 조건 문자열 (예: "한국 저자만")
 - topic_change: 주제 변경 의도인지 (true/false)
 - off_topic: 논문 탐색과 무관한 입력인지 (true/false)
@@ -146,6 +160,10 @@ JSON만 반환:
 
 
 async def node_keyword_extractor(state: SearchState) -> SearchState:
+    keyword_mode = state.get("keyword_mode")
+    # edit/add 모드는 선택지를 더 많이 제시하기 위해 후보를 최대 5개까지 추출
+    max_count = 5 if keyword_mode in ("edit", "add") else 3
+
     user_query = state.get("user_query", "")
     messages = state.get("messages") or []
     if messages:
@@ -162,9 +180,9 @@ async def node_keyword_extractor(state: SearchState) -> SearchState:
 [3단계] 학술 키워드 변환
 추출된 개념을 학술 논문 검색에 쓰이는 용어로 변환. 한글명 + 영문명 + 한 줄 설명.
 
-[4단계] 신뢰도 기준 상위 3개 선정
+[4단계] 신뢰도 기준 상위 {max_count}개 선정
 기준: 원본 입력과의 의미 일치도, 학술 검색어로서의 구체성.
-3개 미만이면 찾은 것만 반환.
+{max_count}개 미만이면 찾은 것만 반환.
 
 JSON만 반환:
 {{
@@ -176,11 +194,23 @@ JSON만 반환:
 }}"""
 
     result = await _llm_json(_KEYWORD_SYSTEM, prompt, max_tokens=600)
-    candidates = result.get("keywords", [])
+    candidates = result.get("keywords", [])[:max_count]
 
     new_slots = dict(state.get("slots") or empty_slots())
-    if candidates:
-        new_slots["keywords"] = [c["ko"] for c in candidates]
+
+    if keyword_mode == "add":
+        # add 모드: 이미 선택된 키워드와 중복 제거 — 슬롯은 사용자가 선택 후 확정
+        existing = list(new_slots.get("keywords") or [])
+        candidates = [c for c in candidates if c["ko"] not in existing]
+
+    elif keyword_mode == "edit":
+        # edit 모드: 슬롯 자동 설정 안 함 — 사용자가 후보를 보고 직접 선택
+        pass
+
+    else:
+        # 일반 모드: 슬롯에 자동 설정 후 1회 확인
+        if candidates:
+            new_slots["keywords"] = [c["ko"] for c in candidates]
 
     return {
         **state,
@@ -194,6 +224,10 @@ def node_response_builder(state: SearchState) -> SearchState:
     completeness = calc_completeness(slots)
     intent_result = state.get("_intent_result") or {}
     candidates = state.get("keyword_candidates") or []
+    keyword_mode = state.get("keyword_mode")
+
+    def _preview():
+        return build_search_preview(slots, state.get("user_query", ""))
 
     # 슬롯 추출 성공 여부 확인 메시지 조각
     confirm_parts = []
@@ -209,7 +243,7 @@ def node_response_builder(state: SearchState) -> SearchState:
             {"label": "처음부터 다시할게요", "value": "restart"},
         ]
         return {**state, "ai_message": msg, "options": options, "allow_multiple": False,
-                "search_preview": build_search_preview(slots, state.get("user_query", ""))}
+                "search_preview": _preview()}
 
     # conflict
     if intent_result.get("conflict_slot"):
@@ -223,7 +257,7 @@ def node_response_builder(state: SearchState) -> SearchState:
             {"label": "기존 유지", "value": "keep"},
         ]
         return {**state, "ai_message": msg, "options": options, "allow_multiple": False,
-                "search_preview": build_search_preview(slots, state.get("user_query", ""))}
+                "search_preview": _preview()}
 
     # topic_change
     if intent_result.get("topic_change"):
@@ -233,33 +267,83 @@ def node_response_builder(state: SearchState) -> SearchState:
             {"label": "새 주제로 처음부터 검색", "value": "new_topic"},
         ]
         return {**state, "ai_message": msg, "options": options, "allow_multiple": False,
-                "search_preview": build_search_preview(slots, state.get("user_query", ""))}
+                "search_preview": _preview()}
 
-    # 키워드 결과
-    if candidates:
+    # ── 키워드 edit 모드: 후보 최대 5개를 개별 선택지로 제시 ─────────────
+    if keyword_mode == "edit":
+        if not candidates:
+            msg = "수정할 키워드 후보가 없어요. 검색어를 다시 입력해주세요."
+            return {**state, "ai_message": msg, "options": [], "allow_multiple": False,
+                    "search_preview": _preview()}
+        existing_label = " / ".join(f"#{k}" for k in (slots.get("keywords") or []))
+        prefix = f"현재: {existing_label}\n" if existing_label else ""
+        opts = [{"label": f"#{c['ko']} — {c['desc']}", "value": f"select_kw:{c['ko']}"}
+                for c in candidates]
+        msg = f"{prefix}사용할 키워드를 선택해주세요. (복수 선택 가능)"
+        return {**state, "ai_message": msg, "options": opts, "allow_multiple": True,
+                "search_preview": _preview()}
+
+    # ── 키워드 add 모드: 추가 후보 제시 ─────────────────────────────────
+    if keyword_mode == "add":
+        existing_label = " / ".join(f"#{k}" for k in (slots.get("keywords") or []))
+        if not candidates:
+            msg = (f"현재 키워드: {existing_label}\n"
+                   "추가할 키워드 후보를 찾지 못했어요. 직접 입력해주세요.")
+            return {**state, "ai_message": msg, "options": [], "allow_multiple": False,
+                    "search_preview": _preview()}
+        opts = [{"label": f"#{c['ko']} — {c['desc']}", "value": f"select_kw:{c['ko']}"}
+                for c in candidates]
+        msg = f"현재 키워드: {existing_label}\n추가할 키워드를 선택하세요. (복수 선택 가능)"
+        return {**state, "ai_message": msg, "options": opts, "allow_multiple": True,
+                "search_preview": _preview()}
+
+    # keywords 슬롯은 "묶음 30%": 1개 이상이면 개수 무관하게 슬롯 충족(30%).
+    # cnt 2/1 분기의 "추가 권유"는 점수 게이트가 아니라 검색 품질 향상 제안 —
+    # 슬롯은 이미 충족됐고, 더 넣으면 정확도가 올라간다는 안내
+    # cnt >= 3 / 2 / 1 / 0(모호) 네 경우로 분기하며, 각 return 시
+    # keyword_candidates=[] 로 초기화해 다음 턴 재표시를 방지
+    if candidates is not None and not slots.get("keywords"):
         cnt = len(candidates)
         kw_labels = " / ".join(f"#{c['ko']}" for c in candidates)
+
         if cnt >= 3:
             msg = f"입력하신 내용에서 핵심 키워드 {cnt}개를 뽑아봤어요.\n{kw_labels}\n이걸로 검색하면 될까요?"
-            options = [
+            opts = [
                 {"label": "이대로 검색", "value": "confirm_keywords"},
                 {"label": "수정하기", "value": "edit_keywords"},
                 {"label": "더 추가하기", "value": "add_keywords"},
             ]
-            return {**state, "ai_message": msg, "options": options, "allow_multiple": True,
-                    "search_preview": build_search_preview(slots, state.get("user_query", ""))}
+            return {**state, "ai_message": msg, "options": opts, "allow_multiple": True,
+                    "keyword_candidates": [], "search_preview": _preview()}
+
         elif cnt == 2:
             msg = f"핵심 키워드 {cnt}개를 찾았어요. {kw_labels}\n1개 더 추가하시거나, 이대로 진행할까요?"
-            options = [
+            opts = [
                 {"label": "이대로 진행", "value": "confirm_keywords"},
                 {"label": "키워드 추가", "value": "add_keywords"},
             ]
-            return {**state, "ai_message": msg, "options": options, "allow_multiple": False,
-                    "search_preview": build_search_preview(slots, state.get("user_query", ""))}
-        else:
-            msg = "키워드를 정확히 못 찾았어요. 핵심 주제를 다시 알려주실래요?"
-            return {**state, "ai_message": msg, "options": [], "allow_multiple": False,
-                    "search_preview": build_search_preview(slots, state.get("user_query", ""))}
+            return {**state, "ai_message": msg, "options": opts, "allow_multiple": False,
+                    "keyword_candidates": [], "search_preview": _preview()}
+
+        elif cnt == 1:
+            msg = (f"키워드 1개(#{candidates[0]['ko']})를 찾았어요.\n"
+                   "추가 키워드를 넣으면 검색 정확도가 올라가요.")
+            opts = [
+                {"label": "이대로 진행", "value": "confirm_keywords"},
+                {"label": "키워드 추가", "value": "add_keywords"},
+            ]
+            return {**state, "ai_message": msg, "options": opts, "allow_multiple": False,
+                    "keyword_candidates": [], "search_preview": _preview()}
+
+        else:  # cnt == 0: 모호 입력
+            msg = ("핵심 키워드를 찾지 못했어요. 연구 주제를 조금 더 구체적으로 알려주시겠어요?\n"
+                   "예: 특정 분야, 기술, 현상 등을 포함해서 입력해보세요.")
+            opts = [
+                {"label": "분야를 좁혀볼게요", "value": "narrow_field"},
+                {"label": "처음부터 다시 입력", "value": "restart"},
+            ]
+            return {**state, "ai_message": msg, "options": opts, "allow_multiple": False,
+                    "keyword_candidates": [], "search_preview": _preview()}
 
     # completeness >= 100
     if completeness >= 100:
@@ -281,13 +365,21 @@ def node_response_builder(state: SearchState) -> SearchState:
                 "allow_multiple": q["allow_multiple"],
                 "search_preview": build_search_preview(slots, state.get("user_query", ""))}
 
-    # 모든 슬롯이 차 있고 completeness < 100인 경우 (SKIP 등)
+    # 90%+: 조건이 충분해 강조 권유 (프론트는 search_stage="emphasized"로 버튼 강조)
+    if completeness >= 90:
+        msg = "조건이 충분해요! 지금 바로 탐색해볼까요?"
+        options = [{"label": "논문 탐색 시작하기", "value": "start_search"}]
+        return {**state, "ai_message": msg, "options": options, "allow_multiple": False,
+                "search_ready": True,
+                "search_preview": _preview()}
+
+    # 80–89%: 탐색 가능 (프론트는 search_stage="ready"로 버튼 활성)
     if completeness >= 80:
         msg = "탐색 준비가 됐어요! 논문을 찾아볼까요?"
         options = [{"label": "논문 탐색 시작하기", "value": "start_search"}]
         return {**state, "ai_message": msg, "options": options, "allow_multiple": False,
                 "search_ready": True,
-                "search_preview": build_search_preview(slots, state.get("user_query", ""))}
+                "search_preview": _preview()}
 
     # 50% 이하 + 강제 시작 요청
     if completeness <= 50:
@@ -342,8 +434,23 @@ def _build_search_params(state: SearchState):
 def _should_extract_keywords(state: SearchState) -> str:
     slots = state.get("slots") or empty_slots()
     intent = state.get("_intent_result") or {}
-    if not slots.get("keywords") and not intent.get("off_topic") and not intent.get("topic_change"):
+    keyword_mode = state.get("keyword_mode")
+
+    if intent.get("off_topic") or intent.get("topic_change"):
+        return "response_builder"
+
+    # add 모드: 추가 후보를 얻기 위해 항상 재추출
+    if keyword_mode == "add":
         return "keyword_extractor"
+
+    # edit 모드: 기존 후보가 없을 때만 재추출, 있으면 그대로 제시
+    if keyword_mode == "edit":
+        return "keyword_extractor" if not state.get("keyword_candidates") else "response_builder"
+
+    # 일반 모드: 키워드 슬롯이 비어있을 때만 추출
+    if not slots.get("keywords"):
+        return "keyword_extractor"
+
     return "response_builder"
 
 
