@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import uuid as _uuid
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import get_db
 from app.core.redis import get_redis
 from app.core.response import success_response
+from app.models.user_keyword_map import UserKeywordMap
 from app.schemas.search import PaperSearchItem
 from app.services.chroma_search_service import get_chroma_search_service
 from app.services.neo4j_search_service import get_paper_ids_by_keyword
@@ -15,6 +20,7 @@ from app.services.neo4j_search_service import get_paper_ids_by_keyword
 router = APIRouter()
 
 _REDIS_DB = 7
+_MAP_TTL = 86400  # 24시간 — keyword_map.py와 동일값 (추후 공통 상수로 추출 가능)
 
 
 class KeywordMapResponse(BaseModel):
@@ -90,7 +96,7 @@ def _to_result(item: PaperSearchItem) -> PaperResult:
 
 
 @router.get("/keyword-search/map/{user_id}")
-async def get_keyword_map(user_id: str):
+async def get_keyword_map(user_id: str, db: AsyncSession = Depends(get_db)):
     """사용자의 현재 연구분야 키워드맵 조회"""
     r = get_redis(_REDIS_DB)
     cached = r.get(f"keyword_map:{user_id}")
@@ -103,8 +109,33 @@ async def get_keyword_map(user_id: str):
             ),
             message="keyword map found",
         )
-    # TODO: Neo4j 저장 구조 연동 후 DB 조회 추가
-    from fastapi import HTTPException
+
+    # Redis 미스 → PostgreSQL fallback (UUID인 경우만)
+    try:
+        uid = _uuid.UUID(user_id)
+    except ValueError:
+        uid = None
+
+    if uid is not None:
+        row = (await db.execute(
+            select(UserKeywordMap).where(UserKeywordMap.user_id == uid)
+        )).scalar_one_or_none()
+
+        if row is not None:
+            # Redis 재캐시 후 반환
+            r.set(
+                f"keyword_map:{user_id}",
+                json.dumps({"research_field": row.research_field, "tree": row.tree}, ensure_ascii=False),
+                ex=_MAP_TTL,
+            )
+            return success_response(
+                data=KeywordMapResponse(
+                    research_field=row.research_field,
+                    tree=row.tree,
+                ),
+                message="keyword map found",
+            )
+
     raise HTTPException(status_code=404, detail="키워드맵이 없습니다. 먼저 키워드맵을 생성해주세요.")
 
 
