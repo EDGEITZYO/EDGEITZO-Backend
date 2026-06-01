@@ -15,6 +15,31 @@ from app.services.credibility_service import enrich_items_with_credibility
 
 logger = logging.getLogger(__name__)
 
+_PAPER_TYPE_MAP: dict[str, str] = {
+    "JAKO": "저널",
+    "JAFO": "저널",
+    "DIKO": "학위논문",
+    "CFKO": "학회",
+    "CFFO": "학회",
+}
+
+
+def _db_code_to_paper_type(db_code: str | None) -> str | None:
+    if db_code is None:
+        return None
+    result = _PAPER_TYPE_MAP.get(db_code)
+    if result is None:
+        logger.warning("unknown DBCode for paper_type mapping: %s", db_code)
+    return result
+
+
+def _resolve_scope_badge(credibility) -> str | None:
+    if credibility.kci_registered is True:
+        return "KCI"
+    if credibility.sci_indexed is True:
+        return "SCI"
+    return None
+
 
 # C-2: HyDE 쿼리 확장 — 사용자 쿼리를 가상 논문 초록으로 변환해 임베딩 공간 정렬
 # 짧은 쿼리와 긴 논문 초록 간 길이/표현 불균형 해소
@@ -128,7 +153,13 @@ async def search_papers_service(
     )
 
 
-async def execute_search(search_params: dict, db: AsyncSession | None = None) -> dict:
+async def execute_search(
+    search_params: dict,
+    db: AsyncSession | None = None,
+    *,
+    filter_paper_type: str | None = None,
+    sort_order: str = "relevance",
+) -> dict:
     """SearchParams 기반 실행 검색 — 슬롯 대화 완료 후 호출"""
     keywords = search_params.get("keywords") or []
     scope = search_params.get("scope", "ANY")
@@ -159,6 +190,14 @@ async def execute_search(search_params: dict, db: AsyncSession | None = None) ->
     items = _apply_scoring(items, research_purpose=research_purpose)
     items = _sort_items(items)
 
+    if filter_paper_type and filter_paper_type != "전체":
+        items = [i for i in items if _db_code_to_paper_type(i.db_code) == filter_paper_type]
+
+    if sort_order == "year_asc":
+        items = sorted(items, key=lambda i: (i.year is None, i.year or 0))
+    elif sort_order == "year_desc":
+        items = sorted(items, key=lambda i: (i.year is None, -(i.year or 0)))
+
     papers = []
     for item in items[:size]:
         papers.append({
@@ -167,13 +206,13 @@ async def execute_search(search_params: dict, db: AsyncSession | None = None) ->
             "authors": [a.name for a in item.authors],
             "pub_year": item.year,
             "journal": item.journal_name,
-            "paper_type": None,
+            "paper_type": _db_code_to_paper_type(item.db_code),
             "abstract": item.abstract,
             "keywords": item.keywords,
-            "scope_badge": None,  # TODO: DBCode → scope 배지 연결
+            "scope_badge": _resolve_scope_badge(item.credibility),
             "citation_count": item.credibility.citation_count,
             "relevance_score": item.score,
-            "trust_badge": None,   # TODO: 신뢰도 배지 연결 후 구현
+            "trust_badge": item.credibility.badge if item.credibility.badge != "unknown" else None,
             "keyword_map_data": None,  # TODO: 키워드맵 연결 후 구현
         })
 

@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -417,13 +417,15 @@ class PaperResult(BaseModel):
     scope_badge: Optional[str]
     citation_count: Optional[int]
     relevance_score: float
-    trust_badge: None = None
-    keyword_map_data: None = None
+    trust_badge: Optional[str] = None
+    keyword_map_data: None = None  # 현재 미사용 — 추후 논문상세 화면에서 연결 예정, 리스트에선 항상 null
 
 
 class ExecuteRequest(BaseModel):
     session_id: str
     search_params: SearchParams
+    filter_paper_type: Optional[str] = None  # "저널"|"학위논문"|"학회"|"전체"|null → null/전체 시 필터 없음
+    sort_order: Literal["relevance", "year_asc", "year_desc"] = "relevance"
 
 
 class ExecuteResponse(BaseModel):
@@ -437,7 +439,12 @@ async def execute_search_endpoint(
     request: ExecuteRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await execute_search(dict(request.search_params), db)
+    result = await execute_search(
+        dict(request.search_params),
+        db,
+        filter_paper_type=request.filter_paper_type,
+        sort_order=request.sort_order,
+    )
     return success_response(
         data=ExecuteResponse(
             papers=[PaperResult(**p) for p in result["papers"]],
