@@ -83,6 +83,7 @@ def _to_search_item(paper: dict, score: float) -> PaperSearchItem:
         keywords=keywords,
         journal_name=paper.get("JournalName"),
         issn=issn,
+        db_code=paper.get("DBCode"),
         source="local_chroma",
         credibility=CredibilityInfo(badge="unknown"),
         score=round(score, 4),

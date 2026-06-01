@@ -51,6 +51,7 @@ class PaperSearchItem(BaseModel):
     keywords: list[str] = Field(default_factory=list)
     journal_name: Optional[str] = None
     issn: Optional[str] = None
+    db_code: Optional[str] = None
     source: str
     credibility: CredibilityInfo
     score: float
