@@ -134,9 +134,9 @@ def main() -> None:
 
     parsed_papers = [parse_paper(p) for p in raw_papers]
 
-    # Abstract 없는 논문 제거 후 최대 1,000건
+    # Abstract 없는 논문 제거 (건수 제한 없음 — select_papers.py에서 유형별 선별)
     before = len(parsed_papers)
-    parsed_papers = [p for p in parsed_papers if p.get("Abstract")][:1000]
+    parsed_papers = [p for p in parsed_papers if p.get("Abstract")]
     print(f"Abstract 필터: {before}건 → {len(parsed_papers)}건 (제거: {before - len(parsed_papers)}건)")
 
     output = {

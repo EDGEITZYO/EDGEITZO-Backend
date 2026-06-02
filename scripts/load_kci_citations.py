@@ -1,8 +1,9 @@
 """KCI Open API articleSearch + articleDetail → JAKO 인용수 + 결손 필드 보강.
 
 흐름:
-  JAKO CN → DOI로 articleSearch → article-id(ART...) → articleDetail
-  DOI 없는 케이스(2건): title+author로 articleSearch fallback
+  JAKO(DBCode 기준) CN → DOI로 articleSearch → article-id(ART...) → articleDetail
+  DOI 매칭 실패 시: 제목 완전일치(정규화)로 articleSearch 2차 시도
+  2차도 실패하면 unmatched 기록
 
 저장:
   - Neo4j Paper 노드: citation_count, doi, issn, journal_name 속성 업데이트
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import html
 import json
 import os
 import re
@@ -54,7 +56,7 @@ from app.models.paper import Paper
 
 CHECKPOINT_PATH = PROJECT_ROOT / "data" / "checkpoints" / "kci_citations.json"
 UNMATCHED_PATH  = PROJECT_ROOT / "data" / "unmatched"  / "kci_citations.json"
-PARSED_PATH     = PROJECT_ROOT / "data" / "parsed"     / "scienceon_keywords_normalized.json"
+PARSED_PATH     = PROJECT_ROOT / "data" / "parsed"     / "scienceon_enriched.json"
 
 RATE_LIMIT_DELAY = 0.12   # 초당 ~8건
 MAX_RETRIES      = 3
@@ -125,6 +127,16 @@ def _normalize_doi(doi: str | None) -> str | None:
     return doi or None
 
 
+def _normalize_title(title: str | None) -> str:
+    """제목 정규화: HTML 언이스케이프 → 태그 제거 → 공백 정규화 → 소문자화."""
+    if not title:
+        return ""
+    t = html.unescape(title)
+    t = re.sub(r"<[^>]+>", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t.lower()
+
+
 async def search_article_id(
     client: httpx.AsyncClient,
     *,
@@ -154,6 +166,48 @@ async def search_article_id(
             articles = articles[0]
         art_id = (articles or {}).get("@article-id") or (articles or {}).get("article-id")
         return str(art_id).strip() if art_id else None
+    except Exception:
+        return None
+
+
+async def _search_by_title_exact(client: httpx.AsyncClient, title_raw: str) -> str | None:
+    """제목 완전일치(정규화)로 KCI article-id 조회.
+
+    완전일치 1건만 채택. 0건 또는 복수 완전일치는 None(unmatched 유지).
+    KCI 응답의 @lang=original 제목만 비교 대상으로 삼는다.
+    """
+    our_norm = _normalize_title(title_raw)
+    if not our_norm:
+        return None
+
+    parsed = await _get_xml(client, _kci_params("articleSearch", title=our_norm[:100]))
+    if not parsed:
+        return None
+
+    try:
+        record = parsed.get("MetaData", {}).get("outputData", {}).get("record", {})
+        articles = record.get("articleInfo")
+        if not articles:
+            return None
+        if isinstance(articles, dict):
+            articles = [articles]
+
+        def _original_title(article: dict) -> str:
+            titles = article.get("title-group", {}).get("article-title", [])
+            if isinstance(titles, dict):
+                titles = [titles]
+            for t in titles:
+                if isinstance(t, dict) and t.get("@lang") == "original":
+                    return t.get("#text", "")
+            return ""
+
+        exact = [
+            a.get("@article-id")
+            for a in articles
+            if _normalize_title(_original_title(a)) == our_norm
+        ]
+        # 완전일치가 정확히 1건일 때만 채택
+        return str(exact[0]).strip() if len(exact) == 1 else None
     except Exception:
         return None
 
@@ -330,9 +384,15 @@ async def process_papers(
 
             await asyncio.sleep(RATE_LIMIT_DELAY)
 
-            # 케이스 B: DOI → articleSearch
-            # 케이스 C: title+author fallback
+            # 1차: DOI → articleSearch (DOI 없으면 title+author)
             art_id = await search_article_id(client, doi=doi, title=title if not doi else None, author=author if not doi else None)
+
+            # 2차: DOI 실패 시 제목 완전일치 fallback
+            if not art_id and title:
+                await asyncio.sleep(RATE_LIMIT_DELAY)
+                art_id = await _search_by_title_exact(client, title)
+                if art_id:
+                    print(f"    [title fallback] {cn} → {art_id}")
 
             if not art_id:
                 print(f"  [미매칭] {cn} — article-id 없음")
@@ -378,7 +438,7 @@ async def process_papers(
 
 def _load_jako_papers(limit: int | None) -> list[dict]:
     data = json.loads(PARSED_PATH.read_text(encoding="utf-8-sig"))
-    papers = [p for p in data.get("papers", []) if p.get("CN", "").startswith("JAKO")]
+    papers = [p for p in data.get("papers", []) if p.get("DBCode") == "JAKO"]
     if limit:
         papers = papers[:limit]
     return papers

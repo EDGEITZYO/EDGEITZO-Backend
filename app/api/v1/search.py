@@ -60,7 +60,8 @@ _VALID_SLOT_VALUES: dict[str, frozenset] = {
     "/search/papers",
     response_model=ApiResponse[SearchPapersResponse],
     responses={422: {"model": ApiErrorResponse}, 500: {"model": ApiErrorResponse}},
-    summary="논문 검색 (기존)",
+    summary="논문 검색 (단순)",
+    description="query + 필터로 즉시 검색. 슬롯 대화 없이 바로 결과 반환.",
 )
 async def search_papers(
     request: SearchPapersRequest,
@@ -83,15 +84,43 @@ class ChatRequest(BaseModel):
     force_start: bool = False
 
 
+class InterimPaper(BaseModel):
+    paper_id: str
+    title: str
+    journal: Optional[str]
+    pub_year: Optional[int]
+    paper_type: Optional[str]
+    keywords: List[str]
+    scope_badge: Optional[str]
+
+
+class FeedbackRequest(BaseModel):
+    session_id: str
+    paper_id: str
+    feedback: Literal["like", "dislike"]
+
+
+_FEEDBACK_KEY = "search_feedback:{session_id}"
+_INTERIM_THRESHOLD = 60  # completeness_pct >= 이 값이면 interim_papers 조회
+
+
+class SearchProgress(BaseModel):
+    percent: int    # 0~100
+    status: str     # "pending" | "in_progress" | "complete"
+
+
 class ChatResponse(BaseModel):
     session_id: str
+    turn: int
     ai_message: str
+    response_type: str  # "options" | "free_input" | "confirm"
     options: List[Dict[str, Any]]
     allow_multiple: bool
     search_preview: SearchPreview
     search_ready: bool
-    completeness_pct: int
-    search_stage: str  # "none" | "ready" | "emphasized" | "complete" — 프론트 UI 분기용
+    search_progress: SearchProgress
+    search_stage: str  # "none" | "ready" | "emphasized" | "complete"
+    interim_papers: List[InterimPaper] = []
     final_search_params: Optional[SearchParams]
 
 
@@ -238,7 +267,53 @@ def _apply_selected_options(
     return state
 
 
-@router.post("/search/chat", response_model=ApiResponse[ChatResponse])
+def _response_type(options: list, allow_multiple: bool, search_ready: bool) -> str:
+    if options:
+        return "options"
+    if search_ready:
+        return "confirm"
+    return "free_input"
+
+
+def _search_progress(pct: int) -> SearchProgress:
+    if pct >= 100:
+        status = "complete"
+    elif pct >= 60:
+        status = "in_progress"
+    else:
+        status = "pending"
+    return SearchProgress(percent=pct, status=status)
+
+
+def _turn_count(messages: list) -> int:
+    return sum(1 for m in messages if m.get("role") == "assistant")
+
+
+@router.post(
+    "/search/chat",
+    response_model=ApiResponse[ChatResponse],
+    summary="AI 슬롯 대화 — 1턴씩 호출",
+    description="""AI와 대화하며 검색 조건을 채워나가는 슬롯 방식 검색입니다.
+
+**사용 순서**
+1. **첫 턴** — `session_id: null`, `message`에 검색 주제 입력
+2. **이후 턴** — 응답의 `session_id` 재사용, `selected_options`에 `options[].value` 전달
+3. **검색 실행** — `search_ready: true`가 되면 `final_search_params`를 `/search/execute`로 전달
+
+**응답 필드 활용**
+- `response_type`: `"options"` → 버튼 선택 UI / `"free_input"` → 텍스트 입력 / `"confirm"` → 확인 버튼
+- `completeness_pct`: 0~100, 검색 구체화 진행률 (80% 이상이면 검색 가능 상태)
+- `search_stage`: `"none"` / `"ready"` / `"emphasized"` / `"complete"` — 버튼 활성화 분기용
+- `interim_papers`: 키워드 추출 완료 후(60% 이상) 미리 보여줄 논문 5건
+- `options[].value`: 다음 턴 `selected_options`에 그대로 전달
+
+**selected_options 값 예시**
+- 연구 목적: `"연구주제탐색"` `"논문작성참고"` `"랩미팅발표"` `"최신트렌드"`
+- 논문 범위: `"KCI"` `"SCI"` `"ALL"` `"ANY"`
+- 발행 연도: `"3Y"` `"5Y"` `"10Y"` `"YEAR_ALL"` `"SKIP"`
+- 검색 시작: `"start_search"`
+""",
+)
 async def chat_search(request: ChatRequest):
     session_id = request.session_id or str(uuid.uuid4())
     state = _load_state(session_id) or _new_state(session_id, request.message)
@@ -258,16 +333,48 @@ async def chat_search(request: ChatRequest):
     preview = result_state.get("search_preview") or build_search_preview(slots, state["user_query"])
     pct = calc_completeness(slots)
 
+    opts   = result_state.get("options") or []
+    multi  = result_state.get("allow_multiple", False)
+    ready  = result_state.get("search_ready", False)
+
+    # interim_papers: 키워드 추출 후(completeness>=60) 상위 5건 미리 노출
+    interim: list[InterimPaper] = []
+    if pct >= _INTERIM_THRESHOLD:
+        kws = slots.get("keywords") or []
+        if kws:
+            try:
+                from app.services.chroma_search_service import get_chroma_search_service
+                svc = get_chroma_search_service()
+                items = await svc.search(query=" ".join(kws), n_results=5)
+                _tmap = {"JAKO": "저널", "JAFO": "저널", "DIKO": "학위논문", "CFKO": "학회"}
+                for it in items:
+                    db_c = it.db_code or ""
+                    interim.append(InterimPaper(
+                        paper_id=it.paper_id,
+                        title=it.title,
+                        journal=it.journal_name,
+                        pub_year=it.year,
+                        paper_type=_tmap.get(db_c),
+                        keywords=it.keywords[:4],
+                        scope_badge="KCI" if db_c == "JAKO" else None,
+                    ))
+            except Exception:
+                pass
+
+    messages = result_state.get("messages") or []
     return success_response(
         data=ChatResponse(
             session_id=session_id,
+            turn=_turn_count(messages),
             ai_message=result_state.get("ai_message", ""),
-            options=result_state.get("options") or [],
-            allow_multiple=result_state.get("allow_multiple", False),
+            response_type=_response_type(opts, multi, ready),
+            options=opts,
+            allow_multiple=multi,
             search_preview=preview,
-            search_ready=result_state.get("search_ready", False),
-            completeness_pct=pct,
+            search_ready=ready,
+            search_progress=_search_progress(pct),
             search_stage=_completeness_stage(pct),
+            interim_papers=interim,
             final_search_params=result_state.get("final_search_params"),
         ),
         message="chat processed",
@@ -403,6 +510,33 @@ async def stream_preview(session_id: str):
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
+# ── 피드백 ────────────────────────────────────────────────────────────
+
+@router.post(
+    "/search/feedback",
+    summary="논문 좋아요/싫어요",
+    description="검색 결과 또는 대화 중 논문에 대한 피드백. session 당 paper별로 Redis에 저장.",
+)
+async def submit_feedback(request: FeedbackRequest):
+    r = get_redis(_REDIS_DB)
+    key = _FEEDBACK_KEY.format(session_id=request.session_id)
+    existing = json.loads(r.get(key) or "{}")
+    existing[request.paper_id] = request.feedback
+    r.set(key, json.dumps(existing, ensure_ascii=False), ex=_STATE_TTL)
+    return success_response(data={"ok": True}, message="feedback recorded")
+
+
+@router.get(
+    "/search/feedback/{session_id}",
+    summary="세션 피드백 조회",
+    description="session_id로 저장된 전체 피드백 목록 반환. {paper_id: 'like'|'dislike'}",
+)
+async def get_feedback(session_id: str):
+    r = get_redis(_REDIS_DB)
+    data = json.loads(r.get(_FEEDBACK_KEY.format(session_id=session_id)) or "{}")
+    return success_response(data=data, message="ok")
+
+
 # ── PART A 실행 검색 ───────────────────────────────────────────────────
 
 class PaperResult(BaseModel):
@@ -414,18 +548,20 @@ class PaperResult(BaseModel):
     paper_type: Optional[str]
     abstract: Optional[str]
     keywords: List[str]
+    doi: Optional[str] = None
     scope_badge: Optional[str]
     citation_count: Optional[int]
     relevance_score: float
     trust_badge: Optional[str] = None
-    keyword_map_data: None = None  # 현재 미사용 — 추후 논문상세 화면에서 연결 예정, 리스트에선 항상 null
+    keyword_map_data: None = None
 
 
 class ExecuteRequest(BaseModel):
     session_id: str
     search_params: SearchParams
-    filter_paper_type: Optional[str] = None  # "저널"|"학위논문"|"학회"|"전체"|null → null/전체 시 필터 없음
+    filter_paper_type: Optional[Literal["저널", "학위논문", "학회", "전체"]] = None
     sort_order: Literal["relevance", "year_asc", "year_desc"] = "relevance"
+    user_id: Optional[str] = None  # 검색 이력 저장용 (선택)
 
 
 class ExecuteResponse(BaseModel):
@@ -434,7 +570,16 @@ class ExecuteResponse(BaseModel):
     search_id: str
 
 
-@router.post("/search/execute", response_model=ApiResponse[ExecuteResponse])
+@router.post(
+    "/search/execute",
+    response_model=ApiResponse[ExecuteResponse],
+    summary="슬롯 대화 완료 후 실행 검색",
+    description=(
+        "search_ready=true 상태의 final_search_params를 그대로 search_params에 전달.\n"
+        "filter_paper_type: '저널'|'학위논문'|'학회'|'전체'|null (null=전체).\n"
+        "sort_order: 'relevance'|'year_asc'|'year_desc'."
+    ),
+)
 async def execute_search_endpoint(
     request: ExecuteRequest,
     db: AsyncSession = Depends(get_db),
@@ -445,6 +590,26 @@ async def execute_search_endpoint(
         filter_paper_type=request.filter_paper_type,
         sort_order=request.sort_order,
     )
+
+    # 검색 이력 저장 (user_id 제공 시)
+    if request.user_id:
+        try:
+            from app.api.v1.home import save_search_history
+            state = _load_state(request.session_id)
+            slots = (state or {}).get("slots", {})
+            user_query = (state or {}).get("user_query", "")
+            kws = request.search_params.get("keywords") or []
+            save_search_history(
+                user_id=request.user_id,
+                search_type="ai",
+                title=user_query or " ".join(kws[:2]) or "AI 검색",
+                search_id=result["search_id"],
+                recommended_keywords=kws,
+                slots=dict(slots),
+            )
+        except Exception:
+            pass
+
     return success_response(
         data=ExecuteResponse(
             papers=[PaperResult(**p) for p in result["papers"]],

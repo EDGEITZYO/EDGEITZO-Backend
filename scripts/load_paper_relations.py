@@ -20,7 +20,8 @@ import asyncpg
 
 from app.core.settings import settings
 
-DETAILS_PATH = _PROJECT_ROOT / "data" / "parsed" / "paper_details.json"
+DETAILS_PATH  = _PROJECT_ROOT / "data" / "parsed" / "paper_details.json"
+ENRICHED_PATH = _PROJECT_ROOT / "data" / "parsed" / "scienceon_enriched.json"
 
 _DOI_PREFIXES = (
     "https://doi.org/",
@@ -57,12 +58,23 @@ async def _build_cn_set(conn: asyncpg.Connection) -> set[str]:
 
 
 async def main() -> None:
-    if not DETAILS_PATH.exists():
-        print(f"[오류] {DETAILS_PATH} 없음. recollect_papers_detail.py 먼저 실행하세요.")
+    # enriched 파일 우선, 없으면 paper_details.json 사용
+    if ENRICHED_PATH.exists():
+        data = json.loads(ENRICHED_PATH.read_text(encoding="utf-8"))
+        details: dict[str, dict] = {
+            p["CN"]: {"references": p.get("references", []), "similar": p.get("similar", [])}
+            for p in data.get("papers", [])
+            if p.get("CN")
+        }
+        print(f"[입력] {ENRICHED_PATH.name}")
+    elif DETAILS_PATH.exists():
+        data = json.loads(DETAILS_PATH.read_text(encoding="utf-8"))
+        details = data["details"]
+        print(f"[입력] {DETAILS_PATH.name}")
+    else:
+        print(f"[오류] 입력 파일 없음. enrich_selected.py 또는 recollect_papers_detail.py를 먼저 실행하세요.")
         sys.exit(1)
 
-    data = json.loads(DETAILS_PATH.read_text(encoding="utf-8"))
-    details: dict[str, dict] = data["details"]
     print(f"=== paper_relations 적재 시작: {len(details)}건 ===")
 
     db_url = settings.database_url.replace("postgresql+asyncpg", "postgresql")

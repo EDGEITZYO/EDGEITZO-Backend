@@ -201,19 +201,20 @@ async def execute_search(
     papers = []
     for item in items[:size]:
         papers.append({
-            "paper_id": item.paper_id,
-            "title": item.title,
-            "authors": [a.name for a in item.authors],
-            "pub_year": item.year,
-            "journal": item.journal_name,
-            "paper_type": _db_code_to_paper_type(item.db_code),
-            "abstract": item.abstract,
-            "keywords": item.keywords,
-            "scope_badge": _resolve_scope_badge(item.credibility),
+            "paper_id":       item.paper_id,
+            "title":          item.title,
+            "authors":        [a.name for a in item.authors],
+            "pub_year":       item.year,
+            "journal":        item.journal_name,
+            "paper_type":     _db_code_to_paper_type(item.db_code),
+            "abstract":       item.abstract,
+            "keywords":       item.keywords,
+            "doi":            item.doi,
+            "scope_badge":    _resolve_scope_badge(item.credibility),
             "citation_count": item.credibility.citation_count,
             "relevance_score": item.score,
-            "trust_badge": item.credibility.badge if item.credibility.badge != "unknown" else None,
-            "keyword_map_data": None,  # TODO: 키워드맵 연결 후 구현
+            "trust_badge":    item.credibility.badge if item.credibility.badge != "unknown" else None,
+            "keyword_map_data": None,
         })
 
     import uuid

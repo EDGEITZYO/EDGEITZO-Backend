@@ -54,7 +54,7 @@ from app.models.paper import Paper
 
 CHECKPOINT_PATH = PROJECT_ROOT / "data" / "checkpoints" / "diko_thesis_meta.json"
 UNMATCHED_PATH  = PROJECT_ROOT / "data" / "unmatched"   / "diko_thesis_meta.json"
-PARSED_PATH     = PROJECT_ROOT / "data" / "parsed"      / "scienceon_keywords_normalized.json"
+PARSED_PATH     = PROJECT_ROOT / "data" / "parsed"      / "scienceon_enriched.json"
 
 RATE_LIMIT_DELAY = 0.15
 MAX_RETRIES      = 3

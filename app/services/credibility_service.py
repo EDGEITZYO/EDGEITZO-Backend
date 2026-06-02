@@ -142,6 +142,46 @@ def calculate_citation_only_credibility(citation_count: int | None) -> Credibili
     return calculate_credibility(citation_count=citation_count)
 
 
+def calculate_thesis_credibility(
+    degree: str | None,
+    affiliation: str | None,
+) -> CredibilityInfo:
+    """DIKO 학위논문 전용 신뢰도. 점수 계산 없이 학위종류+기관 표시."""
+    degree_s = (degree or "").strip()
+    affil_s  = (affiliation or "").strip()
+
+    if "박사" in degree_s:
+        badge: CredibilityBadge = "medium"
+        degree_label = "박사학위 논문"
+    elif "석사" in degree_s:
+        badge = "low"
+        degree_label = "석사학위 논문"
+    else:
+        badge = "unknown"
+        degree_label = "학위논문"
+
+    parts = [degree_label]
+    if affil_s:
+        parts.append(affil_s)
+    summary = " / ".join(parts)
+
+    return CredibilityInfo(
+        badge=badge,
+        citation_count=None,
+        citation_badge=None,
+        impact_factor=None,
+        impact_factor_badge=None,
+        kci_registered=None,
+        kci_badge=None,
+        sci_indexed=None,
+        sci_badge=None,
+        sjr_quartile=None,
+        sjr_score=None,
+        h_index=None,
+        summary=summary,
+    )
+
+
 def _journal_to_evidence(journal: Journal | None) -> JournalEvidence | None:
     if journal is None:
         return None

@@ -67,6 +67,9 @@ data/kci_raw/*.csv
 data/checkpoints/*.json
 data/unmatched/*.json
 
+# 백업 파일 — 대용량, 로컬 전용
+data/backups/
+
 # Redis dump
 dump.rdb
 

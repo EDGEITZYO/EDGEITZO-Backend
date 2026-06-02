@@ -16,6 +16,7 @@ from app.models.user_keyword_map import UserKeywordMap
 from app.schemas.search import PaperSearchItem
 from app.services.chroma_search_service import get_chroma_search_service
 from app.services.neo4j_search_service import get_paper_ids_by_keyword
+from app.api.v1.home import save_search_history
 
 router = APIRouter()
 
@@ -35,6 +36,7 @@ class KeywordPaperRequest(BaseModel):
     year_range: Optional[str] = None   # "3y" | "5y" | "10y" | "all"
     page: int = 1
     size: int = 30
+    user_id: Optional[str] = None  # 검색 이력 저장용 (선택)
 
 
 class PaperResult(BaseModel):
@@ -46,11 +48,13 @@ class PaperResult(BaseModel):
     paper_type: Optional[str]
     abstract: Optional[str]
     keywords: List[str]
+    doi_url: Optional[str] = None
     scope_badge: Optional[str]
     citation_count: Optional[int]
     relevance_score: float
     trust_badge: None = None
     keyword_map_data: None = None
+    related_papers: List = []  # MVP 이후 paper_similar 테이블 연결 예정
 
 
 class KeywordPaperResponse(BaseModel):
@@ -77,21 +81,29 @@ def _apply_year_filter(items: list[PaperSearchItem], year_range: Optional[str]) 
     return [i for i in items if i.year and i.year >= cutoff]
 
 
+_PAPER_TYPE_MAP = {"JAKO": "저널", "JAFO": "저널", "DIKO": "학위논문", "CFKO": "학회"}
+
+
 def _to_result(item: PaperSearchItem) -> PaperResult:
+    db    = item.db_code or ""
+    scope = "KCI" if db == "JAKO" else None
+    trust = item.credibility.badge if item.credibility.badge != "unknown" else None
     return PaperResult(
         paper_id=item.paper_id,
         title=item.title,
         authors=[a.name for a in item.authors],
         pub_year=item.year,
         journal=item.journal_name,
-        paper_type=None,
+        paper_type=_PAPER_TYPE_MAP.get(db),
         abstract=item.abstract,
         keywords=item.keywords,
-        scope_badge=None,
+        doi_url=item.doi or None,
+        scope_badge=scope,
         citation_count=item.credibility.citation_count,
         relevance_score=item.score,
         trust_badge=None,
         keyword_map_data=None,
+        related_papers=[],
     )
 
 
@@ -166,6 +178,20 @@ async def search_papers_by_keyword(request: KeywordPaperRequest):
     # 5. 페이지네이션
     offset = (request.page - 1) * request.size
     paged = items[offset: offset + request.size]
+
+    # 6. 검색 이력 저장 (user_id 제공 시, 첫 결과 반환 시점)
+    if request.user_id and request.page == 1:
+        try:
+            search_id = str(_uuid.uuid4())
+            save_search_history(
+                user_id=request.user_id,
+                search_type="keyword",
+                title=request.keyword,
+                search_id=search_id,
+                keyword_path=[request.keyword],  # breadcrumb로 현재 노드만
+            )
+        except Exception:
+            pass  # 이력 저장 실패는 검색 결과에 영향 없음
 
     return success_response(
         data=KeywordPaperResponse(
