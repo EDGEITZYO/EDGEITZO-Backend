@@ -811,5 +811,2894 @@
   },
   "ATN0057397136": {
     "status": "unmatched"
+  },
+  "JAKO202514254005832": {
+    "status": "ok",
+    "art_id": "ART003181594",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:41.244533+00:00"
+  },
+  "JAKO202513564802227": {
+    "status": "ok",
+    "art_id": "ART003200990",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:41.996415+00:00"
+  },
+  "JAKO202528336066768": {
+    "status": "ok",
+    "art_id": "ART003234168",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:42.566591+00:00"
+  },
+  "JAKO202503643234055": {
+    "status": "ok",
+    "art_id": "ART003272008",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:43.267587+00:00"
+  },
+  "JAKO202520532401511": {
+    "status": "ok",
+    "art_id": "ART003223997",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:43:44.044877+00:00"
+  },
+  "JAKO202530461276990": {
+    "status": "unmatched"
+  },
+  "JAKO202530261287100": {
+    "status": "unmatched"
+  },
+  "JAKO202517561205072": {
+    "status": "ok",
+    "art_id": "ART003211418",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:45.938729+00:00"
+  },
+  "JAKO202502972015787": {
+    "status": "unmatched"
+  },
+  "JAKO202512243203599": {
+    "status": "ok",
+    "art_id": "ART003198160",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:47.270581+00:00"
+  },
+  "JAKO202506854131718": {
+    "status": "unmatched"
+  },
+  "JAKO202515636001647": {
+    "status": "ok",
+    "art_id": "ART003191733",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:48.445445+00:00"
+  },
+  "JAKO202517150404839": {
+    "status": "ok",
+    "art_id": "ART003207897",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:49.005610+00:00"
+  },
+  "JAKO202517139603047": {
+    "status": "ok",
+    "art_id": "ART003207892",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:49.621874+00:00"
+  },
+  "JAKO202516143202255": {
+    "status": "unmatched"
+  },
+  "JAKO202516050403788": {
+    "status": "ok",
+    "art_id": "ART003191732",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:50.790968+00:00"
+  },
+  "JAKO202405657482171": {
+    "status": "ok",
+    "art_id": "ART003159489",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:51.496644+00:00"
+  },
+  "JAKO202409643345381": {
+    "status": "ok",
+    "art_id": "ART003057424",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:43:52.355493+00:00"
+  },
+  "JAKO202434141531197": {
+    "status": "ok",
+    "art_id": "ART003137721",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:53.140801+00:00"
+  },
+  "JAKO202403557600759": {
+    "status": "ok",
+    "art_id": "ART003145237",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:53.757894+00:00"
+  },
+  "JAKO202425457644161": {
+    "status": "ok",
+    "art_id": "ART003108334",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:54.423321+00:00"
+  },
+  "JAKO202410843384883": {
+    "status": "ok",
+    "art_id": "ART003062262",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:54.977703+00:00"
+  },
+  "JAKO202421243315528": {
+    "status": "ok",
+    "art_id": "ART003097875",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:55.793068+00:00"
+  },
+  "JAKO202422172881852": {
+    "status": "ok",
+    "art_id": "ART003091746",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:56.633824+00:00"
+  },
+  "JAKO202412064801246": {
+    "status": "ok",
+    "art_id": "ART003106644",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:43:57.364984+00:00"
+  },
+  "JAKO202429765160648": {
+    "status": "ok",
+    "art_id": "ART003164288",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:58.236094+00:00"
+  },
+  "JAKO202417357807617": {
+    "status": "ok",
+    "art_id": "ART003086468",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:59.049344+00:00"
+  },
+  "JAKO202421457661315": {
+    "status": "ok",
+    "art_id": "ART003097941",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:43:59.695500+00:00"
+  },
+  "JAKO202408858142542": {
+    "status": "ok",
+    "art_id": "ART003054971",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:00.526657+00:00"
+  },
+  "JAKO202464143236197": {
+    "status": "unmatched"
+  },
+  "JAKO202426377388868": {
+    "status": "ok",
+    "art_id": "ART003049165",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:02.349071+00:00"
+  },
+  "JAKO202422057628358": {
+    "status": "ok",
+    "art_id": "ART003099344",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:03.386838+00:00"
+  },
+  "JAKO202423377665758": {
+    "status": "ok",
+    "art_id": "ART003102232",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:03.991641+00:00"
+  },
+  "JAKO202426377403628": {
+    "status": "ok",
+    "art_id": "ART003084655",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:04.591896+00:00"
+  },
+  "JAKO202415561204719": {
+    "status": "ok",
+    "art_id": "ART003143523",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:05.126869+00:00"
+  },
+  "JAKO202412743201264": {
+    "status": "ok",
+    "art_id": "ART003051490",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:05.828844+00:00"
+  },
+  "JAKO202426757811855": {
+    "status": "ok",
+    "art_id": "ART003106346",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:06.551482+00:00"
+  },
+  "JAKO202420443294349": {
+    "status": "ok",
+    "art_id": "ART003080120",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:07.175445+00:00"
+  },
+  "JAKO202426377401527": {
+    "status": "ok",
+    "art_id": "ART003084654",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:07.784489+00:00"
+  },
+  "JAKO202410643302351": {
+    "status": "ok",
+    "art_id": "ART003049658",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:08.606531+00:00"
+  },
+  "JAKO202420443236295": {
+    "status": "ok",
+    "art_id": "ART003080065",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:44:09.234349+00:00"
+  },
+  "JAKO202331162164123": {
+    "status": "ok",
+    "art_id": "ART003004923",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:10.119217+00:00"
+  },
+  "JAKO202305846338654": {
+    "status": "unmatched"
+  },
+  "JAKO202325458153055": {
+    "status": "ok",
+    "art_id": "ART002988799",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:44:11.375904+00:00"
+  },
+  "JAKO202317752622099": {
+    "status": "ok",
+    "art_id": "ART002966316",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:11.982172+00:00"
+  },
+  "JAKO202331947440878": {
+    "status": "ok",
+    "art_id": "ART003059055",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:44:13.253677+00:00"
+  },
+  "JAKO202313063554160": {
+    "status": "ok",
+    "art_id": "ART002948879",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:44:14.028881+00:00"
+  },
+  "JAKO202301057645892": {
+    "status": "ok",
+    "art_id": "ART003031165",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:15.022603+00:00"
+  },
+  "JAKO202303944159768": {
+    "status": "ok",
+    "art_id": "ART003025195",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:44:15.855723+00:00"
+  },
+  "JAKO202317752555928": {
+    "status": "ok",
+    "art_id": "ART002960849",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:44:16.478554+00:00"
+  },
+  "JAKO202306685154471": {
+    "status": "ok",
+    "art_id": "ART003038931",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:17.286587+00:00"
+  },
+  "JAKO202314843249154": {
+    "status": "ok",
+    "art_id": "ART003025082",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:18.019558+00:00"
+  },
+  "JAKO202313158763652": {
+    "status": "ok",
+    "art_id": "ART002931165",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:44:18.952225+00:00"
+  },
+  "JAKO202316061706085": {
+    "status": "ok",
+    "art_id": "ART002961816",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:19.726779+00:00"
+  },
+  "JAKO202316061727777": {
+    "status": "unmatched"
+  },
+  "JAKO202319151144922": {
+    "status": "ok",
+    "art_id": "ART002974942",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:21.172649+00:00"
+  },
+  "JAKO202316061700149": {
+    "status": "ok",
+    "art_id": "ART002961813",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:21.903657+00:00"
+  },
+  "JAKO202311372102824": {
+    "status": "ok",
+    "art_id": "ART003008846",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:22.518509+00:00"
+  },
+  "JAKO202318035798031": {
+    "status": "unmatched"
+  },
+  "JAKO202311372075274": {
+    "status": "ok",
+    "art_id": "ART002979310",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:24.254238+00:00"
+  },
+  "JAKO202324536063304": {
+    "status": "ok",
+    "art_id": "ART002963450",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:24.977782+00:00"
+  },
+  "JAKO202324139673969": {
+    "status": "ok",
+    "art_id": "ART003003915",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:25.693770+00:00"
+  },
+  "JAKO202311372008258": {
+    "status": "ok",
+    "art_id": "ART002929722",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:44:26.436337+00:00"
+  },
+  "JAKO202331947438612": {
+    "status": "ok",
+    "art_id": "ART003059056",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:27.145871+00:00"
+  },
+  "JAKO202311372114812": {
+    "status": "ok",
+    "art_id": "ART003013529",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:44:27.770035+00:00"
+  },
+  "JAKO202329657657860": {
+    "status": "ok",
+    "art_id": "ART003001030",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:44:28.473502+00:00"
+  },
+  "JAKO202324536063659": {
+    "status": "ok",
+    "art_id": "ART002947013",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:29.100458+00:00"
+  },
+  "JAKO202309543444397": {
+    "status": "ok",
+    "art_id": "ART002933468",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:44:29.909766+00:00"
+  },
+  "JAKO202311372132683": {
+    "status": "ok",
+    "art_id": "ART003025175",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:30.745087+00:00"
+  },
+  "JAKO202314538182255": {
+    "status": "unmatched"
+  },
+  "JAKO202324564826619": {
+    "status": "ok",
+    "art_id": "ART003003919",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:31.956563+00:00"
+  },
+  "JAKO202324550478212": {
+    "status": "ok",
+    "art_id": "ART003003922",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:32.653142+00:00"
+  },
+  "JAKO202318136564429": {
+    "status": "ok",
+    "art_id": "ART002968358",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:33.482400+00:00"
+  },
+  "JAKO202324539641865": {
+    "status": "ok",
+    "art_id": "ART002963434",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:33.987256+00:00"
+  },
+  "JAKO202225751737139": {
+    "status": "ok",
+    "art_id": "ART002868767",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:35.418994+00:00"
+  },
+  "JAKO202219656439808": {
+    "status": "ok",
+    "art_id": "ART002850225",
+    "citation_count": 6,
+    "processed_at": "2026-06-02T08:44:36.221217+00:00"
+  },
+  "JAKO202206881711277": {
+    "status": "ok",
+    "art_id": "ART002904786",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:36.952064+00:00"
+  },
+  "JAKO202210450796568": {
+    "status": "ok",
+    "art_id": "ART002821469",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:44:37.605285+00:00"
+  },
+  "JAKO202207750106257": {
+    "status": "unmatched"
+  },
+  "JAKO202210152705849": {
+    "status": "ok",
+    "art_id": "ART002917492",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:44:38.877750+00:00"
+  },
+  "JAKO202211154000297": {
+    "status": "ok",
+    "art_id": "ART002823634",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:44:39.540900+00:00"
+  },
+  "JAKO202234161071002": {
+    "status": "ok",
+    "art_id": "ART002898275",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:40.654060+00:00"
+  },
+  "JAKO202232651627760": {
+    "status": "ok",
+    "art_id": "ART002874580",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:41.435217+00:00"
+  },
+  "JAKO202211258154666": {
+    "status": "ok",
+    "art_id": "ART002824873",
+    "citation_count": 6,
+    "processed_at": "2026-06-02T08:44:42.387005+00:00"
+  },
+  "JAKO202234257561843": {
+    "status": "ok",
+    "art_id": "ART002898663",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:43.186090+00:00"
+  },
+  "JAKO202234257588848": {
+    "status": "ok",
+    "art_id": "ART002898662",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:44:43.955811+00:00"
+  },
+  "JAKO202225852201741": {
+    "status": "ok",
+    "art_id": "ART002871190",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:44.532971+00:00"
+  },
+  "JAKO202216760174366": {
+    "status": "ok",
+    "art_id": "ART002837652",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:45.355824+00:00"
+  },
+  "JAKO202200948203267": {
+    "status": "ok",
+    "art_id": "ART002912412",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:46.790075+00:00"
+  },
+  "JAKO202227252649415": {
+    "status": "ok",
+    "art_id": "ART002877824",
+    "citation_count": 4,
+    "processed_at": "2026-06-02T08:44:47.503445+00:00"
+  },
+  "JAKO202216466710649": {
+    "status": "ok",
+    "art_id": "ART002841330",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:44:48.113453+00:00"
+  },
+  "JAKO202216053142963": {
+    "status": "ok",
+    "art_id": "ART002842215",
+    "citation_count": 5,
+    "processed_at": "2026-06-02T08:44:48.964285+00:00"
+  },
+  "JAKO202227252647415": {
+    "status": "ok",
+    "art_id": "ART002877823",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:44:49.830620+00:00"
+  },
+  "JAKO202230858654609": {
+    "status": "ok",
+    "art_id": "ART002889573",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:50.567048+00:00"
+  },
+  "JAKO202208332486263": {
+    "status": "ok",
+    "art_id": "ART002902970",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:51.485763+00:00"
+  },
+  "JAKO202228654453679": {
+    "status": "ok",
+    "art_id": "ART002883234",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:52.324374+00:00"
+  },
+  "JAKO202206881683121": {
+    "status": "ok",
+    "art_id": "ART002904754",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:53.016073+00:00"
+  },
+  "JAKO202230853518189": {
+    "status": "ok",
+    "art_id": "ART002873072",
+    "citation_count": 7,
+    "processed_at": "2026-06-02T08:44:53.960008+00:00"
+  },
+  "JAKO202231461110551": {
+    "status": "ok",
+    "art_id": "ART002890506",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:54.920827+00:00"
+  },
+  "JAKO202233553574896": {
+    "status": "ok",
+    "art_id": "ART002893425",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:55.695640+00:00"
+  },
+  "JAKO202217163731797": {
+    "status": "unmatched"
+  },
+  "JAKO202205860604102": {
+    "status": "ok",
+    "art_id": "ART002905479",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:44:58.264505+00:00"
+  },
+  "JAKO202210248803686": {
+    "status": "ok",
+    "art_id": "ART002818152",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:44:59.100215+00:00"
+  },
+  "JAKO202209537244847": {
+    "status": "ok",
+    "art_id": "ART002813420",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:44:59.706317+00:00"
+  },
+  "JAKO202216054035516": {
+    "status": "ok",
+    "art_id": "ART002842916",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:00.539876+00:00"
+  },
+  "JAKO202218754451777": {
+    "status": "ok",
+    "art_id": "ART002851406",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:01.437032+00:00"
+  },
+  "JAKO202214049410870": {
+    "status": "ok",
+    "art_id": "ART002817352",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:45:02.072824+00:00"
+  },
+  "JAKO202213159102617": {
+    "status": "ok",
+    "art_id": "ART002834082",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:45:02.739014+00:00"
+  },
+  "JAKO202205360798479": {
+    "status": "ok",
+    "art_id": "ART002920672",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:03.589042+00:00"
+  },
+  "JAKO202225752963102": {
+    "status": "ok",
+    "art_id": "ART002869933",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:04.237932+00:00"
+  },
+  "JAKO202226165205096": {
+    "status": "unmatched"
+  },
+  "JAKO202220760981231": {
+    "status": "ok",
+    "art_id": "ART002847311",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:05.536922+00:00"
+  },
+  "JAKO202235372010783": {
+    "status": "ok",
+    "art_id": "ART002913051",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:06.327826+00:00"
+  },
+  "JAKO202232055734397": {
+    "status": "ok",
+    "art_id": "ART002895577",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:45:07.170863+00:00"
+  },
+  "JAKO202213257601185": {
+    "status": "ok",
+    "art_id": "ART002925313",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:07.890162+00:00"
+  },
+  "JAKO202231959363989": {
+    "status": "ok",
+    "art_id": "ART002873125",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:09.172232+00:00"
+  },
+  "JAKO202211261566255": {
+    "status": "ok",
+    "art_id": "ART002829552",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:09.932336+00:00"
+  },
+  "JAKO202210451548570": {
+    "status": "ok",
+    "art_id": "ART002821700",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:45:10.767006+00:00"
+  },
+  "JAKO202225851645281": {
+    "status": "ok",
+    "art_id": "ART002869264",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:45:11.561389+00:00"
+  },
+  "JAKO202213841503209": {
+    "status": "ok",
+    "art_id": "ART002831935",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:12.391706+00:00"
+  },
+  "JAKO202218754088080": {
+    "status": "ok",
+    "art_id": "ART002849011",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:12.995751+00:00"
+  },
+  "JAKO202230855032451": {
+    "status": "ok",
+    "art_id": "ART002889995",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:13.637372+00:00"
+  },
+  "JAKO202216458039813": {
+    "status": "ok",
+    "art_id": "ART002844182",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:14.755267+00:00"
+  },
+  "JAKO202213841501209": {
+    "status": "unmatched"
+  },
+  "JAKO202200948210268": {
+    "status": "ok",
+    "art_id": "ART002912420",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:16.113577+00:00"
+  },
+  "JAKO202208933667678": {
+    "status": "ok",
+    "art_id": "ART002807216",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:16.894625+00:00"
+  },
+  "JAKO202219559491573": {
+    "status": "ok",
+    "art_id": "ART002856245",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:18.020437+00:00"
+  },
+  "JAKO202200948205268": {
+    "status": "ok",
+    "art_id": "ART002912628",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:18.920191+00:00"
+  },
+  "JAKO202236041251951": {
+    "status": "ok",
+    "art_id": "ART002906287",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:20.244316+00:00"
+  },
+  "JAKO202210157741221": {
+    "status": "ok",
+    "art_id": "ART002875335",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:21.085932+00:00"
+  },
+  "JAKO202208761085839": {
+    "status": "ok",
+    "art_id": "ART002811554",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:21.834736+00:00"
+  },
+  "JAKO202228553560090": {
+    "status": "ok",
+    "art_id": "ART002882940",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:45:22.622846+00:00"
+  },
+  "JAKO202217157864613": {
+    "status": "unmatched"
+  },
+  "JAKO202210261278371": {
+    "status": "ok",
+    "art_id": "ART002817041",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:23.953375+00:00"
+  },
+  "JAKO202225852212743": {
+    "status": "ok",
+    "art_id": "ART002871027",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:24.489523+00:00"
+  },
+  "JAKO202210351451881": {
+    "status": "ok",
+    "art_id": "ART002819742",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:25.400857+00:00"
+  },
+  "JAKO202234257579846": {
+    "status": "ok",
+    "art_id": "ART002898704",
+    "citation_count": 5,
+    "processed_at": "2026-06-02T08:45:26.181499+00:00"
+  },
+  "JAKO202116047189036": {
+    "status": "unmatched"
+  },
+  "JAKO202118752876721": {
+    "status": "ok",
+    "art_id": "ART002726528",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:27.548744+00:00"
+  },
+  "JAKO202125240402705": {
+    "status": "ok",
+    "art_id": "ART002747645",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:28.135320+00:00"
+  },
+  "JAKO202125658900560": {
+    "status": "ok",
+    "art_id": "ART002748305",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:28.771602+00:00"
+  },
+  "JAKO202108337071543": {
+    "status": "ok",
+    "art_id": "ART002679938",
+    "citation_count": 8,
+    "processed_at": "2026-06-02T08:45:29.595208+00:00"
+  },
+  "JAKO202104851297548": {
+    "status": "ok",
+    "art_id": "ART002794972",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:30.216478+00:00"
+  },
+  "JAKO202111236744636": {
+    "status": "unmatched"
+  },
+  "JAKO202130865195567": {
+    "status": "ok",
+    "art_id": "ART002768355",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:45:32.228001+00:00"
+  },
+  "JAKO202111236744617": {
+    "status": "ok",
+    "art_id": "ART002691912",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:45:32.992623+00:00"
+  },
+  "JAKO202123261856166": {
+    "status": "ok",
+    "art_id": "ART002741449",
+    "citation_count": 4,
+    "processed_at": "2026-06-02T08:45:33.662796+00:00"
+  },
+  "JAKO202125761320613": {
+    "status": "ok",
+    "art_id": "ART002746494",
+    "citation_count": 5,
+    "processed_at": "2026-06-02T08:45:34.509685+00:00"
+  },
+  "JAKO202131559511418": {
+    "status": "unmatched"
+  },
+  "JAKO202113759911008": {
+    "status": "ok",
+    "art_id": "ART002709264",
+    "citation_count": 9,
+    "processed_at": "2026-06-02T08:45:35.939887+00:00"
+  },
+  "JAKO202169436738270": {
+    "status": "unmatched"
+  },
+  "JAKO202111037333889": {
+    "status": "ok",
+    "art_id": "ART002697124",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:45:37.374460+00:00"
+  },
+  "JAKO202122949757965": {
+    "status": "ok",
+    "art_id": "ART002725276",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:38.197192+00:00"
+  },
+  "JAKO202108455944280": {
+    "status": "ok",
+    "art_id": "ART002780706",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:38.923197+00:00"
+  },
+  "JAKO202108259701622": {
+    "status": "ok",
+    "art_id": "ART002796737",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:39.546667+00:00"
+  },
+  "JAKO202104851293547": {
+    "status": "ok",
+    "art_id": "ART002794965",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:40.202014+00:00"
+  },
+  "JAKO202106942360753": {
+    "status": "ok",
+    "art_id": "ART002792213",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:40.987205+00:00"
+  },
+  "JAKO202110650791917": {
+    "status": "ok",
+    "art_id": "ART002685834",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:45:41.695962+00:00"
+  },
+  "JAKO202118742231037": {
+    "status": "ok",
+    "art_id": "ART002725674",
+    "citation_count": 8,
+    "processed_at": "2026-06-02T08:45:43.086216+00:00"
+  },
+  "JAKO202104851325555": {
+    "status": "ok",
+    "art_id": "ART002781047",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:43.830986+00:00"
+  },
+  "JAKO202110650792447": {
+    "status": "ok",
+    "art_id": "ART002700818",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:44.762694+00:00"
+  },
+  "JAKO202107356008098": {
+    "status": "ok",
+    "art_id": "ART002789376",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:45.643743+00:00"
+  },
+  "NART119607069": {
+    "status": "ok",
+    "art_id": "ART002714684",
+    "citation_count": 5,
+    "processed_at": "2026-06-02T08:45:46.347738+00:00"
+  },
+  "JAKO202126758055536": {
+    "status": "ok",
+    "art_id": "ART002752155",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:47.106630+00:00"
+  },
+  "NART119607061": {
+    "status": "ok",
+    "art_id": "ART002714663",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:45:47.696552+00:00"
+  },
+  "JAKO202132151355434": {
+    "status": "ok",
+    "art_id": "ART002773249",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:48.450743+00:00"
+  },
+  "JAKO202130865203568": {
+    "status": "ok",
+    "art_id": "ART002773995",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:45:49.235120+00:00"
+  },
+  "JAKO202106942352750": {
+    "status": "unmatched"
+  },
+  "JAKO202108358396205": {
+    "status": "ok",
+    "art_id": "ART002800378",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:50.661515+00:00"
+  },
+  "JAKO202125761304609": {
+    "status": "ok",
+    "art_id": "ART002746480",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:51.509391+00:00"
+  },
+  "JAKO202104851294547": {
+    "status": "ok",
+    "art_id": "ART002794943",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:52.222096+00:00"
+  },
+  "JAKO202119759429820": {
+    "status": "unmatched"
+  },
+  "JAKO202113759910431": {
+    "status": "unmatched"
+  },
+  "JAKO202128054565785": {
+    "status": "ok",
+    "art_id": "ART002757522",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:45:54.566863+00:00"
+  },
+  "JAKO202112054772822": {
+    "status": "unmatched"
+  },
+  "JAKO202127948034888": {
+    "status": "ok",
+    "art_id": "ART002756450",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:55.786329+00:00"
+  },
+  "JAKO202109960884615": {
+    "status": "ok",
+    "art_id": "ART002686641",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:45:56.609355+00:00"
+  },
+  "NART125449906": {
+    "status": "ok",
+    "art_id": "ART002723115",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:45:57.451589+00:00"
+  },
+  "JAKO202128054412750": {
+    "status": "ok",
+    "art_id": "ART002758555",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:58.155410+00:00"
+  },
+  "JAKO202120760987233": {
+    "status": "ok",
+    "art_id": "ART002784614",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:58.818547+00:00"
+  },
+  "JAKO202106153178641": {
+    "status": "ok",
+    "art_id": "ART002797295",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:45:59.632210+00:00"
+  },
+  "JAKO202113157687759": {
+    "status": "ok",
+    "art_id": "ART002752372",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:46:00.332030+00:00"
+  },
+  "JAKO202122450485310": {
+    "status": "ok",
+    "art_id": "ART002725709",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:00.867866+00:00"
+  },
+  "JAKO202116739399224": {
+    "status": "ok",
+    "art_id": "ART002714670",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:46:01.526787+00:00"
+  },
+  "JAKO202123261894175": {
+    "status": "ok",
+    "art_id": "ART002740829",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:02.259588+00:00"
+  },
+  "JAKO202132238583791": {
+    "status": "ok",
+    "art_id": "ART002772099",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:03.003604+00:00"
+  },
+  "NART125449946": {
+    "status": "unmatched"
+  },
+  "JAKO202107547774346": {
+    "status": "unmatched"
+  },
+  "JAKO202108458511362": {
+    "status": "ok",
+    "art_id": "ART002785295",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:05.522693+00:00"
+  },
+  "JAKO202107749911385": {
+    "status": "ok",
+    "art_id": "ART002801549",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:06.347603+00:00"
+  },
+  "JAKO202126048626465": {
+    "status": "ok",
+    "art_id": "ART002750761",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:07.003463+00:00"
+  },
+  "JAKO202125862863799": {
+    "status": "ok",
+    "art_id": "ART002750315",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:07.962894+00:00"
+  },
+  "JAKO202125240481724": {
+    "status": "ok",
+    "art_id": "ART002748267",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:08.590922+00:00"
+  },
+  "NART125449926": {
+    "status": "unmatched"
+  },
+  "NART113667607": {
+    "status": "ok",
+    "art_id": "ART002774521",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:09.756343+00:00"
+  },
+  "JAKO202117163742802": {
+    "status": "ok",
+    "art_id": "ART002800267",
+    "citation_count": 6,
+    "processed_at": "2026-06-02T08:46:10.448964+00:00"
+  },
+  "JAKO202123563782588": {
+    "status": "ok",
+    "art_id": "ART002709022",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:11.052979+00:00"
+  },
+  "JAKO202111752550731": {
+    "status": "ok",
+    "art_id": "ART002695860",
+    "citation_count": 6,
+    "processed_at": "2026-06-02T08:46:11.961978+00:00"
+  },
+  "JAKO202107035708162": {
+    "status": "ok",
+    "art_id": "ART002725299",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:12.591084+00:00"
+  },
+  "JAKO202112461862949": {
+    "status": "ok",
+    "art_id": "ART002704491",
+    "citation_count": 4,
+    "processed_at": "2026-06-02T08:46:13.529063+00:00"
+  },
+  "JAKO202129238278452": {
+    "status": "ok",
+    "art_id": "ART002763311",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:46:14.560582+00:00"
+  },
+  "JAKO202116047308090": {
+    "status": "ok",
+    "art_id": "ART002711539",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:15.370736+00:00"
+  },
+  "JAKO202125659079598": {
+    "status": "ok",
+    "art_id": "ART002746626",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:16.728435+00:00"
+  },
+  "NART125449884": {
+    "status": "ok",
+    "art_id": "ART002764845",
+    "citation_count": 10,
+    "processed_at": "2026-06-02T08:46:17.637100+00:00"
+  },
+  "JAKO202103562799189": {
+    "status": "unmatched"
+  },
+  "JAKO202131249927994": {
+    "status": "ok",
+    "art_id": "ART002768230",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:46:18.845360+00:00"
+  },
+  "JAKO202104851298548": {
+    "status": "ok",
+    "art_id": "ART002794992",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:19.545836+00:00"
+  },
+  "JAKO202106942232710": {
+    "status": "ok",
+    "art_id": "ART002785808",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:20.211628+00:00"
+  },
+  "JAKO202106942237711": {
+    "status": "ok",
+    "art_id": "ART002785771",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:46:21.044813+00:00"
+  },
+  "JAKO202110265884552": {
+    "status": "ok",
+    "art_id": "ART002680191",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:21.933404+00:00"
+  },
+  "JAKO202120461950901": {
+    "status": "ok",
+    "art_id": "ART002724809",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:46:22.643249+00:00"
+  },
+  "JAKO202108259711625": {
+    "status": "ok",
+    "art_id": "ART002796744",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:23.236911+00:00"
+  },
+  "JAKO202106942240712": {
+    "status": "ok",
+    "art_id": "ART002785791",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:23.861050+00:00"
+  },
+  "JAKO202113138091255": {
+    "status": "ok",
+    "art_id": "ART002711432",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:24.579930+00:00"
+  },
+  "JAKO202120941782309": {
+    "status": "ok",
+    "art_id": "ART002734902",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:25.233984+00:00"
+  },
+  "JAKO202119060099539": {
+    "status": "ok",
+    "art_id": "ART002728227",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:25.900670+00:00"
+  },
+  "JAKO202101355721160": {
+    "status": "ok",
+    "art_id": "ART002790008",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:46:26.626944+00:00"
+  },
+  "JAKO202111752550718": {
+    "status": "ok",
+    "art_id": "ART002695857",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:46:27.935158+00:00"
+  },
+  "JAKO202107356012098": {
+    "status": "ok",
+    "art_id": "ART002789207",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:46:28.751770+00:00"
+  },
+  "JAKO202119060082535": {
+    "status": "ok",
+    "art_id": "ART002726640",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:29.372167+00:00"
+  },
+  "JAKO202108848920376": {
+    "status": "unmatched"
+  },
+  "JAKO202118752870719": {
+    "status": "ok",
+    "art_id": "ART002737353",
+    "citation_count": 6,
+    "processed_at": "2026-06-02T08:46:30.941058+00:00"
+  },
+  "JAKO202126048622464": {
+    "status": "ok",
+    "art_id": "ART002750764",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:31.633355+00:00"
+  },
+  "JAKO202120760990233": {
+    "status": "ok",
+    "art_id": "ART002784583",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:32.488821+00:00"
+  },
+  "JAKO202122233288622": {
+    "status": "unmatched"
+  },
+  "NART119607048": {
+    "status": "ok",
+    "art_id": "ART002692811",
+    "citation_count": 12,
+    "processed_at": "2026-06-02T08:46:33.797579+00:00"
+  },
+  "JAKO202112461862936": {
+    "status": "ok",
+    "art_id": "ART002704489",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:34.531307+00:00"
+  },
+  "JAKO202116739391220": {
+    "status": "ok",
+    "art_id": "ART002718369",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:46:35.349845+00:00"
+  },
+  "JAKO202102565136229": {
+    "status": "ok",
+    "art_id": "ART002798733",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:36.122443+00:00"
+  },
+  "JAKO202008540579841": {
+    "status": "ok",
+    "art_id": "ART002661225",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:36.776044+00:00"
+  },
+  "JAKO202018955008228": {
+    "status": "ok",
+    "art_id": "ART002597064",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:46:37.410860+00:00"
+  },
+  "JAKO202008839126398": {
+    "status": "ok",
+    "art_id": "ART002665652",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:46:38.723247+00:00"
+  },
+  "JAKO202013461498597": {
+    "status": "ok",
+    "art_id": "ART002580356",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:39.526022+00:00"
+  },
+  "JAKO202025863754196": {
+    "status": "ok",
+    "art_id": "ART002580458",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:46:40.244144+00:00"
+  },
+  "JAKO202026958569577": {
+    "status": "ok",
+    "art_id": "ART002623211",
+    "citation_count": 4,
+    "processed_at": "2026-06-02T08:46:41.086818+00:00"
+  },
+  "JAKO202008337072289": {
+    "status": "ok",
+    "art_id": "ART002659686",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:41.971734+00:00"
+  },
+  "JAKO202031458604390": {
+    "status": "ok",
+    "art_id": "ART002639326",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:46:42.585412+00:00"
+  },
+  "JAKO202013363977872": {
+    "status": "unmatched"
+  },
+  "NART103561050": {
+    "status": "ok",
+    "art_id": "ART002619018",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:44.046174+00:00"
+  },
+  "JAKO202009863558443": {
+    "status": "ok",
+    "art_id": "ART002571030",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:44.870095+00:00"
+  },
+  "JAKO202018955008307": {
+    "status": "ok",
+    "art_id": "ART002597011",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:46:45.472409+00:00"
+  },
+  "JAKO202013363976998": {
+    "status": "ok",
+    "art_id": "ART002560162",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:46.579421+00:00"
+  },
+  "JAKO202019962560377": {
+    "status": "ok",
+    "art_id": "ART002603917",
+    "citation_count": 6,
+    "processed_at": "2026-06-02T08:46:47.189874+00:00"
+  },
+  "JAKO202026958569651": {
+    "status": "ok",
+    "art_id": "ART002625566",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:46:47.807155+00:00"
+  },
+  "JAKO202035066033643": {
+    "status": "ok",
+    "art_id": "ART002653415",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:48.533711+00:00"
+  },
+  "JAKO202029565214471": {
+    "status": "ok",
+    "art_id": "ART002631581",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:46:49.751210+00:00"
+  },
+  "JAKO202009863559206": {
+    "status": "ok",
+    "art_id": "ART002571351",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:46:50.508628+00:00"
+  },
+  "JAKO202019163740802": {
+    "status": "ok",
+    "art_id": "ART002598645",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:51.318690+00:00"
+  },
+  "JAKO202026061057673": {
+    "status": "ok",
+    "art_id": "ART002621353",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:52.032990+00:00"
+  },
+  "JAKO202002941919000": {
+    "status": "ok",
+    "art_id": "ART002672905",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:52.911730+00:00"
+  },
+  "JAKO202034965718378": {
+    "status": "ok",
+    "art_id": "ART002653670",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:53.642155+00:00"
+  },
+  "JAKO202022949895993": {
+    "status": "ok",
+    "art_id": "ART002624870",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:54.411426+00:00"
+  },
+  "JAKO202028851207061": {
+    "status": "ok",
+    "art_id": "ART002627948",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:55.165978+00:00"
+  },
+  "JAKO202022949724958": {
+    "status": "ok",
+    "art_id": "ART002658901",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:55.916611+00:00"
+  },
+  "JAKO202018955008664": {
+    "status": "ok",
+    "art_id": "ART002596782",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:56.459594+00:00"
+  },
+  "JAKO202008762210558": {
+    "status": "unmatched"
+  },
+  "JAKO202007853263205": {
+    "status": "ok",
+    "art_id": "ART002668408",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:46:57.740769+00:00"
+  },
+  "JAKO202024758671560": {
+    "status": "ok",
+    "art_id": "ART002615754",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:46:58.420840+00:00"
+  },
+  "JAKO202010060596268": {
+    "status": "unmatched"
+  },
+  "JAKO202018955007880": {
+    "status": "unmatched"
+  },
+  "JAKO202025164428180": {
+    "status": "ok",
+    "art_id": "ART002617604",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:00.829631+00:00"
+  },
+  "NART122968939": {
+    "status": "ok",
+    "art_id": "ART002637805",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:47:01.466576+00:00"
+  },
+  "JAKO202005653789501": {
+    "status": "ok",
+    "art_id": "ART002560519",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:47:02.027363+00:00"
+  },
+  "JAKO202016263393013": {
+    "status": "ok",
+    "art_id": "ART002591520",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:02.847626+00:00"
+  },
+  "JAKO202010265883965": {
+    "status": "ok",
+    "art_id": "ART002673836",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:47:03.578746+00:00"
+  },
+  "JAKO202023162066717": {
+    "status": "ok",
+    "art_id": "ART002656253",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:47:04.386768+00:00"
+  },
+  "JAKO202008540580194": {
+    "status": "ok",
+    "art_id": "ART002660496",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:05.109760+00:00"
+  },
+  "JAKO202003440878285": {
+    "status": "ok",
+    "art_id": "ART002650848",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:05.887165+00:00"
+  },
+  "JAKO202031563539592": {
+    "status": "ok",
+    "art_id": "ART002638671",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:06.449226+00:00"
+  },
+  "NART125449974": {
+    "status": "ok",
+    "art_id": "ART002636192",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:07.204625+00:00"
+  },
+  "JAKO202014951621458": {
+    "status": "ok",
+    "art_id": "ART002592874",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:47:07.978867+00:00"
+  },
+  "JAKO202003440879094": {
+    "status": "ok",
+    "art_id": "ART002665199",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:08.644119+00:00"
+  },
+  "JAKO202022762160203": {
+    "status": "ok",
+    "art_id": "ART002606822",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:09.418603+00:00"
+  },
+  "JAKO202011951161943": {
+    "status": "ok",
+    "art_id": "ART002554177",
+    "citation_count": 5,
+    "processed_at": "2026-06-02T08:47:10.215792+00:00"
+  },
+  "JAKO202026958569555": {
+    "status": "ok",
+    "art_id": "ART002623205",
+    "citation_count": 9,
+    "processed_at": "2026-06-02T08:47:11.579569+00:00"
+  },
+  "NART125449952": {
+    "status": "unmatched"
+  },
+  "JAKO202014264111435": {
+    "status": "ok",
+    "art_id": "ART002564755",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:47:12.895326+00:00"
+  },
+  "JAKO202002941919038": {
+    "status": "ok",
+    "art_id": "ART002672912",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:47:13.653581+00:00"
+  },
+  "JAKO202009863560259": {
+    "status": "unmatched"
+  },
+  "JAKO202008337072249": {
+    "status": "ok",
+    "art_id": "ART002659406",
+    "citation_count": 6,
+    "processed_at": "2026-06-02T08:47:15.097674+00:00"
+  },
+  "JAKO202018955008273": {
+    "status": "ok",
+    "art_id": "ART002597000",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:15.682705+00:00"
+  },
+  "JAKO202031458604394": {
+    "status": "ok",
+    "art_id": "ART002639327",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:47:16.362903+00:00"
+  },
+  "JAKO202010060596285": {
+    "status": "ok",
+    "art_id": "ART002572584",
+    "citation_count": 8,
+    "processed_at": "2026-06-02T08:47:17.130635+00:00"
+  },
+  "JAKO202023162074719": {
+    "status": "ok",
+    "art_id": "ART002594198",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:17.931303+00:00"
+  },
+  "NART101458401": {
+    "status": "ok",
+    "art_id": "ART002546597",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:18.752614+00:00"
+  },
+  "JAKO202028662597305": {
+    "status": "unmatched"
+  },
+  "JAKO202025465017006": {
+    "status": "ok",
+    "art_id": "ART002622057",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:47:20.159956+00:00"
+  },
+  "JAKO202022663815322": {
+    "status": "ok",
+    "art_id": "ART002589549",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:20.785628+00:00"
+  },
+  "JAKO202031064816540": {
+    "status": "ok",
+    "art_id": "ART002638156",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:47:21.530283+00:00"
+  },
+  "JAKO202008540579838": {
+    "status": "ok",
+    "art_id": "ART002661217",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:22.729154+00:00"
+  },
+  "JAKO202008762210916": {
+    "status": "ok",
+    "art_id": "ART002553513",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:23.549671+00:00"
+  },
+  "JAKO202015555312823": {
+    "status": "unmatched"
+  },
+  "JAKO202031563539355": {
+    "status": "ok",
+    "art_id": "ART002640209",
+    "citation_count": 6,
+    "processed_at": "2026-06-02T08:47:24.823194+00:00"
+  },
+  "JAKO202034965719239": {
+    "status": "ok",
+    "art_id": "ART002652053",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:47:25.426799+00:00"
+  },
+  "JAKO202008337071400": {
+    "status": "ok",
+    "art_id": "ART002658803",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:26.245441+00:00"
+  },
+  "JAKO202029062615857": {
+    "status": "ok",
+    "art_id": "ART002632517",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:47:27.048288+00:00"
+  },
+  "JAKO202003562698084": {
+    "status": "ok",
+    "art_id": "ART002661774",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:47:30.948655+00:00"
+  },
+  "JAKO202029565519377": {
+    "status": "ok",
+    "art_id": "ART002634378",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:31.741245+00:00"
+  },
+  "JAKO202002941919093": {
+    "status": "ok",
+    "art_id": "ART002672922",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:32.503513+00:00"
+  },
+  "JAKO202032265178717": {
+    "status": "ok",
+    "art_id": "ART002637496",
+    "citation_count": 33,
+    "processed_at": "2026-06-02T08:47:33.978933+00:00"
+  },
+  "JAKO202008848920309": {
+    "status": "ok",
+    "art_id": "ART002654802",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:34.732123+00:00"
+  },
+  "JAKO202007159776117": {
+    "status": "ok",
+    "art_id": "ART002662442",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:47:35.636432+00:00"
+  },
+  "JAKO202026252144829": {
+    "status": "ok",
+    "art_id": "ART002622799",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:47:36.484141+00:00"
+  },
+  "JAKO202010548328462": {
+    "status": "ok",
+    "art_id": "ART002575135",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:47:37.157463+00:00"
+  },
+  "JAKO202013363975788": {
+    "status": "ok",
+    "art_id": "ART002567745",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:37.781165+00:00"
+  },
+  "JAKO202009759220504": {
+    "status": "ok",
+    "art_id": "ART002569555",
+    "citation_count": 7,
+    "processed_at": "2026-06-02T08:47:38.446665+00:00"
+  },
+  "NART125449975": {
+    "status": "ok",
+    "art_id": "ART002636193",
+    "citation_count": 6,
+    "processed_at": "2026-06-02T08:47:39.444034+00:00"
+  },
+  "JAKO202026958569541": {
+    "status": "ok",
+    "art_id": "ART002623201",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:40.185914+00:00"
+  },
+  "JAKO202023758859499": {
+    "status": "ok",
+    "art_id": "ART002614195",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:47:40.940683+00:00"
+  },
+  "JAKO202005653790480": {
+    "status": "ok",
+    "art_id": "ART002648621",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:41.556023+00:00"
+  },
+  "JAKO202012941166760": {
+    "status": "ok",
+    "art_id": "ART002557679",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:42.422237+00:00"
+  },
+  "JAKO202009444381410": {
+    "status": "unmatched"
+  },
+  "JAKO202034965739621": {
+    "status": "ok",
+    "art_id": "ART002601858",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:47:43.833181+00:00"
+  },
+  "JAKO202018853212195": {
+    "status": "unmatched"
+  },
+  "JAKO202005735540341": {
+    "status": "ok",
+    "art_id": "ART002675491",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:47:45.726962+00:00"
+  },
+  "JAKO202020455276676": {
+    "status": "ok",
+    "art_id": "ART002605307",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:47:46.368979+00:00"
+  },
+  "JAKO202021961382406": {
+    "status": "ok",
+    "art_id": "ART002606320",
+    "citation_count": 8,
+    "processed_at": "2026-06-02T08:47:47.189837+00:00"
+  },
+  "JAKO202023563781588": {
+    "status": "ok",
+    "art_id": "ART002644016",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:47:47.838092+00:00"
+  },
+  "JAKO202024852036419": {
+    "status": "unmatched"
+  },
+  "JAKO202014264111458": {
+    "status": "ok",
+    "art_id": "ART002564767",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:47:49.354796+00:00"
+  },
+  "JAKO202011951162157": {
+    "status": "ok",
+    "art_id": "ART002553411",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:47:50.163003+00:00"
+  },
+  "NART129064941": {
+    "status": "ok",
+    "art_id": "ART002525353",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:47:50.784238+00:00"
+  },
+  "JAKO201921956454481": {
+    "status": "ok",
+    "art_id": "ART002477899",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:47:51.524874+00:00"
+  },
+  "JAKO201912937048343": {
+    "status": "ok",
+    "art_id": "ART002443130",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:47:52.302621+00:00"
+  },
+  "JAKO201913457810048": {
+    "status": "unmatched"
+  },
+  "JAKO201913458198834": {
+    "status": "ok",
+    "art_id": "ART002449866",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:47:53.439543+00:00"
+  },
+  "JAKO201919163087855": {
+    "status": "unmatched"
+  },
+  "NART105364090": {
+    "status": "ok",
+    "art_id": "ART002549540",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:47:54.697345+00:00"
+  },
+  "JAKO201931765018655": {
+    "status": "ok",
+    "art_id": "ART002517081",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:47:55.416012+00:00"
+  },
+  "JAKO201917767634220": {
+    "status": "ok",
+    "art_id": "ART002457779",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:47:56.764410+00:00"
+  },
+  "JAKO201908360550848": {
+    "status": "ok",
+    "art_id": "ART002547722",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:47:57.535569+00:00"
+  },
+  "NART102046083": {
+    "status": "ok",
+    "art_id": "ART002503782",
+    "citation_count": 4,
+    "processed_at": "2026-06-02T08:47:58.045193+00:00"
+  },
+  "JAKO201928463078131": {
+    "status": "ok",
+    "art_id": "ART002504444",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:47:58.910108+00:00"
+  },
+  "JAKO201918961950044": {
+    "status": "ok",
+    "art_id": "ART002477754",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:47:59.523433+00:00"
+  },
+  "JAKO201928462663124": {
+    "status": "ok",
+    "art_id": "ART002504846",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:00.195898+00:00"
+  },
+  "JAKO201905960156878": {
+    "status": "ok",
+    "art_id": "ART002544441",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:00.725311+00:00"
+  },
+  "JAKO201935236776188": {
+    "status": "ok",
+    "art_id": "ART002524438",
+    "citation_count": 4,
+    "processed_at": "2026-06-02T08:48:01.578134+00:00"
+  },
+  "JAKO201913457809056": {
+    "status": "ok",
+    "art_id": "ART002441844",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:48:02.567960+00:00"
+  },
+  "JAKO201911563200651": {
+    "status": "ok",
+    "art_id": "ART002540467",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:48:03.161782+00:00"
+  },
+  "JAKO201925258773971": {
+    "status": "ok",
+    "art_id": "ART002487350",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:03.910346+00:00"
+  },
+  "JAKO201911464411597": {
+    "status": "ok",
+    "art_id": "ART002548695",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:48:04.645195+00:00"
+  },
+  "JAKO201929565688962": {
+    "status": "ok",
+    "art_id": "ART002509101",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:48:05.341894+00:00"
+  },
+  "NART102046093": {
+    "status": "ok",
+    "art_id": "ART002531936",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:05.951080+00:00"
+  },
+  "JAKO201914439301102": {
+    "status": "ok",
+    "art_id": "ART002460186",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:48:07.379629+00:00"
+  },
+  "JAKO201908559988134": {
+    "status": "ok",
+    "art_id": "ART002534459",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:48:08.088146+00:00"
+  },
+  "JAKO201919033492713": {
+    "status": "unmatched"
+  },
+  "JAKO201911563200672": {
+    "status": "ok",
+    "art_id": "ART002540551",
+    "citation_count": 4,
+    "processed_at": "2026-06-02T08:48:09.216162+00:00"
+  },
+  "JAKO201918961950048": {
+    "status": "ok",
+    "art_id": "ART002477765",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:09.954283+00:00"
+  },
+  "JAKO201931262478019": {
+    "status": "ok",
+    "art_id": "ART002516400",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:10.771715+00:00"
+  },
+  "JAKO201925454135198": {
+    "status": "ok",
+    "art_id": "ART002494929",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:48:11.398404+00:00"
+  },
+  "JAKO201912761598001": {
+    "status": "ok",
+    "art_id": "ART002433737",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:11.965945+00:00"
+  },
+  "NART109690974": {
+    "status": "unmatched"
+  },
+  "JAKO201925454134125": {
+    "status": "ok",
+    "art_id": "ART002493567",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:13.335392+00:00"
+  },
+  "JAKO201930968615579": {
+    "status": "ok",
+    "art_id": "ART002515471",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:14.142279+00:00"
+  },
+  "JAKO201921956454681": {
+    "status": "ok",
+    "art_id": "ART002488569",
+    "citation_count": 6,
+    "processed_at": "2026-06-02T08:48:14.981699+00:00"
+  },
+  "NART103417639": {
+    "status": "ok",
+    "art_id": "ART002550337",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:15.622690+00:00"
+  },
+  "JAKO201919163608134": {
+    "status": "ok",
+    "art_id": "ART002482667",
+    "citation_count": 4,
+    "processed_at": "2026-06-02T08:48:16.411197+00:00"
+  },
+  "JAKO201915061086337": {
+    "status": "ok",
+    "art_id": "ART002457206",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:17.201014+00:00"
+  },
+  "JAKO201912761597416": {
+    "status": "ok",
+    "art_id": "ART002441120",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:18.558491+00:00"
+  },
+  "JAKO201911464411121": {
+    "status": "ok",
+    "art_id": "ART002527455",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:19.406128+00:00"
+  },
+  "JAKO201912063603426": {
+    "status": "ok",
+    "art_id": "ART002533023",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:48:20.376550+00:00"
+  },
+  "NART105210615": {
+    "status": "ok",
+    "art_id": "ART002447385",
+    "citation_count": 11,
+    "processed_at": "2026-06-02T08:48:21.017748+00:00"
+  },
+  "JAKO201926837943042": {
+    "status": "ok",
+    "art_id": "ART002486867",
+    "citation_count": 9,
+    "processed_at": "2026-06-02T08:48:21.830167+00:00"
+  },
+  "JAKO201922441756714": {
+    "status": "ok",
+    "art_id": "ART002490498",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:48:22.646185+00:00"
+  },
+  "NART129064088": {
+    "status": "ok",
+    "art_id": "ART002512339",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:23.473732+00:00"
+  },
+  "JAKO201925454135201": {
+    "status": "ok",
+    "art_id": "ART002494934",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:24.052667+00:00"
+  },
+  "JAKO201910760742870": {
+    "status": "unmatched"
+  },
+  "JAKO201912761598749": {
+    "status": "ok",
+    "art_id": "ART002446612",
+    "citation_count": 6,
+    "processed_at": "2026-06-02T08:48:25.114238+00:00"
+  },
+  "JAKO201922060137347": {
+    "status": "ok",
+    "art_id": "ART002484591",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:25.853509+00:00"
+  },
+  "JAKO201925462478592": {
+    "status": "ok",
+    "art_id": "ART002498443",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:48:26.631980+00:00"
+  },
+  "JAKO201912262462660": {
+    "status": "ok",
+    "art_id": "ART002444485",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:27.453240+00:00"
+  },
+  "JAKO201928951541788": {
+    "status": "ok",
+    "art_id": "ART002511451",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:28.201037+00:00"
+  },
+  "JAKO201914456457852": {
+    "status": "ok",
+    "art_id": "ART002462822",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:29.392422+00:00"
+  },
+  "JAKO201935164475537": {
+    "status": "ok",
+    "art_id": "ART002527268",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:30.117530+00:00"
+  },
+  "JAKO201911464410992": {
+    "status": "ok",
+    "art_id": "ART002527430",
+    "citation_count": 7,
+    "processed_at": "2026-06-02T08:48:30.828087+00:00"
+  },
+  "JAKO201928951541793": {
+    "status": "ok",
+    "art_id": "ART002511456",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:31.565776+00:00"
+  },
+  "JAKO201913747259365": {
+    "status": "ok",
+    "art_id": "ART002454867",
+    "citation_count": 4,
+    "processed_at": "2026-06-02T08:48:32.355384+00:00"
+  },
+  "JAKO201924763903730": {
+    "status": "ok",
+    "art_id": "ART002500955",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:48:33.063968+00:00"
+  },
+  "JAKO201908071719285": {
+    "status": "ok",
+    "art_id": "ART002532136",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:48:33.718687+00:00"
+  },
+  "NART104269551": {
+    "status": "ok",
+    "art_id": "ART002445935",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:34.623761+00:00"
+  },
+  "JAKO201919163609792": {
+    "status": "ok",
+    "art_id": "ART002482026",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:48:35.446145+00:00"
+  },
+  "JAKO201925454134570": {
+    "status": "ok",
+    "art_id": "ART002493690",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:36.232238+00:00"
+  },
+  "JAKO201932468200350": {
+    "status": "ok",
+    "art_id": "ART002520189",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:48:36.853415+00:00"
+  },
+  "JAKO201927561416973": {
+    "status": "ok",
+    "art_id": "ART002503927",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:37.492679+00:00"
+  },
+  "JAKO201908559987994": {
+    "status": "ok",
+    "art_id": "ART002534440",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:38.182446+00:00"
+  },
+  "JAKO201912063603444": {
+    "status": "ok",
+    "art_id": "ART002533026",
+    "citation_count": 10,
+    "processed_at": "2026-06-02T08:48:38.852542+00:00"
+  },
+  "JAKO201930968615596": {
+    "status": "ok",
+    "art_id": "ART002515474",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:40.266482+00:00"
+  },
+  "JAKO201911863197033": {
+    "status": "ok",
+    "art_id": "ART002530890",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:41.068811+00:00"
+  },
+  "JAKO201900937332487": {
+    "status": "ok",
+    "art_id": "ART002527943",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:41.821615+00:00"
+  },
+  "JAKO201911863197028": {
+    "status": "ok",
+    "art_id": "ART002530889",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:42.608675+00:00"
+  },
+  "JAKO201928951541801": {
+    "status": "ok",
+    "art_id": "ART002511474",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:48:43.644906+00:00"
+  },
+  "JAKO201909258120691": {
+    "status": "ok",
+    "art_id": "ART002434078",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:44.423114+00:00"
+  },
+  "JAKO201922060137326": {
+    "status": "ok",
+    "art_id": "ART002484583",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:48:45.178079+00:00"
+  },
+  "JAKO201935236776254": {
+    "status": "ok",
+    "art_id": "ART002524456",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:45.970599+00:00"
+  },
+  "JAKO201912761598058": {
+    "status": "ok",
+    "art_id": "ART002437682",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:46.491733+00:00"
+  },
+  "NART101465615": {
+    "status": "ok",
+    "art_id": "ART002538367",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:47.102454+00:00"
+  },
+  "NART101465616": {
+    "status": "ok",
+    "art_id": "ART002538379",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:47.823036+00:00"
+  },
+  "JAKO201917764281521": {
+    "status": "unmatched"
+  },
+  "NART101465617": {
+    "status": "ok",
+    "art_id": "ART002538396",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:49.100942+00:00"
+  },
+  "JAKO201922850162923": {
+    "status": "ok",
+    "art_id": "ART002491059",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:50.078178+00:00"
+  },
+  "JAKO201927561417014": {
+    "status": "ok",
+    "art_id": "ART002503945",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:48:51.410383+00:00"
+  },
+  "JAKO201919263351322": {
+    "status": "ok",
+    "art_id": "ART002483636",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:48:52.143195+00:00"
+  },
+  "JAKO201920061453470": {
+    "status": "unmatched"
+  },
+  "JAKO201908360550942": {
+    "status": "unmatched"
+  },
+  "JAKO201919033492446": {
+    "status": "ok",
+    "art_id": "ART002474534",
+    "citation_count": 4,
+    "processed_at": "2026-06-02T08:48:54.089824+00:00"
+  },
+  "JAKO201908551716771": {
+    "status": "ok",
+    "art_id": "ART002540578",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:54.883200+00:00"
+  },
+  "JAKO201928462663131": {
+    "status": "ok",
+    "art_id": "ART002504847",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:55.622025+00:00"
+  },
+  "JAKO201909358630886": {
+    "status": "ok",
+    "art_id": "ART002545828",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:56.447445+00:00"
+  },
+  "NART108080579": {
+    "status": "ok",
+    "art_id": "ART002468398",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:48:57.254422+00:00"
+  },
+  "JAKO201908559988355": {
+    "status": "ok",
+    "art_id": "ART002535180",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:57.853334+00:00"
+  },
+  "JAKO201916936724864": {
+    "status": "ok",
+    "art_id": "ART002468803",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:58.501722+00:00"
+  },
+  "JAKO201908559988375": {
+    "status": "ok",
+    "art_id": "ART002535222",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:48:59.176674+00:00"
+  },
+  "JAKO201926358473747": {
+    "status": "ok",
+    "art_id": "ART002492455",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:48:59.836435+00:00"
+  },
+  "NART96162804": {
+    "status": "ok",
+    "art_id": "ART002439420",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:49:00.670438+00:00"
+  },
+  "JAKO201909055502676": {
+    "status": "ok",
+    "art_id": "ART002533968",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:01.952725+00:00"
+  },
+  "JAKO201908551716936": {
+    "status": "unmatched"
+  },
+  "JAKO201918961949689": {
+    "status": "ok",
+    "art_id": "ART002476511",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:03.368691+00:00"
+  },
+  "NART104001365": {
+    "status": "ok",
+    "art_id": "ART002460384",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:04.142974+00:00"
+  },
+  "JAKO201912063603405": {
+    "status": "ok",
+    "art_id": "ART002533017",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:04.743828+00:00"
+  },
+  "JAKO201933056431162": {
+    "status": "ok",
+    "art_id": "ART002514965",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:05.431455+00:00"
+  },
+  "JAKO201919341608824": {
+    "status": "ok",
+    "art_id": "ART002473228",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:49:05.984063+00:00"
+  },
+  "JAKO201918961950036": {
+    "status": "ok",
+    "art_id": "ART002477736",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:06.577711+00:00"
+  },
+  "JAKO201913747259145": {
+    "status": "ok",
+    "art_id": "ART002455087",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:07.321373+00:00"
+  },
+  "JAKO201931663568069": {
+    "status": "ok",
+    "art_id": "ART002515429",
+    "citation_count": 5,
+    "processed_at": "2026-06-02T08:49:08.124822+00:00"
+  },
+  "JAKO201930352304893": {
+    "status": "ok",
+    "art_id": "ART002512295",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:09.103670+00:00"
+  },
+  "JAKO201935236777404": {
+    "status": "ok",
+    "art_id": "ART002528072",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:09.852241+00:00"
+  },
+  "JAKO201919163088331": {
+    "status": "ok",
+    "art_id": "ART002475994",
+    "citation_count": 4,
+    "processed_at": "2026-06-02T08:49:10.913330+00:00"
+  },
+  "JAKO201919033493761": {
+    "status": "ok",
+    "art_id": "ART002480243",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:11.719402+00:00"
+  },
+  "JAKO201926358473724": {
+    "status": "ok",
+    "art_id": "ART002492446",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:49:12.899017+00:00"
+  },
+  "JAKO201912262462645": {
+    "status": "ok",
+    "art_id": "ART002444471",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:49:13.631274+00:00"
+  },
+  "JAKO201914456458995": {
+    "status": "ok",
+    "art_id": "ART002463374",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:14.433389+00:00"
+  },
+  "JAKO201930968615626": {
+    "status": "ok",
+    "art_id": "ART002515573",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:15.186619+00:00"
+  },
+  "JAKO201909469055074": {
+    "status": "ok",
+    "art_id": "ART002452142",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:15.916172+00:00"
+  },
+  "JAKO201935236777938": {
+    "status": "ok",
+    "art_id": "ART002524142",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:49:16.689147+00:00"
+  },
+  "JAKO201923162067717": {
+    "status": "ok",
+    "art_id": "ART002473004",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:17.634541+00:00"
+  },
+  "JAKO201913261022059": {
+    "status": "ok",
+    "art_id": "ART002506348",
+    "citation_count": 4,
+    "processed_at": "2026-06-02T08:49:18.475184+00:00"
+  },
+  "JAKO201919362371416": {
+    "status": "ok",
+    "art_id": "ART002470368",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:19.373848+00:00"
+  },
+  "JAKO201908360550912": {
+    "status": "ok",
+    "art_id": "ART002547734",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:20.189327+00:00"
+  },
+  "JAKO201927561417002": {
+    "status": "ok",
+    "art_id": "ART002503943",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:20.832049+00:00"
+  },
+  "JAKO201811648109413": {
+    "status": "ok",
+    "art_id": "ART002332862",
+    "citation_count": 11,
+    "processed_at": "2026-06-02T08:49:22.533727+00:00"
+  },
+  "JAKO201809240903186": {
+    "status": "ok",
+    "art_id": "ART002424305",
+    "citation_count": 13,
+    "processed_at": "2026-06-02T08:49:23.693151+00:00"
+  },
+  "JAKO201810263415923": {
+    "status": "ok",
+    "art_id": "ART002429271",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:24.325465+00:00"
+  },
+  "JAKO201809253681850": {
+    "status": "ok",
+    "art_id": "ART002321613",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:49:25.088956+00:00"
+  },
+  "JAKO201810263415754": {
+    "status": "ok",
+    "art_id": "ART002429228",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:49:25.633513+00:00"
+  },
+  "JAKO201820765441372": {
+    "status": "ok",
+    "art_id": "ART002365408",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:49:26.236357+00:00"
+  },
+  "JAKO201810063228258": {
+    "status": "ok",
+    "art_id": "ART002417425",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:27.141239+00:00"
+  },
+  "JAKO201810748282285": {
+    "status": "ok",
+    "art_id": "ART002327768",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:27.810074+00:00"
+  },
+  "JAKO201809242561574": {
+    "status": "ok",
+    "art_id": "ART002415535",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:28.579675+00:00"
+  },
+  "JAKO201809258120884": {
+    "status": "ok",
+    "art_id": "ART002419785",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:29.399218+00:00"
+  },
+  "JAKO201810038012250": {
+    "status": "ok",
+    "art_id": "ART002318602",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:30.147540+00:00"
+  },
+  "JAKO201809863002264": {
+    "status": "unmatched"
+  },
+  "JAKO201810748282278": {
+    "status": "ok",
+    "art_id": "ART002327765",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:31.233231+00:00"
+  },
+  "JAKO201831349948816": {
+    "status": "ok",
+    "art_id": "ART002389855",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:31.774987+00:00"
+  },
+  "JAKO201835372350168": {
+    "status": "ok",
+    "art_id": "ART002402937",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:49:32.566307+00:00"
+  },
+  "JAKO201809469053643": {
+    "status": "ok",
+    "art_id": "ART002409018",
+    "citation_count": 14,
+    "processed_at": "2026-06-02T08:49:33.332328+00:00"
+  },
+  "JAKO201809863001762": {
+    "status": "ok",
+    "art_id": "ART002414491",
+    "citation_count": 5,
+    "processed_at": "2026-06-02T08:49:34.739852+00:00"
+  },
+  "JAKO201832073079196": {
+    "status": "ok",
+    "art_id": "ART002392861",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:35.430858+00:00"
+  },
+  "JAKO201809258120799": {
+    "status": "ok",
+    "art_id": "ART002419762",
+    "citation_count": 12,
+    "processed_at": "2026-06-02T08:49:36.177282+00:00"
+  },
+  "JAKO201818564286629": {
+    "status": "unmatched"
+  },
+  "JAKO201810237885759": {
+    "status": "ok",
+    "art_id": "ART002320983",
+    "citation_count": 8,
+    "processed_at": "2026-06-02T08:49:37.590740+00:00"
+  },
+  "JAKO201832073079251": {
+    "status": "ok",
+    "art_id": "ART002392874",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:38.383496+00:00"
+  },
+  "JAKO201809242561578": {
+    "status": "ok",
+    "art_id": "ART002415536",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:39.138873+00:00"
+  },
+  "JAKO201832073078261": {
+    "status": "ok",
+    "art_id": "ART002391750",
+    "citation_count": 7,
+    "processed_at": "2026-06-02T08:49:39.849903+00:00"
+  },
+  "JAKO201810263415468": {
+    "status": "ok",
+    "art_id": "ART002415596",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:49:40.600800+00:00"
+  },
+  "JAKO201835146898549": {
+    "status": "ok",
+    "art_id": "ART002397854",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:41.407962+00:00"
+  },
+  "JAKO201821464985838": {
+    "status": "ok",
+    "art_id": "ART002365527",
+    "citation_count": 4,
+    "processed_at": "2026-06-02T08:49:42.292921+00:00"
+  },
+  "JAKO201819757623712": {
+    "status": "ok",
+    "art_id": "ART002356310",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:49:43.010554+00:00"
+  },
+  "JAKO201819757623722": {
+    "status": "ok",
+    "art_id": "ART002356314",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:43.726129+00:00"
+  },
+  "JAKO201810256456840": {
+    "status": "ok",
+    "art_id": "ART002322482",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:44.430919+00:00"
+  },
+  "JAKO201833469089072": {
+    "status": "ok",
+    "art_id": "ART002397199",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:45.778656+00:00"
+  },
+  "JAKO201809454742060": {
+    "status": "unmatched"
+  },
+  "JAKO201809863361983": {
+    "status": "unmatched"
+  },
+  "JAKO201809454741752": {
+    "status": "ok",
+    "art_id": "ART002414369",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:47.513961+00:00"
+  },
+  "JAKO201812470013118": {
+    "status": "ok",
+    "art_id": "ART002335798",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:48.155085+00:00"
+  },
+  "JAKO201818053168376": {
+    "status": "unmatched"
+  },
+  "JAKO201810063227643": {
+    "status": "ok",
+    "art_id": "ART002425251",
+    "citation_count": 6,
+    "processed_at": "2026-06-02T08:49:49.488635+00:00"
+  },
+  "JAKO201831960580540": {
+    "status": "ok",
+    "art_id": "ART002387281",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:50.031283+00:00"
+  },
+  "JAKO201813649331278": {
+    "status": "ok",
+    "art_id": "ART002430585",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:50.813370+00:00"
+  },
+  "NART105528360": {
+    "status": "ok",
+    "art_id": "ART002426605",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:51.428422+00:00"
+  },
+  "JAKO201824752486584": {
+    "status": "ok",
+    "art_id": "ART002354181",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:52.211378+00:00"
+  },
+  "JAKO201835148349823": {
+    "status": "ok",
+    "art_id": "ART002393053",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:52.855903+00:00"
+  },
+  "JAKO201810852359991": {
+    "status": "unmatched"
+  },
+  "JAKO201823660419846": {
+    "status": "unmatched"
+  },
+  "JAKO201823954940897": {
+    "status": "ok",
+    "art_id": "ART002371055",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:49:54.922083+00:00"
+  },
+  "JAKO201835372170579": {
+    "status": "ok",
+    "art_id": "ART002401246",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:55.535183+00:00"
+  },
+  "JAKO201812470013108": {
+    "status": "ok",
+    "art_id": "ART002335796",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:49:56.846524+00:00"
+  },
+  "JAKO201815565838113": {
+    "status": "ok",
+    "art_id": "ART002343794",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:57.566124+00:00"
+  },
+  "JAKO201832073079164": {
+    "status": "ok",
+    "art_id": "ART002392853",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:49:58.295389+00:00"
+  },
+  "JAKO201810760742221": {
+    "status": "unmatched"
+  },
+  "JAKO201823660426847": {
+    "status": "unmatched"
+  },
+  "JAKO201809863000258": {
+    "status": "ok",
+    "art_id": "ART002427418",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:50:00.139032+00:00"
+  },
+  "JAKO201816563163539": {
+    "status": "ok",
+    "art_id": "ART002348582",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:50:00.930763+00:00"
+  },
+  "JAKO201808962642528": {
+    "status": "ok",
+    "art_id": "ART002313051",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:50:01.467102+00:00"
+  },
+  "JAKO201811648109947": {
+    "status": "ok",
+    "art_id": "ART002334151",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:50:02.043831+00:00"
+  },
+  "JAKO201810063229775": {
+    "status": "unmatched"
+  },
+  "JAKO201810852359938": {
+    "status": "unmatched"
+  },
+  "JAKO201811648109923": {
+    "status": "ok",
+    "art_id": "ART002334145",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:50:04.042322+00:00"
+  },
+  "JAKO201810852359932": {
+    "status": "unmatched"
+  },
+  "JAKO201823952428227": {
+    "status": "ok",
+    "art_id": "ART002330612",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:50:05.340036+00:00"
+  },
+  "JAKO201810748278814": {
+    "status": "unmatched"
+  },
+  "JAKO201808962642443": {
+    "status": "ok",
+    "art_id": "ART002313109",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:50:06.802588+00:00"
+  },
+  "JAKO201809538044373": {
+    "status": "ok",
+    "art_id": "ART002311963",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:50:08.026826+00:00"
+  },
+  "JAKO201834663388046": {
+    "status": "ok",
+    "art_id": "ART002399581",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:50:08.836557+00:00"
+  },
+  "JAKO201813639174301": {
+    "status": "unmatched"
+  },
+  "JAKO201810760744722": {
+    "status": "ok",
+    "art_id": "ART002413003",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:50:09.945983+00:00"
+  },
+  "NART91393406": {
+    "status": "ok",
+    "art_id": "ART002397909",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:50:10.582264+00:00"
+  },
+  "JAKO201819355173296": {
+    "status": "ok",
+    "art_id": "ART002363196",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:50:11.396565+00:00"
+  },
+  "JAKO201823660407842": {
+    "status": "ok",
+    "art_id": "ART002413292",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:50:12.131779+00:00"
+  },
+  "JAKO201820765441321": {
+    "status": "ok",
+    "art_id": "ART002365402",
+    "citation_count": 2,
+    "processed_at": "2026-06-02T08:50:12.804813+00:00"
+  },
+  "JAKO201810852359928": {
+    "status": "ok",
+    "art_id": "ART002327134",
+    "citation_count": 14,
+    "processed_at": "2026-06-02T08:50:13.583574+00:00"
+  },
+  "JAKO201810852360001": {
+    "status": "ok",
+    "art_id": "ART002327212",
+    "citation_count": 3,
+    "processed_at": "2026-06-02T08:50:14.462760+00:00"
+  },
+  "JAKO201820765438804": {
+    "status": "ok",
+    "art_id": "ART002359261",
+    "citation_count": 1,
+    "processed_at": "2026-06-02T08:50:15.228287+00:00"
+  },
+  "JAKO201810263415778": {
+    "status": "ok",
+    "art_id": "ART002429234",
+    "citation_count": 0,
+    "processed_at": "2026-06-02T08:50:15.893136+00:00"
   }
 }

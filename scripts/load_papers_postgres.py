@@ -40,7 +40,17 @@ if _ENV_PATH.exists():
 from app.core.database import AsyncSessionLocal
 from app.models.paper import Paper  # noqa: E402
 
-_DEFAULT_JSON = PROJECT_ROOT / "data/parsed/scienceon_keywords_normalized.json"
+_DEFAULT_JSON = PROJECT_ROOT / "data/parsed/scienceon_enriched.json"
+
+
+def _classify_paper_type(db_code: str) -> str:
+    if db_code == "DIKO":
+        return "학위논문"          # load_diko_thesis_meta 실행 후 박사/석사로 세분화
+    if db_code in ("JAKO", "JAFO"):
+        return "학술 저널"
+    if db_code == "CFKO":
+        return "학술 대회"
+    return "논문"
 
 
 def _normalize_issn(issn_val: Any) -> str | None:
@@ -115,7 +125,7 @@ def build_records(papers: list[dict]) -> list[dict[str, Any]]:
             "keywords_en": _safe_list(p.get("Keyword2")),
             "pubyear": p.get("Pubyear") if isinstance(p.get("Pubyear"), int) else None,
             "pubdate": _fmt_pubdate(p.get("Pubdate")),
-            "paper_type": None,
+            "paper_type": _classify_paper_type(p.get("DBCode", "")),
             "citation_count": 0,
             "journal_id": None,
             "db_code": _safe_str(p.get("DBCode"), 20),

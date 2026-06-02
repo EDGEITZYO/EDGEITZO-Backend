@@ -13,7 +13,7 @@ from html import unescape
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_INPUT_PATH = PROJECT_ROOT / "data" / "parsed" / "scienceon_parsed.json"
+DEFAULT_INPUT_PATH = PROJECT_ROOT / "data" / "parsed" / "scienceon_enriched.json"
 DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "data" / "parsed" / "scienceon_keywords_normalized.json"
 
 HANGUL_RE = re.compile(r"[가-힣]")

@@ -4023,5 +4023,77 @@
     "status": "ok",
     "degree": "국내석사",
     "processed_at": "2026-05-26T07:15:12.178170+00:00"
+  },
+  "DIKO0014070163": {
+    "status": "parse_failed"
+  },
+  "DIKO0014212605": {
+    "status": "parse_failed"
+  },
+  "DIKO0014003656": {
+    "status": "parse_failed"
+  },
+  "DIKO0014006058": {
+    "status": "parse_failed"
+  },
+  "DIKO0014450143": {
+    "status": "parse_failed"
+  },
+  "DIKO0014180882": {
+    "status": "parse_failed"
+  },
+  "DIKO0014012343": {
+    "status": "parse_failed"
+  },
+  "DIKO0014186163": {
+    "status": "parse_failed"
+  },
+  "DIKO0013640161": {
+    "status": "parse_failed"
+  },
+  "DIKO0013640167": {
+    "status": "parse_failed"
+  },
+  "DIKO0013638307": {
+    "status": "parse_failed"
+  },
+  "DIKO0013642109": {
+    "status": "parse_failed"
+  },
+  "DIKO0013640163": {
+    "status": "parse_failed"
+  },
+  "DIKO0013667229": {
+    "status": "parse_failed"
+  },
+  "DIKO0013745222": {
+    "status": "parse_failed"
+  },
+  "DIKO0013705458": {
+    "status": "parse_failed"
+  },
+  "DIKO0013724303": {
+    "status": "parse_failed"
+  },
+  "DIKO0013705617": {
+    "status": "parse_failed"
+  },
+  "DIKO0013847647": {
+    "status": "parse_failed"
+  },
+  "DIKO0013711250": {
+    "status": "parse_failed"
+  },
+  "DIKO0013705404": {
+    "status": "parse_failed"
+  },
+  "DIKO0013735059": {
+    "status": "parse_failed"
+  },
+  "DIKO0013873036": {
+    "status": "parse_failed"
+  },
+  "DIKO0013705427": {
+    "status": "parse_failed"
   }
 }

@@ -56,7 +56,7 @@ from app.models.paper import Paper
 
 CHECKPOINT_PATH = PROJECT_ROOT / "data" / "checkpoints" / "kci_citations.json"
 UNMATCHED_PATH  = PROJECT_ROOT / "data" / "unmatched"  / "kci_citations.json"
-PARSED_PATH     = PROJECT_ROOT / "data" / "parsed"     / "scienceon_keywords_normalized.json"
+PARSED_PATH     = PROJECT_ROOT / "data" / "parsed"     / "scienceon_enriched.json"
 
 RATE_LIMIT_DELAY = 0.12   # 초당 ~8건
 MAX_RETRIES      = 3

@@ -19,7 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-DEFAULT_INPUT_PATH = PROJECT_ROOT / "data" / "parsed" / "scienceon_keywords_normalized.json"
+DEFAULT_INPUT_PATH = PROJECT_ROOT / "data" / "parsed" / "scienceon_enriched.json"
 DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
 DEFAULT_NEO4J_URI = "bolt://localhost:7687"
 DEFAULT_NEO4J_USER = "neo4j"
