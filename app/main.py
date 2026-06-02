@@ -20,6 +20,7 @@ from app.api.v1.semanticscholar import router as semantic_scholar_router
 from app.api.v1.keyword_search import router as keyword_search_router
 from app.api.v1.keyword_map import router as keyword_map_router
 from app.api.v1.home import router as home_router
+from app.api.v1.saved import router as saved_router
 
 
 app = FastAPI(
@@ -56,3 +57,4 @@ app.include_router(semantic_scholar_router, prefix="/api/v1", tags=["SemanticSch
 app.include_router(keyword_search_router, prefix="/api/v1", tags=["KeywordSearch"])
 app.include_router(keyword_map_router, prefix="/api/v1", tags=["KeywordMap"])
 app.include_router(home_router, prefix="/api/v1", tags=["Home"])
+app.include_router(saved_router, prefix="/api/v1", tags=["Saved"])

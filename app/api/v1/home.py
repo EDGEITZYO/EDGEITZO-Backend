@@ -117,7 +117,7 @@ async def get_home(
         db_code = paper.db_code or ""
         # published_at: pubdate 우선, 없으면 pubyear로 연도만 ISO8601 변환
         if paper.pubdate:
-            published_at = paper.pubdate.isoformat() if hasattr(paper.pubdate, "isoformat") else str(paper.pubdate)
+            published_at = str(paper.pubdate).replace('.', '-')
         elif paper.pubyear:
             published_at = f"{paper.pubyear}-01-01"
         else:
@@ -161,7 +161,6 @@ async def record_read(
     db: AsyncSession = Depends(get_db),
 ):
     from datetime import datetime, timezone
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     now = datetime.now(timezone.utc)
 
@@ -172,18 +171,6 @@ async def record_read(
     if not paper:
         raise HTTPException(status_code=404, detail="논문을 찾을 수 없습니다.")
 
-    # upsert: (user_id, paper_id) 기준으로 read_at 갱신
-    stmt = pg_insert(RecentRead).values(
-        user_id=current_user.id,
-        paper_id=request.paper_id,
-        read_at=now,
-        deleted_at=None,
-    ).on_conflict_do_update(
-        index_elements=None,
-        set_={"read_at": now, "deleted_at": None},
-    )
-
-    # upsert 대신 기존 row 갱신 방식 사용 (unique constraint 없을 수 있음)
     existing = (await db.execute(
         select(RecentRead).where(
             RecentRead.user_id == current_user.id,
@@ -194,6 +181,7 @@ async def record_read(
     if existing:
         existing.read_at = now
         existing.deleted_at = None
+        existing.view_count = (existing.view_count or 0) + 1
     else:
         import uuid
         db.add(RecentRead(
@@ -201,6 +189,7 @@ async def record_read(
             user_id=current_user.id,
             paper_id=request.paper_id,
             read_at=now,
+            view_count=1,
         ))
 
     await db.commit()

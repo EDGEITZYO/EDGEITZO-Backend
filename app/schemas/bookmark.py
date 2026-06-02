@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from app.schemas.trust_badge import TrustBadge
+
 
 class BookmarkCreate(BaseModel):
     paper_id: str
@@ -26,17 +28,17 @@ class BookmarkCheckResponse(BaseModel):
 
 class BookmarkedPaper(BaseModel):
     id: str
+    paper_type: Optional[str] = None       # journal | conference | thesis_phd | thesis_master
     title: str
     authors: Optional[list[str]] = None
-    pubdate: Optional[str] = None       # pubyear → "YYYY" 문자열 (월/일 데이터 없음)
-    paper_type: Optional[str] = None
+    published_at: Optional[str] = None     # ISO8601
     doi: Optional[str] = None
     citation_count: int = 0
     abstract: Optional[str] = None
     keywords: Optional[list[str]] = None
     journal_name: Optional[str] = None
-    kci_status: Optional[str] = None
-    sjr_quartile: Optional[str] = None
+    trust_badge: Optional[TrustBadge] = None
+    related_papers: list = []
 
     model_config = {"from_attributes": True}
 
