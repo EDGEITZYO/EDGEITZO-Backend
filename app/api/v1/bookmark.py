@@ -50,7 +50,7 @@ async def list_bookmarks(
     sort: Literal[
         "bookmark_latest", "bookmark_oldest", "pubyear_latest", "pubyear_oldest"
     ] = Query(default="bookmark_latest"),
-    paper_type_filter: Literal["all", "journal", "thesis", "conference"] = Query(
+    paper_type_filter: Literal["all", "journal", "thesis_phd", "thesis_master", "conference"] = Query(
         default="all"
     ),
     search_query: Optional[str] = Query(default=None, description="제목/저자/키워드 검색"),

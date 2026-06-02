@@ -12,9 +12,21 @@ from app.models.journal import Journal
 from app.models.paper import Paper
 from app.schemas.bookmark import BookmarkedPaper, BookmarkListItem, BookmarkListResponse
 from app.schemas.bookmark_folder import BookmarkFolderResponse
+from app.services.credibility_service import (
+    JournalEvidence,
+    _journal_to_evidence,
+    build_trust_badge,
+    resolve_paper_type,
+)
 
 SortOption = Literal["bookmark_latest", "bookmark_oldest", "pubyear_latest", "pubyear_oldest"]
-PaperTypeFilter = Literal["all", "journal", "thesis", "conference"]
+PaperTypeFilter = Literal["all", "journal", "thesis_phd", "thesis_master", "conference"]
+
+# papers.issn(하이픈 없음) vs journals.p_issn/e_issn(하이픈 있을 수 있음) 정규화 JOIN
+_JOURNAL_JOIN = or_(
+    func.replace(Journal.p_issn, '-', '') == Paper.issn,
+    func.replace(Journal.e_issn, '-', '') == Paper.issn,
+)
 
 
 async def add_bookmark(
@@ -46,7 +58,6 @@ async def add_bookmark(
 
 
 async def remove_bookmark(db: AsyncSession, user_id: UUID, paper_id: str) -> bool:
-    """북마크 삭제. 존재하지 않으면 False 반환."""
     result = await db.execute(
         select(Bookmark).where(Bookmark.user_id == user_id, Bookmark.paper_id == paper_id)
     )
@@ -59,7 +70,6 @@ async def remove_bookmark(db: AsyncSession, user_id: UUID, paper_id: str) -> boo
 
 
 async def check_bookmark(db: AsyncSession, user_id: UUID, paper_id: str) -> bool:
-    """북마크 여부 확인."""
     result = await db.execute(
         select(Bookmark).where(Bookmark.user_id == user_id, Bookmark.paper_id == paper_id)
     )
@@ -70,19 +80,38 @@ def _build_paper(paper: Paper, journal: Journal | None) -> BookmarkedPaper:
     keywords_ko = paper.keywords_ko or []
     keywords_en = paper.keywords_en or []
     keywords = keywords_ko + [k for k in keywords_en if k not in keywords_ko] or None
+
+    j_ev: JournalEvidence | None = _journal_to_evidence(journal)
+    ptype = resolve_paper_type(paper.db_code, paper.degree)
+
+    if paper.pubdate:
+        published_at = str(paper.pubdate).replace('.', '-')
+    elif paper.pubyear:
+        published_at = f"{paper.pubyear}-01-01"
+    else:
+        published_at = None
+
+    trust = build_trust_badge(
+        ptype,
+        journal=j_ev,
+        citation_count=paper.citation_count or None,
+        institution=paper.affiliation or paper.publisher,
+        full_text_available=paper.fulltext_flag,
+    )
+
     return BookmarkedPaper(
         id=paper.id,
+        paper_type=ptype,
         title=paper.title,
         authors=paper.authors or None,
-        pubdate=paper.pubdate or (str(paper.pubyear) if paper.pubyear else None),
-        paper_type=paper.paper_type,
+        published_at=published_at,
         doi=paper.doi,
         citation_count=paper.citation_count or 0,
         abstract=paper.abstract,
         keywords=keywords or None,
         journal_name=journal.title if journal else None,
-        kci_status=journal.kci_status if journal else None,
-        sjr_quartile=journal.sjr_best_quartile if journal else None,
+        trust_badge=trust,
+        related_papers=[],
     )
 
 
@@ -95,20 +124,38 @@ async def get_bookmarks(
     size: int = 20,
     sort: SortOption = "bookmark_latest",
     paper_type_filter: PaperTypeFilter = "all",
+    year: str | None = None,
+    sci: bool | None = None,
     search_query: str | None = None,
 ) -> BookmarkListResponse:
-    """북마크 목록 조회. paper_type 무관 전체 노출."""
     where = [Bookmark.user_id == user_id]
 
     if folder_id is not None:
         where.append(Bookmark.folder_id == folder_id)
 
     if paper_type_filter == "journal":
-        where.append(Paper.paper_type == "journal")
-    elif paper_type_filter == "thesis":
-        where.append(Paper.paper_type.in_(["doctoral_thesis", "master_thesis"]))
+        where.append(Paper.db_code.in_(["JAKO", "JAFO"]))
+    elif paper_type_filter == "thesis_phd":
+        where.append(Paper.db_code == "DIKO")
+        where.append(Paper.degree.contains("박사"))
+    elif paper_type_filter == "thesis_master":
+        where.append(Paper.db_code == "DIKO")
+        where.append(Paper.degree.contains("석사"))
     elif paper_type_filter == "conference":
-        where.append(Paper.paper_type == "conference")
+        where.append(Paper.db_code == "CFKO")
+
+    if year:
+        try:
+            cutoff = {"3y": 2023, "5y": 2021, "10y": 2016}.get(year)
+            if cutoff:
+                where.append(Paper.pubyear >= cutoff)
+        except Exception:
+            pass
+
+    if sci is True:
+        where.append(Journal.sci_indexed.is_(True))
+    elif sci is False:
+        where.append(or_(Journal.sci_indexed.is_(False), Journal.sci_indexed.is_(None)))
 
     if search_query:
         q = f"%{search_query}%"
@@ -128,7 +175,6 @@ async def get_bookmarks(
     }
     order = sort_cols.get(sort, sort_cols["bookmark_latest"])
 
-    # 검색어 있을 때 완전일치 → 접두일치 → 부분일치 우선순위 앞에 추가
     if search_query:
         relevance = case(
             (Paper.title.ilike(search_query), 0),
@@ -140,7 +186,7 @@ async def get_bookmarks(
     base_join = (
         select(Bookmark, Paper, Journal)
         .join(Paper, Bookmark.paper_id == Paper.id)
-        .outerjoin(Journal, Paper.journal_id == Journal.id)
+        .outerjoin(Journal, _JOURNAL_JOIN)
         .where(*where)
     )
 
@@ -148,7 +194,7 @@ async def get_bookmarks(
         await db.execute(
             select(func.count(Bookmark.id))
             .join(Paper, Bookmark.paper_id == Paper.id)
-            .outerjoin(Journal, Paper.journal_id == Journal.id)
+            .outerjoin(Journal, _JOURNAL_JOIN)
             .where(*where)
         )
     ).scalar_one()
@@ -173,7 +219,6 @@ async def get_folders_enriched(
     db: AsyncSession,
     user_id: UUID,
 ) -> list[BookmarkFolderResponse]:
-    """폴더 목록 + paper_count + representative_keywords + updated_at."""
     folders_result = await db.execute(
         select(BookmarkFolder)
         .where(BookmarkFolder.user_id == user_id)
@@ -185,7 +230,6 @@ async def get_folders_enriched(
 
     folder_ids = [f.id for f in folders]
 
-    # 폴더별 paper_count, updated_at (MAX bookmark created_at)
     stats_result = await db.execute(
         select(
             Bookmark.folder_id,
@@ -197,7 +241,6 @@ async def get_folders_enriched(
     )
     stats = {row.folder_id: row for row in stats_result.all()}
 
-    # 폴더별 keywords_ko 수집 (대표 키워드 추출용)
     kw_result = await db.execute(
         select(Bookmark.folder_id, Paper.keywords_ko)
         .join(Paper, Bookmark.paper_id == Paper.id)

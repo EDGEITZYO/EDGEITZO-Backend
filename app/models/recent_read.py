@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, String
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -27,6 +27,7 @@ class RecentRead(Base):
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+    view_count = Column(Integer, default=1, nullable=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User")

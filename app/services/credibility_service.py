@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.journal import Journal
 from app.schemas.search import CredibilityInfo, PaperSearchItem
+from app.schemas.trust_badge import TrustBadge
 
 CredibilityBadge = Literal["high", "medium", "low", "unknown"]
 
@@ -221,6 +222,76 @@ async def find_journal_evidence(
             Journal.sjr_year.desc().nullslast(),
             Journal.sjr_score.desc().nullslast(),
             Journal.h_index.desc().nullslast(),
+        )
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    return _journal_to_evidence(result.scalar_one_or_none())
+
+
+def resolve_paper_type(db_code: str | None, degree: str | None = None) -> str:
+    """db_code + degree → paper_type 문자열.
+    반환값: 'journal' | 'conference' | 'thesis_phd' | 'thesis_master'
+    """
+    if db_code == "DIKO":
+        if degree:
+            if "박사" in degree:
+                return "thesis_phd"
+            if "석사" in degree:
+                return "thesis_master"
+        return "thesis_phd"  # fallback
+    if db_code in ("JAKO", "JAFO"):
+        return "journal"
+    if db_code == "CFKO":
+        return "conference"
+    return "journal"  # 기타 fallback
+
+
+def build_trust_badge(
+    paper_type: str,
+    *,
+    journal: JournalEvidence | None = None,
+    citation_count: int | None = None,
+    degree: str | None = None,
+    institution: str | None = None,
+    full_text_available: bool | None = None,
+) -> TrustBadge:
+    if paper_type in ("thesis_phd", "thesis_master"):
+        if paper_type == "thesis_phd":
+            degree_type = "박사"
+        elif paper_type == "thesis_master":
+            degree_type = "석사"
+        else:
+            degree_type = None
+        return TrustBadge(
+            degree_type=degree_type,
+            institution=institution,
+            full_text_available=full_text_available,
+        )
+    return TrustBadge(
+        kci=journal.kci_indexed if journal else None,
+        sci=journal.sci_indexed if journal else None,
+        citation_count=citation_count,
+        if_value=journal.impact_factor if journal else None,
+    )
+
+
+async def find_journal_by_issn(
+    db: AsyncSession,
+    issn: str | None,
+) -> JournalEvidence | None:
+    """papers.issn (정규화된 8자리) → journals 조회. journal_id FK 사용 안 함."""
+    if not issn:
+        return None
+    normalized = _normalize_issn(issn)
+    if not normalized:
+        return None
+    stmt = (
+        select(Journal)
+        .where(or_(Journal.p_issn == normalized, Journal.e_issn == normalized))
+        .order_by(
+            Journal.sjr_year.desc().nullslast(),
+            Journal.sjr_score.desc().nullslast(),
         )
         .limit(1)
     )
