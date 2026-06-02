@@ -98,3 +98,55 @@ async def generate_keyword_map(research_field: str) -> dict:
     raw = resp.text.strip()
     cleaned = re.sub(r"```json|```", "", raw).strip()
     return json.loads(cleaned)
+
+
+_EXPAND_SYSTEM = """당신은 학술 키워드 구조 전문가입니다.
+주어진 부모 키워드 아래에 2~3개의 하위 키워드를 생성합니다.
+
+규칙:
+- 실제 학술 검색어로 사용 가능한 구체적 용어
+- 부모 키워드보다 더 구체적·세분화된 개념
+- ko/en 모두 포함
+- JSON만 반환 (코드블록 없이)
+
+출력 형식:
+[
+  {"ko": "하위 키워드명", "en": "Sub-keyword Name"},
+  {"ko": "하위 키워드명", "en": "Sub-keyword Name"}
+]"""
+
+
+async def expand_keyword_node(
+    parent_label: str,
+    parent_label_en: str,
+    axis: str,
+    research_field: str,
+    depth: int,
+) -> list[dict]:
+    """부모 키워드 노드 아래 하위 키워드 2~3개 생성 (LLM 호출)."""
+    user_prompt = (
+        f"연구분야: {research_field}\n"
+        f"축: {axis}\n"
+        f"부모 키워드: {parent_label} ({parent_label_en})\n"
+        f"현재 depth: {depth} → 하위 노드 depth: {depth + 1}\n\n"
+        f"위 부모 키워드의 하위 학술 키워드 2~3개를 JSON 배열로 생성하라."
+    )
+    resp = await chat(
+        messages=[
+            {"role": "user", "content": f"[System]\n{_EXPAND_SYSTEM}\n\n[User]\n{user_prompt}"},
+        ],
+        model="claude-sonnet-4-6",
+        temperature=0.7,
+        max_tokens=400,
+    )
+    raw = re.sub(r"```json|```", "", resp.text.strip()).strip()
+    children_raw = json.loads(raw)
+    return [
+        {
+            "id": f"{parent_label}_{i}",
+            "ko": c.get("ko", ""),
+            "en": c.get("en", ""),
+            "depth": depth + 1,
+        }
+        for i, c in enumerate(children_raw)
+    ]
