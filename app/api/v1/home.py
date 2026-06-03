@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import random
+import uuid
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -70,9 +73,6 @@ _GREETING = [
     "새로운 논문이 기다리고 있어요, {name}님.",
     "연구를 이어가볼까요, {name}님?",
 ]
-
-import random
-
 
 def _personalized_message(name: str) -> str:
     return random.choice(_GREETING).format(name=name or "연구자")
@@ -160,8 +160,6 @@ async def record_read(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from datetime import datetime, timezone
-
     now = datetime.now(timezone.utc)
 
     # paper 존재 확인
@@ -183,7 +181,6 @@ async def record_read(
         existing.deleted_at = None
         existing.view_count = (existing.view_count or 0) + 1
     else:
-        import uuid
         db.add(RecentRead(
             id=uuid.uuid4(),
             user_id=current_user.id,
@@ -207,8 +204,6 @@ def save_search_history(
     slots: dict | None = None,
 ) -> None:
     """검색 실행 후 호출 — Redis에 최근 탐색 이력 저장 (최대 10건 유지)."""
-    from datetime import datetime, timezone
-
     r = get_redis(_REDIS_DB)
     key = _HISTORY_KEY.format(user_id=user_id)
     existing = json.loads(r.get(key) or "[]")

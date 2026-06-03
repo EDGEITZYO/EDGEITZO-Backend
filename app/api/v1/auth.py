@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from redis import Redis
@@ -231,7 +231,7 @@ async def create_profile(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await create_profile_service(db, current_user, body.model_dump())
+    result = await create_profile_service(db, current_user, body.model_dump(exclude_none=True))
     return success_response(data=result, message="프로필이 저장되었습니다. 서비스를 시작합니다")
 
 
@@ -273,8 +273,6 @@ async def logout_endpoint(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     current_user: User = Depends(get_current_user),
 ):
-    if not credentials:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="인증이 필요합니다")
     await logout(credentials.credentials, body.refresh_token)
     return success_response(message="로그아웃되었습니다")
 

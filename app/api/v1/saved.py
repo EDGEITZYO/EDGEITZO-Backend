@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -178,6 +178,8 @@ async def get_saved_bookmarks(
 
     if sci is True:
         where.append(Journal.sci_indexed.is_(True))
+    elif sci is False:
+        where.append(or_(Journal.sci_indexed.is_(False), Journal.sci_indexed.is_(None)))
 
     base = (
         select(Bookmark, Paper, Journal)

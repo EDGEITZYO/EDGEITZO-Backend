@@ -6,31 +6,20 @@ import bcrypt
 import jwt
 from fastapi.security import HTTPBearer
 from jwt.exceptions import InvalidTokenError
-from redis import Redis
 
+from app.core.redis import get_redis
 from app.core.settings import settings
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
-_blacklist_redis: Optional[Redis] = None
 
-
-def get_blacklist_redis() -> Redis:
-    global _blacklist_redis
-    if _blacklist_redis is None:
-        _blacklist_redis = Redis(
-            host=settings.redis_host,
-            port=settings.redis_port,
-            db=settings.redis_blacklist_db,
-            password=settings.redis_password or None,
-            decode_responses=True,
-        )
-    return _blacklist_redis
+def _blacklist_redis():
+    return get_redis(settings.redis_blacklist_db)
 
 
 def is_token_blacklisted(jti: str) -> bool:
     try:
-        return bool(get_blacklist_redis().exists(f"blacklist:{jti}"))
+        return bool(_blacklist_redis().exists(f"blacklist:{jti}"))
     except Exception:
         return False  # Redis 장애 시 통과 (운영 안정성 우선)
 
@@ -39,7 +28,7 @@ def add_to_blacklist(jti: str, expires_in_seconds: int) -> None:
     if expires_in_seconds <= 0:
         return
     try:
-        get_blacklist_redis().setex(f"blacklist:{jti}", expires_in_seconds, "1")
+        _blacklist_redis().setex(f"blacklist:{jti}", expires_in_seconds, "1")
     except Exception:
         pass
 
