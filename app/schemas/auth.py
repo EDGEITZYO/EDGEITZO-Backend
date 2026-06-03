@@ -89,13 +89,21 @@ _VALID_PURPOSES = {
 class ProfileCreateRequest(BaseModel):
     name: str
     gender: Optional[Literal["남성", "여성", "기타"]] = None
-    age: Optional[Literal["20대", "30대", "40대", "50대", "60대", "70대", "80대 이상"]] = None
+    age: Optional[str] = None
     role: Optional[Literal["대학원 진학 준비", "석사과정", "박사과정", "석박통합과정", "교수·연구원", "대학생", "기타"]] = None
+    research_field: Optional[str] = None
     purposes: Optional[list[str]] = Field(
         default=None,
         examples=[["연구 주제 탐색", "최신 트렌드 파악"]],
     )
     purpose_custom: Optional[str] = None
+
+    @field_validator("gender", mode="before")
+    @classmethod
+    def normalize_gender(cls, v: str | None) -> str | None:
+        if v == "선택 안함":
+            return None
+        return v
 
     @field_validator("purposes")
     @classmethod
