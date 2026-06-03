@@ -282,6 +282,7 @@ async def create_profile_service(
         gender=data.get("gender"),
         age=data.get("age"),
         role=data.get("role"),
+        research_field=data.get("research_field"),
         purposes=data.get("purposes"),
         purpose_custom=data.get("purpose_custom"),
         is_profile_set=True,

@@ -19,6 +19,7 @@ class User(Base):
     gender = Column(String, nullable=True)
     age = Column(String, nullable=True)
     role = Column(String, nullable=True)
+    research_field = Column(String, nullable=True)
     purposes = Column(JSON, nullable=True)
     purpose_custom = Column(String, nullable=True)
     is_profile_set = Column(Boolean, default=False, nullable=False)
