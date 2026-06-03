@@ -1,7 +1,7 @@
 """create paper_references table
 
 Revision ID: 009
-Revises: 008
+Revises: 008, 008a
 Create Date: 2026-05-22 00:00:00.000000
 """
 
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "009"
-down_revision = "008"
+down_revision = ("008", "008a")
 branch_labels = None
 depends_on = None
 
