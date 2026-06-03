@@ -1,9 +1,13 @@
+import logging
+
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette import status
 
 from app.schemas.common import ApiErrorResponse, ErrorDetail
+
+logger = logging.getLogger(__name__)
 
 
 def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -42,9 +46,10 @@ def http_exception_handler(request: Request, exc):
 
 
 def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception(exc)
     response = ApiErrorResponse(
         success=False,
-        message=str(exc),
+        message="서버 내부 오류가 발생했습니다",
         error_code="INTERNAL_SERVER_ERROR",
         errors=[],
     )

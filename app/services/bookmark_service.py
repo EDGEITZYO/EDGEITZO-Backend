@@ -4,7 +4,7 @@ from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import case, func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.bookmark import Bookmark, BookmarkFolder
@@ -35,26 +35,20 @@ async def add_bookmark(
     paper_id: str,
     folder_id: UUID | None = None,
 ) -> Bookmark:
-    """북마크 추가. 이미 존재하면 기존 레코드 반환."""
+    """북마크 추가. 이미 존재하면 기존 레코드 반환 (idempotent)."""
+    stmt = (
+        insert(Bookmark)
+        .values(user_id=user_id, paper_id=paper_id, folder_id=folder_id)
+        .on_conflict_do_nothing(constraint="uq_bookmarks_user_paper")
+        .returning(Bookmark.id)
+    )
+    await db.execute(stmt)
+    await db.commit()
+
     result = await db.execute(
         select(Bookmark).where(Bookmark.user_id == user_id, Bookmark.paper_id == paper_id)
     )
-    existing = result.scalar_one_or_none()
-    if existing:
-        return existing
-
-    bm = Bookmark(user_id=user_id, paper_id=paper_id, folder_id=folder_id)
-    db.add(bm)
-    try:
-        await db.commit()
-        await db.refresh(bm)
-    except IntegrityError:
-        await db.rollback()
-        result = await db.execute(
-            select(Bookmark).where(Bookmark.user_id == user_id, Bookmark.paper_id == paper_id)
-        )
-        bm = result.scalar_one()
-    return bm
+    return result.scalar_one()
 
 
 async def remove_bookmark(db: AsyncSession, user_id: UUID, paper_id: str) -> bool:

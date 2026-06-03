@@ -9,11 +9,10 @@ from pydantic import BaseModel, Field, field_validator
 
 _VALID_PURPOSES = {
     "연구 주제 탐색",
-    "랩미팅 발표 준비",
+    "랩미팅/발표 준비",
     "논문 작성 참고",
     "최신 트렌드 파악",
     "연구자 탐색",
-    "기타",
 }
 
 
@@ -46,7 +45,7 @@ class MypageResponse(BaseModel):
 
 class MypageProfileUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1)
-    gender: Optional[Literal["남성", "여성", "기타"]] = None
+    gender: Optional[Literal["남성", "여성"]] = None
     age: Optional[str] = None
     role: Optional[
         Literal[

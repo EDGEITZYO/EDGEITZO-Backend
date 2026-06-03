@@ -31,7 +31,7 @@ TEST_CASES = [
             "trust_level": None,
             "advanced_filters": {},
         },
-        "relevant_paper_ids": [],  # TODO: 실제 paper_id 채울 것
+        "relevant_paper_ids": [],  # 테스트에선 실제 paper_id 채울 것
     },
     {
         "query": "딥러닝 기반 의료 영상 진단",

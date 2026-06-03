@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 import uuid as _uuid
+from typing import List, Optional
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Optional
 
 from app.core.database import get_db
 from app.core.redis import get_redis

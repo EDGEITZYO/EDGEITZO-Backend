@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,25 @@ from app.services.chroma_search_service import get_chroma_search_service
 from app.services.credibility_service import enrich_items_with_credibility
 
 logger = logging.getLogger(__name__)
+
+# 연도 점수 가중치
+_SCORE_RECENT_HIGH = 0.25      # 최신 선호 목적, 2024년 이상
+_SCORE_RECENT_MID = 0.15       # 최신 선호 목적, 2022~2023년
+_SCORE_RECENT_LOW = 0.05       # 최신 선호 목적, 2020~2021년
+_SCORE_YEAR_HIGH = 0.2         # 일반 목적, 2024년 이상
+_SCORE_YEAR_MID = 0.1          # 일반 목적, 2021~2023년
+
+# 인용수 점수 가중치
+_SCORE_CITATION_MAX = 0.2      # 인용수 보너스 상한
+_SCORE_CITATION_DIVISOR = 1000 # 인용수 보너스 분모
+
+# 신뢰도 배지 가중치
+_SCORE_BADGE_HIGH = 0.2
+_SCORE_BADGE_MEDIUM = 0.1
+
+# 키워드 수 가중치
+_SCORE_KEYWORD_PER = 0.03
+_SCORE_KEYWORD_MAX = 0.15
 
 _PAPER_TYPE_MAP: dict[str, str] = {
     "JAKO": "저널",
@@ -81,27 +101,27 @@ def _apply_scoring(items: list[PaperSearchItem], research_purpose: str = "") -> 
         if item.year:
             if purpose_prefers_recent:
                 if item.year >= 2024:
-                    base += 0.25
+                    base += _SCORE_RECENT_HIGH
                 elif item.year >= 2022:
-                    base += 0.15
+                    base += _SCORE_RECENT_MID
                 elif item.year >= 2020:
-                    base += 0.05
+                    base += _SCORE_RECENT_LOW
             else:
                 if item.year >= 2024:
-                    base += 0.2
+                    base += _SCORE_YEAR_HIGH
                 elif item.year >= 2021:
-                    base += 0.1
+                    base += _SCORE_YEAR_MID
 
         if purpose_prefers_citation and item.credibility.citation_count:
-            citation_bonus = min(item.credibility.citation_count / 1000, 0.2)
+            citation_bonus = min(item.credibility.citation_count / _SCORE_CITATION_DIVISOR, _SCORE_CITATION_MAX)
             base += citation_bonus
 
         if item.credibility.badge == "high":
-            base += 0.2
+            base += _SCORE_BADGE_HIGH
         elif item.credibility.badge == "medium":
-            base += 0.1
+            base += _SCORE_BADGE_MEDIUM
 
-        base += min(len(item.keywords) * 0.03, 0.15)
+        base += min(len(item.keywords) * _SCORE_KEYWORD_PER, _SCORE_KEYWORD_MAX)
         item.score = round(base, 4)
 
     return items
@@ -217,7 +237,6 @@ async def execute_search(
             "keyword_map_data": None,
         })
 
-    import uuid
     return {
         "papers": papers,
         "total": len(papers),
