@@ -42,11 +42,13 @@ async def health_check():
         pass
 
     try:
-        chroma_url = f"http://{settings.chroma_host}:{settings.chroma_port}/api/v1/heartbeat"
+        chroma_base_url = f"http://{settings.chroma_host}:{settings.chroma_port}"
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(chroma_url)
-            if response.status_code == 200:
-                chromadb_status = "up"
+            for path in ("/api/v2/heartbeat", "/api/v1/heartbeat"):
+                response = await client.get(f"{chroma_base_url}{path}")
+                if response.status_code == 200:
+                    chromadb_status = "up"
+                    break
     except Exception:
         pass
 

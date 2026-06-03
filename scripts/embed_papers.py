@@ -78,6 +78,8 @@ def _batches(lst: list, size: int):
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--reset", action="store_true", help="기존 컬렉션 삭제 후 재생성")
+    parser.add_argument("--skip-existing", action="store_true", help="이미 컬렉션에 있는 CN은 건너뜀")
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help="ChromaDB upsert 배치 크기")
     parser.add_argument("--input", default=None, help="입력 JSON 파일 경로 (기본: scienceon_preprocessed.json)")
     args = parser.parse_args()
 
@@ -118,6 +120,17 @@ def main() -> None:
     )
     print(f"Collection '{COLLECTION_NAME}' 준비 완료")
 
+    if args.skip_existing:
+        existing_ids = set(collection.get(include=[])["ids"])
+        before_count = len(papers)
+        papers = [p for p in papers if p.get("CN") not in existing_ids]
+        print(f"기존 문서 건너뜀: {before_count - len(papers)}건 / 남은 적재: {len(papers)}건")
+
+    if not papers:
+        print("적재할 신규 문서가 없습니다.")
+        print(f"Collection 총 문서 수: {collection.count()}건")
+        return
+
     texts = [_build_text(p) for p in papers]
     ids = [p["CN"] for p in papers]
     metadatas = [_build_metadata(p) for p in papers]
@@ -127,10 +140,10 @@ def main() -> None:
 
     for i, (batch_papers, batch_ids, batch_texts, batch_metas) in enumerate(
         zip(
-            _batches(papers, BATCH_SIZE),
-            _batches(ids, BATCH_SIZE),
-            _batches(texts, BATCH_SIZE),
-            _batches(metadatas, BATCH_SIZE),
+            _batches(papers, args.batch_size),
+            _batches(ids, args.batch_size),
+            _batches(texts, args.batch_size),
+            _batches(metadatas, args.batch_size),
         )
     ):
         batch_num = i + 1
