@@ -1,25 +1,53 @@
 version: "3.8"
 
+networks:
+  backend-network:
+    driver: bridge
+
 services:
+  app:
+    build: .
+    container_name: edgeitzo-app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    networks:
+      - backend-network
+    restart: unless-stopped
+
   redis:
     image: redis:7
-    container_name: papergraph-redis
-    ports:
-      - "6379:6379"
+    container_name: edgeitzo-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    expose:
+      - "6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - backend-network
+    restart: unless-stopped
 
   neo4j:
     image: neo4j:5
-    container_name: papergraph-neo4j
-    ports:
-      - "7474:7474"
-      - "7687:7687"
+    container_name: edgeitzo-neo4j
+    expose:
+      - "7474"
+      - "7687"
     environment:
-      NEO4J_AUTH: neo4j/password1234
+      NEO4J_AUTH: ${NEO4J_USER}/${NEO4J_PASSWORD}
     volumes:
       - neo4j_data:/data
     healthcheck:
@@ -27,47 +55,60 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
+    networks:
+      - backend-network
+    restart: unless-stopped
 
   postgres:
     image: postgres:15
-    container_name: papergraph-postgres
-    ports:
-      - "5432:5432"
+    container_name: edgeitzo-postgres
+    expose:
+      - "5432"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      POSTGRES_DB: ${POSTGRES_DB:-edgeitzo}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-edgeitzo}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - backend-network
+    restart: unless-stopped
 
   chromadb:
     image: chromadb/chroma:latest
-    container_name: papergraph-chromadb
-    ports:
-      - "8001:8000"
+    container_name: edgeitzo-chromadb
+    expose:
+      - "8000"
     volumes:
       - chroma_data:/chroma/chroma
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend-network
+    restart: unless-stopped
 
   celery_worker:
     build: .
-    container_name: papergraph-celery-worker
+    container_name: edgeitzo-celery-worker
     command: celery -A app.celery_app worker --loglevel=info
     env_file:
       - .env
-    environment:
-      # host.docker.internal = macOS 호스트 → 로컬 Homebrew Redis(비밀번호 있음)와 동일한 인스턴스 사용
-      CELERY_BROKER_URL: redis://:120809@host.docker.internal:6379/1
-      CELERY_RESULT_BACKEND: redis://:120809@host.docker.internal:6379/2
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    networks:
+      - backend-network
+    restart: unless-stopped
 
 volumes:
   neo4j_data:
