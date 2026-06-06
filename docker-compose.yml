@@ -17,8 +17,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      neo4j:
-        condition: service_healthy
       chromadb:
         condition: service_healthy
     networks:
@@ -40,24 +38,6 @@ services:
       - backend-network
     restart: unless-stopped
 
-  neo4j:
-    image: neo4j:5
-    container_name: edgeitzo-neo4j
-    expose:
-      - "7474"
-      - "7687"
-    environment:
-      NEO4J_AUTH: ${NEO4J_USER}/${NEO4J_PASSWORD}
-    volumes:
-      - neo4j_data:/data
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:7474"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-    networks:
-      - backend-network
-    restart: unless-stopped
 
   postgres:
     image: postgres:15
@@ -111,6 +91,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  neo4j_data:
   postgres_data:
   chroma_data:
