@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 from fastapi import HTTPException, status
 from redis import Redis
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.email import generate_code, send_verification_email
@@ -95,12 +96,18 @@ async def register_service(
             detail="이미 가입된 이메일입니다",
         )
 
-    user = await create_user(
-        db,
-        email=email,
-        hashed_password=hash_password(password),
-        provider="email",
-    )
+    try:
+        user = await create_user(
+            db,
+            email=email,
+            hashed_password=hash_password(password),
+            provider="email",
+        )
+    except IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="이미 가입된 이메일입니다",
+        )
     redis.delete(f"verify:{email}")
 
     return {
