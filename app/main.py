@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.bookmark import router as bookmark_router
@@ -22,6 +23,7 @@ from app.core.exceptions import (
     validation_exception_handler,
 )
 from app.core.response import success_response
+from app.core.settings import settings
 
 
 app = FastAPI(
@@ -29,6 +31,14 @@ app = FastAPI(
     description="LLM + RAG 기반 국내 연구자/논문 탐색 백엔드",
     version="0.1.0",
     swagger_ui_parameters={"persistAuthorization": True},
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.frontend_url],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
