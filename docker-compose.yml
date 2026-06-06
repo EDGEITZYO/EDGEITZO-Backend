@@ -18,7 +18,7 @@ services:
       redis:
         condition: service_healthy
       chromadb:
-        condition: service_healthy
+        condition: service_started
     networks:
       - backend-network
     restart: unless-stopped
