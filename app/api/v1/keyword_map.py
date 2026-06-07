@@ -6,7 +6,7 @@ from typing import List, Optional
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -64,20 +64,31 @@ _MAP_TTL = 86400  # 24시간
 
 
 class KeywordMapRequest(BaseModel):
-    research_field: str
-    user_id: str = ""  # 생성 결과를 캐시에 저장할 때 사용
+    research_field: str = Field(description="키워드 트리를 생성할 연구 분야", example="딥러닝")
+    user_id: str = Field("", description="생성 결과를 Redis/DB에 저장할 유저 ID (선택). 유효한 UUID일 때만 DB 저장")
 
 
 class KeywordMapGenerateResponse(BaseModel):
-    research_field: str
-    tree: dict
-    # Neo4j 적재는 B파트 담당 — 여기서는 생성만
+    research_field: str = Field(description="생성 기준 연구 분야")
+    tree: dict = Field(description="4축 키워드 트리 원본 JSON (root, axes 구조)")
 
 
 @router.get(
     "/keyword-map",
     summary="키워드맵 트리 조회",
-    description="topic으로 LLM 키워드 트리 생성. root > children 재귀 구조, edge_type(핵심기술/연구대상/상위분야/응용분야) 포함.",
+    description="""연구 분야(`topic`)로 LLM 키워드 트리를 생성해 반환합니다.
+
+- Redis 캐시 우선 조회 (TTL 24시간), 미스 시 LLM 호출
+- `user_id` 제공 시 개인 키워드맵도 Redis에 저장 (`/keyword-search/map/{user_id}`에서 조회 가능)
+
+**응답 구조 (`data.root`)**
+- `id`: 노드 고유 ID
+- `ko` / `en`: 노드명 한/영
+- `depth`: 트리 깊이 (root=0)
+- `edge_type`: 축 분류. `'핵심기술'` | `'연구대상'` | `'상위분야'` | `'응용분야'` | null(root)
+- `definition`: 노드 정의 (선택)
+- `children`: 하위 노드 배열 (재귀 동일 구조)
+""",
 )
 async def get_keyword_map_by_topic(
     topic: str = Query(..., description="연구 분야 (예: 유전자 발현)"),
@@ -115,7 +126,16 @@ async def get_keyword_map_by_topic(
 @router.get(
     "/keyword-map/node/{node_id}/papers",
     summary="키워드 노드 논문 목록",
-    description="node_id(키워드명)로 Neo4j 조회 → ChromaDB에서 메타데이터 fetch. 필터: year/type/sci/kci/page.",
+    description="""노드명(`node_id`)으로 Neo4j 조회 후 ChromaDB에서 논문 메타데이터를 반환합니다. Neo4j 실패 시 ChromaDB 직접 검색으로 자동 fallback.
+
+**필터 옵션**
+- `year`: `'3y'`(2023~) / `'5y'`(2021~) / `'10y'`(2016~) / null(전체)
+- `type`: `'저널'` / `'학위논문'` / `'학회'` / null(전체)
+- `kci`: `true`(JAKO 논문만) / `false`(비KCI만) / null(전체)
+- `sci`: `true`(SCI 계열만) / null(전체) — 현재 SCI 데이터 없으므로 true 시 결과 없을 수 있음
+
+정렬은 발행일 내림차순 고정.
+""",
 )
 async def get_node_papers(
     node_id: str,
@@ -174,7 +194,23 @@ async def get_node_papers(
     )
 
 
-@router.post("/keyword-map/generate")
+@router.post(
+    "/keyword-map/generate",
+    summary="키워드맵 생성 및 저장",
+    description="""연구 분야 텍스트로 4축 키워드 트리를 LLM으로 생성하고 저장합니다.
+
+- `user_id` 제공 시 Redis(24시간 TTL) + PostgreSQL(`user_keyword_maps` 테이블)에 저장 (upsert)
+- `user_id`가 유효한 UUID가 아니면 DB 저장 없이 Redis에만 저장
+- 저장 후 `/keyword-search/map/{user_id}`로 조회 가능
+
+**응답 `data.tree` 구조** (4축 원본)
+- `root`: `{ko, en}` 최상위 연구 분야
+- `axes.core_technology`: 핵심기술 노드 배열
+- `axes.research_target`: 연구대상 노드 배열
+- `axes.parent_domain`: 상위분야 노드 배열
+- `axes.application_domain`: 응용분야 노드 배열
+""",
+)
 async def generate_map(request: KeywordMapRequest, db: AsyncSession = Depends(get_db)):
     """연구분야 텍스트 → 4축 키워드 트리 JSON 생성"""
     tree = await generate_keyword_map(request.research_field)
@@ -221,16 +257,16 @@ async def generate_map(request: KeywordMapRequest, db: AsyncSession = Depends(ge
 
 
 class ExpandNodeRequest(BaseModel):
-    parent_label: str       # 부모 노드 한글명
-    parent_label_en: str = ""
-    axis: str               # "핵심기술" | "연구대상" | "상위분야" | "응용분야"
-    research_field: str     # 최상위 연구분야 (컨텍스트용)
-    depth: int = 1          # 부모 노드의 현재 depth
+    parent_label: str = Field(description="확장할 부모 노드 한글명", example="CNN")
+    parent_label_en: str = Field("", description="부모 노드 영문명 (선택)", example="Convolutional Neural Network")
+    axis: str = Field(description="부모 노드의 축. '핵심기술' | '연구대상' | '상위분야' | '응용분야'", example="핵심기술")
+    research_field: str = Field(description="최상위 연구 분야 (LLM 컨텍스트용)", example="딥러닝")
+    depth: int = Field(1, description="부모 노드의 현재 트리 깊이 (root=0)")
 
 
 class ExpandNodeResponse(BaseModel):
-    parent_label: str
-    new_children: list[dict]
+    parent_label: str = Field(description="확장한 부모 노드명")
+    new_children: list[dict] = Field(description="새로 생성된 하위 노드 배열 (ko, en, definition 포함)")
 
 
 @router.post(

@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -78,26 +78,26 @@ async def search_papers(
 # ── PART A 슬롯 대화 ───────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
-    session_id: Optional[str] = None
-    message: str
-    selected_options: Optional[List[str]] = None
-    force_start: bool = False
+    session_id: Optional[str] = Field(None, description="세션 ID. 첫 턴은 null, 이후 응답의 session_id 재사용")
+    message: str = Field(description="사용자 메시지. 첫 턴은 검색 주제, 이후 턴은 자유 입력 또는 빈 문자열 가능", example="딥러닝 관련 최신 논문 찾아줘")
+    selected_options: Optional[List[str]] = Field(None, description="이전 응답의 options[].value 목록. 버튼 선택 시 전달", example=["KCI", "3Y"])
+    force_start: bool = Field(False, description="true 시 슬롯 완성 여부와 무관하게 검색 즉시 시작")
 
 
 class InterimPaper(BaseModel):
-    paper_id: str
-    title: str
-    journal: Optional[str]
-    pub_year: Optional[int]
-    paper_type: Optional[str]
-    keywords: List[str]
-    scope_badge: Optional[str]
+    paper_id: str = Field(description="논문 고유 ID")
+    title: str = Field(description="논문 제목")
+    journal: Optional[str] = Field(None, description="학술지명")
+    pub_year: Optional[int] = Field(None, description="발행 연도")
+    paper_type: Optional[str] = Field(None, description="논문 유형. '저널' | '학위논문' | '학회' | null")
+    keywords: List[str] = Field(description="논문 키워드 (최대 4개)")
+    scope_badge: Optional[str] = Field(None, description="논문 범위 뱃지. 'KCI' | null")
 
 
 class FeedbackRequest(BaseModel):
-    session_id: str
-    paper_id: str
-    feedback: Literal["like", "dislike"]
+    session_id: str = Field(description="피드백을 남길 세션 ID")
+    paper_id: str = Field(description="피드백 대상 논문 ID")
+    feedback: Literal["like", "dislike"] = Field(description="피드백 유형. 'like' | 'dislike'")
 
 
 _FEEDBACK_KEY = "search_feedback:{session_id}"
@@ -105,23 +105,23 @@ _INTERIM_THRESHOLD = 60  # completeness_pct >= 이 값이면 interim_papers 조�
 
 
 class SearchProgress(BaseModel):
-    percent: int    # 0~100
-    status: str     # "pending" | "in_progress" | "complete"
+    percent: int = Field(description="검색 구체화 진행률 (0~100)")
+    status: str = Field(description="진행 상태. 'pending'(<60%) | 'in_progress'(60~99%) | 'complete'(100%)")
 
 
 class ChatResponse(BaseModel):
-    session_id: str
-    turn: int
-    ai_message: str
-    response_type: str  # "options" | "free_input" | "confirm"
-    options: List[Dict[str, Any]]
-    allow_multiple: bool
-    search_preview: SearchPreview
-    search_ready: bool
-    search_progress: SearchProgress
-    search_stage: str  # "none" | "ready" | "emphasized" | "complete"
-    interim_papers: List[InterimPaper] = []
-    final_search_params: Optional[SearchParams]
+    session_id: str = Field(description="세션 ID. 다음 턴 요청 시 재사용")
+    turn: int = Field(description="현재 대화 턴 수 (AI 응답 기준)")
+    ai_message: str = Field(description="AI 응답 메시지")
+    response_type: str = Field(description="UI 분기용. 'options': 버튼 선택 / 'free_input': 텍스트 입력 / 'confirm': 검색 시작 확인")
+    options: List[Dict[str, Any]] = Field(description="선택 옵션 목록. 각 항목의 value를 다음 턴 selected_options에 전달")
+    allow_multiple: bool = Field(description="true 시 options 다중 선택 가능")
+    search_preview: SearchPreview = Field(description="현재까지 채워진 검색 조건 미리보기")
+    search_ready: bool = Field(description="true 시 검색 실행 가능 상태. final_search_params를 /search/execute에 전달")
+    search_progress: SearchProgress = Field(description="검색 구체화 진행 상태")
+    search_stage: str = Field(description="버튼 활성화 분기용. 'none'(<80%) / 'ready'(80~89%) / 'emphasized'(90~99%) / 'complete'(100%)")
+    interim_papers: List[InterimPaper] = Field(default=[], description="키워드 추출 완료(60% 이상) 후 미리 보여줄 논문 최대 5건")
+    final_search_params: Optional[SearchParams] = Field(None, description="search_ready=true일 때 채워짐. /search/execute의 search_params에 그대로 전달")
 
 
 def _load_state(session_id: str) -> Optional[SearchState]:
@@ -381,7 +381,26 @@ async def chat_search(request: ChatRequest):
     )
 
 
-@router.post("/search/chat/stream")
+@router.post(
+    "/search/chat/stream",
+    summary="AI 슬롯 대화 — SSE 스트리밍",
+    description="""`/search/chat`과 동일한 슬롯 대화를 SSE(Server-Sent Events)로 스트리밍합니다.
+
+⚠️ POST 방식이므로 `EventSource`(GET 전용) 사용 불가. `fetch` + `ReadableStream` 필요.
+
+**SSE 이벤트 순서**
+1. `slot_update` — selected_options 처리 후 변경된 슬롯 `{slot, value}`
+2. `completeness` — options 처리 직후 구체화도 `{pct, stage}`
+3. `keyword_progress` `{stage: "started"}` — 키워드 추출 시작 시
+4. _(LLM 호출 블로킹 구간)_
+5. `slot_update` — 그래프 실행 후 변경된 슬롯
+6. `completeness` — 업데이트된 구체화도
+7. `keyword_progress` `{stage: "completed", keywords: [...]}` — 추출 완료
+8. `token` — ai_message 청크 `{text}` (10자씩)
+9. `done` — 최종 상태 전체 (session_id, options, search_ready, final_search_params 등)
+- `error` — 예외 발생 시. done 없이 스트림 즉시 종료
+""",
+)
 async def stream_chat(request: ChatRequest):
     """슬롯 대화 턴을 SSE로 스트리밍.
 
@@ -497,7 +516,18 @@ async def stream_chat(request: ChatRequest):
     )
 
 
-@router.get("/search/stream/{session_id}")
+@router.get(
+    "/search/stream/{session_id}",
+    summary="검색 조건 미리보기 SSE",
+    description="""현재 세션의 `search_preview`를 SSE로 반환합니다. LLM 추가 호출 없음.
+
+**이벤트 순서**
+1. `preview_update` `{content: SearchPreview}` — 현재 검색 조건 미리보기 (세션 없으면 생략)
+2. `done`
+
+세션이 존재하지 않아도 오류 없이 `done`만 반환합니다.
+""",
+)
 async def stream_preview(session_id: str):
     """현재 search_preview를 SSE로 반환 (LLM 추가 호출 없음)"""
     async def generate():
@@ -540,34 +570,34 @@ async def get_feedback(session_id: str):
 # ── PART A 실행 검색 ───────────────────────────────────────────────────
 
 class PaperResult(BaseModel):
-    paper_id: str
-    title: str
-    authors: List[str]
-    pub_year: Optional[int]
-    journal: Optional[str]
-    paper_type: Optional[str]
-    abstract: Optional[str]
-    keywords: List[str]
-    doi: Optional[str] = None
-    scope_badge: Optional[str]
-    citation_count: Optional[int]
-    relevance_score: float
-    trust_badge: Optional[str] = None
-    keyword_map_data: None = None
+    paper_id: str = Field(description="논문 고유 ID", example="JAKO202312345678")
+    title: str = Field(description="논문 제목")
+    authors: List[str] = Field(description="저자 목록", example=["홍길동", "김철수"])
+    pub_year: Optional[int] = Field(None, description="발행 연도", example=2023)
+    journal: Optional[str] = Field(None, description="학술지명")
+    paper_type: Optional[str] = Field(None, description="논문 유형. '저널' | '학위논문' | '학회' | null")
+    abstract: Optional[str] = Field(None, description="초록")
+    keywords: List[str] = Field(description="논문 키워드")
+    doi: Optional[str] = Field(None, description="DOI URL")
+    scope_badge: Optional[str] = Field(None, description="논문 범위 뱃지. 'KCI' | null")
+    citation_count: Optional[int] = Field(None, description="인용 수")
+    relevance_score: float = Field(description="ChromaDB 유사도 점수 (0~1)")
+    trust_badge: Optional[str] = Field(None, description="신뢰도 뱃지 (MVP 이후 제공 예정)")
+    keyword_map_data: None = Field(None, description="키워드맵 연결 데이터 (MVP 이후 제공 예정)")
 
 
 class ExecuteRequest(BaseModel):
-    session_id: str
-    search_params: SearchParams
-    filter_paper_type: Optional[Literal["저널", "학위논문", "학회", "전체"]] = None
-    sort_order: Literal["relevance", "year_asc", "year_desc"] = "relevance"
-    user_id: Optional[str] = None  # 검색 이력 저장용 (선택)
+    session_id: str = Field(description="/search/chat 응답의 session_id")
+    search_params: SearchParams = Field(description="/search/chat 응답의 final_search_params 그대로 전달")
+    filter_paper_type: Optional[Literal["저널", "학위논문", "학회", "전체"]] = Field(None, description="논문 유형 필터. null 또는 '전체' 시 전체 조회")
+    sort_order: Literal["relevance", "year_asc", "year_desc"] = Field("relevance", description="정렬 기준. 'relevance': 유사도 / 'year_asc': 발행일 오름차순 / 'year_desc': 발행일 내림차순")
+    user_id: Optional[str] = Field(None, description="검색 이력 저장용 유저 ID (선택). 제공 시 Redis에 AI 검색 이력 저장")
 
 
 class ExecuteResponse(BaseModel):
-    papers: List[PaperResult]
-    total: int
-    search_id: str
+    papers: List[PaperResult] = Field(description="논문 결과 목록")
+    total: int = Field(description="전체 결과 수")
+    search_id: str = Field(description="검색 고유 ID. 피드백 연동 시 사용")
 
 
 @router.post(

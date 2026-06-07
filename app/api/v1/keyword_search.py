@@ -5,7 +5,7 @@ import uuid as _uuid
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,42 +25,42 @@ _MAP_TTL = 86400  # 24시간 — keyword_map.py와 동일값 (추후 공통 상�
 
 
 class KeywordMapResponse(BaseModel):
-    research_field: str
-    tree: dict
+    research_field: str = Field(description="사용자의 연구 분야", example="딥러닝")
+    tree: dict = Field(description="키워드 트리 구조 (중첩 JSON)")
 
 
 class KeywordPaperRequest(BaseModel):
-    keyword: str
-    keyword_en: str = ""
-    sort: Literal["citation", "date"] = "date"
-    year_range: Optional[str] = None   # "3y" | "5y" | "10y" | "all"
-    page: int = 1
-    size: int = 30
-    user_id: Optional[str] = None  # 검색 이력 저장용 (선택)
+    keyword: str = Field(description="검색할 키워드 (한국어)", example="딥러닝")
+    keyword_en: str = Field("", description="검색할 키워드 (영어). Neo4j 실패 시 ChromaDB fallback 검색에 사용", example="deep learning")
+    sort: Literal["citation", "date"] = Field("date", description="정렬 기준. 'citation': 인용수 내림차순, 'date': 발행일 내림차순")
+    year_range: Optional[str] = Field(None, description="발행 연도 필터. '3y'(2023~), '5y'(2021~), '10y'(2016~), null=전체")
+    page: int = Field(1, description="페이지 번호 (1부터 시작)")
+    size: int = Field(30, description="페이지당 결과 수")
+    user_id: Optional[str] = Field(None, description="검색 이력 저장용 유저 ID (선택). 제공 시 첫 페이지 반환 시 이력 저장")
 
 
 class PaperResult(BaseModel):
-    paper_id: str
-    title: str
-    authors: List[str]
-    pub_year: Optional[int]
-    journal: Optional[str]
-    paper_type: Optional[str]
-    abstract: Optional[str]
-    keywords: List[str]
-    doi_url: Optional[str] = None
-    scope_badge: Optional[str]
-    citation_count: Optional[int]
-    relevance_score: float
-    trust_badge: None = None
-    keyword_map_data: None = None
-    related_papers: List = []  # MVP 이후 paper_similar 테이블 연결 예정
+    paper_id: str = Field(description="논문 고유 ID", example="JAKO202312345678")
+    title: str = Field(description="논문 제목")
+    authors: List[str] = Field(description="저자 목록", example=["홍길동", "김철수"])
+    pub_year: Optional[int] = Field(None, description="발행 연도", example=2023)
+    journal: Optional[str] = Field(None, description="학술지명", example="한국정보과학회논문지")
+    paper_type: Optional[str] = Field(None, description="논문 유형. '저널' | '학위논문' | '학회' | null", example="저널")
+    abstract: Optional[str] = Field(None, description="초록")
+    keywords: List[str] = Field(description="논문 키워드")
+    doi_url: Optional[str] = Field(None, description="DOI URL", example="https://doi.org/10.1234/example")
+    scope_badge: Optional[str] = Field(None, description="논문 범위 뱃지. 'KCI' | null", example="KCI")
+    citation_count: Optional[int] = Field(None, description="인용 수", example=42)
+    relevance_score: float = Field(description="ChromaDB 유사도 점수 (0~1)")
+    trust_badge: None = Field(None, description="신뢰도 뱃지 (MVP 이후 제공 예정)")
+    keyword_map_data: None = Field(None, description="키워드맵 연결 데이터 (MVP 이후 제공 예정)")
+    related_papers: List = Field(default=[], description="연관 논문 목록 (MVP 이후 제공 예정)")
 
 
 class KeywordPaperResponse(BaseModel):
-    keyword: str
-    papers: List[PaperResult]
-    total: int
+    keyword: str = Field(description="검색한 키워드")
+    papers: List[PaperResult] = Field(description="논문 결과 목록")
+    total: int = Field(description="필터/정렬 적용 후 전체 결과 수 (페이지네이션 기준)")
 
 
 def _year_cutoff(year_range: Optional[str]) -> Optional[int]:
@@ -107,7 +107,16 @@ def _to_result(item: PaperSearchItem) -> PaperResult:
     )
 
 
-@router.get("/keyword-search/map/{user_id}")
+@router.get(
+    "/keyword-search/map/{user_id}",
+    summary="사용자 키워드맵 조회",
+    description="""사용자의 연구 분야 키워드 트리를 반환합니다.
+
+- Redis 캐시 우선 조회 (TTL 24시간), 미스 시 PostgreSQL fallback
+- `user_id`가 유효한 UUID가 아닌 경우 DB 조회 없이 404 반환
+- 키워드맵이 없으면 404 반환 → 먼저 `/api/v1/keyword-map/generate` 호출 필요
+""",
+)
 async def get_keyword_map(user_id: str, db: AsyncSession = Depends(get_db)):
     """사용자의 현재 연구분야 키워드맵 조회"""
     r = get_redis(_REDIS_DB)
@@ -151,7 +160,24 @@ async def get_keyword_map(user_id: str, db: AsyncSession = Depends(get_db)):
     raise HTTPException(status_code=404, detail="키워드맵이 없습니다. 먼저 키워드맵을 생성해주세요.")
 
 
-@router.post("/keyword-search/papers")
+@router.post(
+    "/keyword-search/papers",
+    summary="키워드 기반 논문 검색",
+    description="""키워드 노드 클릭 시 호출. Neo4j → ChromaDB 순서로 논문을 조회합니다.
+
+**동작 흐름**
+1. Neo4j에서 키워드에 연결된 논문 ID 목록 조회
+2. ChromaDB에서 해당 ID의 메타데이터 fetch (유사도 계산 없음)
+3. Neo4j 실패(다운) 시 ChromaDB 하이브리드 검색으로 자동 fallback
+
+**필터/정렬**
+- `year_range`: `'3y'`(2023~) / `'5y'`(2021~) / `'10y'`(2016~) / null(전체)
+- `sort`: `'date'`(발행일 내림차순, 기본값) / `'citation'`(인용수 내림차순)
+
+**검색 이력**
+- `user_id` 제공 + `page=1`일 때 Redis에 검색 이력 자동 저장 (실패해도 결과에 영향 없음)
+""",
+)
 async def search_papers_by_keyword(request: KeywordPaperRequest):
     """키워드 노드 클릭 → Neo4j로 논문 ID 조회 → ChromaDB에서 메타데이터 fetch.
     유사도 계산 없음. Neo4j 다운 시 ChromaDB 직접 검색으로 fallback.
