@@ -78,7 +78,7 @@ class StartResponse(BaseModel):
 
 _VALID_PURPOSES = {
     "연구 주제 탐색",
-    "랩미팅 발표 준비",
+    "랩미팅/발표 준비",
     "논문 작성 참고",
     "최신 트렌드 파악",
     "연구자 탐색",
