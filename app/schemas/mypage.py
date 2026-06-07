@@ -46,7 +46,7 @@ class MypageResponse(BaseModel):
 
 class MypageProfileUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, description="변경할 이름")
-    gender: Optional[Literal["남성", "여성"]] = Field(None, description="성별. '남성' | '여성' | null('선택 안함' 전달 시 null로 저장)")
+    gender: Optional[Literal["남성", "여성", "기타"]] = Field(None, description="성별. '남성' | '여성' | '기타' | null('선택 안함' 전달 시 null로 저장)")
     age: Optional[str] = Field(None, description="연령대", example="20대")
     role: Optional[
         Literal[
