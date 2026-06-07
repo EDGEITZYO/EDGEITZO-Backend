@@ -17,36 +17,36 @@ _VALID_PURPOSES = {
 
 
 class MypageProfile(BaseModel):
-    id: UUID
-    email: str
-    provider: Optional[str] = None
-    name: Optional[str] = None
-    gender: Optional[str] = None
-    age: Optional[str] = None
-    role: Optional[str] = None
-    research_field: Optional[str] = None
-    purposes: Optional[list[str]] = None
-    purpose_custom: Optional[str] = None
-    is_profile_set: bool
-    created_at: datetime
-    updated_at: datetime
+    id: UUID = Field(description="유저 고유 ID")
+    email: str = Field(description="이메일 주소")
+    provider: Optional[str] = Field(None, description="소셜 로그인 제공자. 'kakao' | 'google' | null(이메일 가입)")
+    name: Optional[str] = Field(None, description="이름")
+    gender: Optional[str] = Field(None, description="성별. '남성' | '여성' | null")
+    age: Optional[str] = Field(None, description="연령대", example="20대")
+    role: Optional[str] = Field(None, description="역할. '대학원 진학 준비' | '석사과정' | '박사과정' | '석박통합과정' | '교수·연구원' | '대학생' | '기타' | null")
+    research_field: Optional[str] = Field(None, description="연구 분야", example="딥러닝")
+    purposes: Optional[list[str]] = Field(None, description="사용 목적 목록. '연구 주제 탐색' | '랩미팅/발표 준비' | '논문 작성 참고' | '최신 트렌드 파악' | '연구자 탐색'")
+    purpose_custom: Optional[str] = Field(None, description="기타 사용 목적 직접 입력값")
+    is_profile_set: bool = Field(description="프로필 최초 설정 완료 여부. false 시 온보딩 필요")
+    created_at: datetime = Field(description="계정 생성 시각 (ISO8601)")
+    updated_at: datetime = Field(description="프로필 마지막 수정 시각 (ISO8601)")
 
 
 class MypageSummary(BaseModel):
-    bookmark_count: int = 0
-    bookmark_folder_count: int = 0
-    recent_read_count: int = 0
+    bookmark_count: int = Field(0, description="전체 북마크 수")
+    bookmark_folder_count: int = Field(0, description="북마크 폴더 수")
+    recent_read_count: int = Field(0, description="최근 열람 논문 수")
 
 
 class MypageResponse(BaseModel):
-    profile: MypageProfile
-    summary: MypageSummary
+    profile: MypageProfile = Field(description="계정 및 프로필 정보")
+    summary: MypageSummary = Field(description="마이페이지 활동 요약")
 
 
 class MypageProfileUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, min_length=1)
-    gender: Optional[Literal["남성", "여성"]] = None
-    age: Optional[str] = None
+    name: Optional[str] = Field(default=None, min_length=1, description="변경할 이름")
+    gender: Optional[Literal["남성", "여성"]] = Field(None, description="성별. '남성' | '여성' | null('선택 안함' 전달 시 null로 저장)")
+    age: Optional[str] = Field(None, description="연령대", example="20대")
     role: Optional[
         Literal[
             "대학원 진학 준비",
@@ -57,10 +57,10 @@ class MypageProfileUpdate(BaseModel):
             "대학생",
             "기타",
         ]
-    ] = None
-    purposes: Optional[list[str]] = Field(default=None)
-    purpose_custom: Optional[str] = None
-    research_field: Optional[str] = None
+    ] = Field(None, description="역할")
+    purposes: Optional[list[str]] = Field(default=None, description="사용 목적 목록. 유효값: '연구 주제 탐색' | '랩미팅/발표 준비' | '논문 작성 참고' | '최신 트렌드 파악' | '연구자 탐색'")
+    purpose_custom: Optional[str] = Field(None, description="기타 사용 목적 직접 입력값")
+    research_field: Optional[str] = Field(None, description="연구 분야", example="딥러닝")
 
     @field_validator("gender", mode="before")
     @classmethod

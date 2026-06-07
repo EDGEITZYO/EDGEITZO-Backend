@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.bookmark import Bookmark, BookmarkFolder
 from app.models.recent_read import RecentRead
 from app.models.user import User
+from app.models.user_keyword_map import UserKeywordMap
 from app.repositories.user_repository import update_user
 from app.schemas.mypage import MypageProfile, MypageResponse, MypageSummary
 
@@ -65,3 +66,13 @@ async def update_mypage_profile(
         data["is_profile_set"] = True
         user = await update_user(db, user, **data)
     return _profile_from_user(user)
+
+
+async def delete_account(db: AsyncSession, user: User) -> None:
+    uid = user.id
+    await db.execute(delete(Bookmark).where(Bookmark.user_id == uid))
+    await db.execute(delete(BookmarkFolder).where(BookmarkFolder.user_id == uid))
+    await db.execute(delete(RecentRead).where(RecentRead.user_id == uid))
+    await db.execute(delete(UserKeywordMap).where(UserKeywordMap.user_id == uid))
+    await db.execute(delete(User).where(User.id == uid))
+    await db.commit()

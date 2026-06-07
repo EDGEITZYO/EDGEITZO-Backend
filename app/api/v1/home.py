@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,39 +30,39 @@ _HISTORY_LIMIT = 10
 # ── 스키마 ─────────────────────────────────────────────────────────────
 
 class RecentSearchItem(BaseModel):
-    id: str
-    type: str                               # "keyword" | "ai"
-    title: str
-    last_viewed_paper_title: Optional[str]  # 마지막으로 열람한 논문 제목
-    keyword_path: List[str]                 # 키워드 탐색 breadcrumb (keyword 타입)
-    recommended_keywords: List[str]         # AI 검색 추천 키워드 (ai 타입)
-    created_at: str
+    id: str = Field(description="탐색 고유 ID")
+    type: str = Field(description="탐색 유형. 'keyword': 키워드 탐색 (keyword_path 사용), 'ai': AI 탐색 (recommended_keywords 사용)", example="keyword")
+    title: str = Field(description="탐색 제목. AI: 첫 발화 요약 / keyword: 노드명", example="딥러닝")
+    last_viewed_paper_title: Optional[str] = Field(None, description="해당 탐색에서 마지막으로 열람한 논문 제목. 없으면 null", example="BERT를 활용한 자연어처리 연구")
+    keyword_path: List[str] = Field(description="키워드 탐색 breadcrumb 경로 (type='keyword'일 때 사용)", example=["AI", "딥러닝", "CNN"])
+    recommended_keywords: List[str] = Field(description="AI 탐색 추천 키워드 목록 (type='ai'일 때 사용)", example=["transformer", "attention", "BERT"])
+    created_at: str = Field(description="탐색 생성 시각 (ISO8601)", example="2024-03-15T10:30:00+00:00")
 
 
 class PaperBadges(BaseModel):
-    kci: Optional[str]          # "O" | "X" | null
-    citation_count: Optional[int]
+    kci: Optional[str] = Field(None, description="KCI 등재 여부. 'O': 등재지, 'X': 비등재지, null: 정보 없음", example="O")
+    citation_count: Optional[int] = Field(None, description="인용 수. 없으면 null", example=42)
 
 
 class RecentPaperItem(BaseModel):
-    paper_id: str
-    paper_type: Optional[str]
-    journal_name: Optional[str]
-    published_at: Optional[str]  # ISO8601 (발행일 or 발행연도-01-01)
-    title: str
-    keywords: List[str]
+    paper_id: str = Field(description="논문 고유 ID", example="JAKO202312345678")
+    paper_type: Optional[str] = Field(None, description="논문 유형. '저널' | '학위논문' | '학회' | null", example="저널")
+    journal_name: Optional[str] = Field(None, description="학술지명. 없으면 null", example="한국정보과학회논문지")
+    published_at: Optional[str] = Field(None, description="발행일 (ISO8601). pubdate 우선, 없으면 pubyear 기준 '{year}-01-01' 형태", example="2023-06-15")
+    title: str = Field(description="논문 제목", example="BERT를 활용한 자연어처리 연구")
+    keywords: List[str] = Field(description="논문 키워드 (최대 5개)", example=["BERT", "자연어처리", "딥러닝"])
     badges: PaperBadges
-    viewed_at: str
+    viewed_at: str = Field(description="열람 시각 (ISO8601)", example="2024-03-15T10:30:00+00:00")
 
 
 class HomeResponse(BaseModel):
-    user: dict
-    recent_searches: List[RecentSearchItem]
-    recent_papers: List[RecentPaperItem]
+    user: dict = Field(description="로그인 유저 정보 (id, name, personalized_message)")
+    recent_searches: List[RecentSearchItem] = Field(description="최근 탐색 이력 (최대 10건, 최신순)")
+    recent_papers: List[RecentPaperItem] = Field(description="최근 열람 논문 (최대 10건, 최신순)")
 
 
 class RecordReadRequest(BaseModel):
-    paper_id: str
+    paper_id: str = Field(description="열람한 논문 ID", example="JAKO202312345678")
 
 
 # ── 헬퍼 ───────────────────────────────────────────────────────────────
@@ -83,7 +83,21 @@ def _personalized_message(name: str) -> str:
 @router.get(
     "/home",
     summary="홈 화면 데이터",
-    description="로그인 유저의 개인화 메시지, 최근 탐색 이력(최대 10건), 최근 열람 논문(최대 10건) 반환.",
+    description="""로그인 유저의 홈 화면 데이터를 반환합니다. **Authorization 헤더에 Bearer 토큰 필요.**
+
+**응답 최상위 구조**
+- `success`: 요청 성공 여부 (bool)
+- `message`: 응답 메시지
+- `data`: 실제 데이터 (아래 구조)
+- `meta`: 추가 메타 정보 (현재 빈 객체)
+
+**data 구조**
+- `user`: 유저 정보 (`id`, `name`, `personalized_message`)
+- `recent_searches`: 최근 탐색 이력 최대 10건 (Redis, 7일 TTL)
+  - `type`이 `keyword`이면 `keyword_path` 사용, `ai`이면 `recommended_keywords` 사용
+- `recent_papers`: 최근 열람 논문 최대 10건 (DB, 최신순)
+""",
+    response_model=None,
 )
 async def get_home(
     current_user: User = Depends(get_current_user),
@@ -153,7 +167,12 @@ async def get_home(
 @router.post(
     "/home/recent-reads",
     summary="논문 열람 기록",
-    description="논문 상세 페이지 진입 시 호출. recent_reads 테이블에 기록 (중복 시 read_at 갱신).",
+    description="""논문 상세 페이지 진입 시 호출. **Authorization 헤더에 Bearer 토큰 필요.**
+
+- 최초 열람 시 `recent_reads` 테이블에 새 레코드 생성
+- 재열람 시 `read_at` 갱신 및 `view_count` +1
+- 존재하지 않는 `paper_id` 전달 시 404 반환
+""",
 )
 async def record_read(
     request: RecordReadRequest,

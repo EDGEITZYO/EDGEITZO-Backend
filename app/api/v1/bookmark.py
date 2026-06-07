@@ -77,7 +77,7 @@ async def list_bookmarks(
     response_model=ApiResponse[BookmarkResponse],
     responses={401: {"model": ApiErrorResponse}, 422: {"model": ApiErrorResponse}},
     summary="북마크 추가",
-    description="논문을 북마크에 추가합니다. 이미 북마크된 경우 200을 반환합니다 (idempotent).",
+    description="논문을 북마크에 추가합니다. **Authorization 헤더에 Bearer 토큰 필요.** 이미 북마크된 경우 200을 반환합니다 (idempotent). `folder_id` 미지정 시 폴더 없이 저장됩니다.",
 )
 async def create_bookmark(
     body: BookmarkCreate,
@@ -96,6 +96,7 @@ async def create_bookmark(
     response_model=ApiResponse[None],
     responses={401: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
     summary="북마크 삭제",
+    description="논문 북마크를 삭제합니다. **Authorization 헤더에 Bearer 토큰 필요.** 북마크가 없으면 404 반환.",
 )
 async def delete_bookmark(
     paper_id: str,
@@ -113,6 +114,7 @@ async def delete_bookmark(
     response_model=ApiResponse[BookmarkCheckResponse],
     responses={401: {"model": ApiErrorResponse}},
     summary="북마크 여부 확인",
+    description="특정 논문의 북마크 여부를 확인합니다. **Authorization 헤더에 Bearer 토큰 필요.** 논문 상세 페이지 진입 시 북마크 버튼 상태 표시에 사용합니다.",
 )
 async def check_bookmark_status(
     paper_id: str,
