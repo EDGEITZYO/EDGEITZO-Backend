@@ -19,5 +19,6 @@ jobs:
           script: |
             cd ~/EDGEITZO-Backend
             git pull origin main
-            docker-compose down
+            docker-compose ps -a
+            docker-compose down --remove-orphans
             docker-compose up -d --build
