@@ -368,15 +368,21 @@ async def chat_search(request: ChatRequest):
                 from app.services.chroma_search_service import get_chroma_search_service
                 svc = get_chroma_search_service()
                 items = await svc.search(query=" ".join(kws), n_results=5)
-                _tmap = {"JAKO": "저널", "JAFO": "저널", "DIKO": "학위논문", "CFKO": "학회"}
+                _journal_codes = {"JAKO", "JAFO", "CFKO", "CFFO"}
                 for it in items:
                     db_c = it.db_code or ""
+                    if db_c in _journal_codes:
+                        _itype: str | None = "학술 저널"
+                    elif db_c == "DIKO":
+                        _itype = "학위논문"
+                    else:
+                        _itype = None
                     interim.append(InterimPaper(
                         paper_id=it.paper_id,
                         title=it.title,
                         journal=it.journal_name,
                         pub_year=it.year,
-                        paper_type=_tmap.get(db_c),
+                        paper_type=_itype,
                         keywords=it.keywords[:4],
                         scope_badge="KCI" if db_c == "JAKO" else None,
                     ))
@@ -665,7 +671,7 @@ class PaperResult(BaseModel):
     authors: List[str] = Field(description="저자 목록", example=["홍길동", "김철수"])
     pub_year: Optional[int] = Field(None, description="발행 연도", example=2023)
     journal: Optional[str] = Field(None, description="학술지명")
-    paper_type: Optional[str] = Field(None, description="논문 유형. '저널' | '학위논문' | '학회' | null")
+    paper_type: Optional[str] = Field(None, description="논문 유형. '박사 학위 논문' | '석사 학위 논문' | '학술 저널' | '학위논문' | null")
     abstract: Optional[str] = Field(None, description="초록")
     keywords: List[str] = Field(description="논문 키워드")
     doi: Optional[str] = Field(None, description="DOI URL")
@@ -679,7 +685,7 @@ class PaperResult(BaseModel):
 class ExecuteRequest(BaseModel):
     session_id: str = Field(description="/search/chat 응답의 session_id")
     search_params: SearchParamsDoc = Field(description="/search/chat 응답의 final_search_params 그대로 전달")
-    filter_paper_type: Optional[Literal["저널", "학위논문", "학회", "전체"]] = Field(None, description="논문 유형 필터. null 또는 '전체' 시 전체 조회")
+    filter_paper_type: Optional[Literal["학술 저널", "학위논문", "전체"]] = Field(None, description="논문 유형 필터. null 또는 '전체' 시 전체 조회")
     sort_order: Literal["relevance", "year_asc", "year_desc"] = Field("relevance", description="정렬 기준. 'relevance': 유사도 / 'year_asc': 발행일 오름차순 / 'year_desc': 발행일 내림차순")
     user_id: Optional[str] = Field(None, description="검색 이력 저장용 유저 ID (선택). 제공 시 Redis에 AI 검색 이력 저장")
 
@@ -703,7 +709,7 @@ class ExecuteResponse(BaseModel):
         "**요청 필드**\n"
         "- `session_id` — `/search/chat` 응답의 `session_id` (검색 이력 저장에 사용)\n"
         "- `search_params` — `/search/chat` 응답의 `final_search_params` 그대로 전달\n"
-        "- `filter_paper_type` — 논문 유형 필터. `'저널'`|`'학위논문'`|`'학회'`|`'전체'`|null (null = 전체)\n"
+        "- `filter_paper_type` — 논문 유형 필터. `'학술 저널'`|`'학위논문'`|`'전체'`|null (null = 전체)\n"
         "- `sort_order` — 정렬 기준. `'relevance'`(유사도순) | `'year_asc'`(오래된순) | `'year_desc'`(최신순)\n"
         "- `user_id` — 제공 시 Redis에 AI 검색 이력 저장 (선택)\n\n"
         "**응답 필드**\n"

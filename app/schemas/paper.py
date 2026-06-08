@@ -40,8 +40,8 @@ class PaperCardResponse(BaseModel):
     )
     paper_type: Optional[str] = Field(
         None,
-        description="논문 유형. DBCode 기반 매핑: JAKO/JAFO→'저널', DIKO→'학위논문', CFKO→'학회'. null이면 미분류",
-        example="저널",
+        description="논문 유형. '박사 학위 논문' | '석사 학위 논문' | '학술 저널' | '학위논문' | null",
+        example="학술 저널",
     )
     abstract: Optional[str] = Field(
         None,
@@ -113,7 +113,7 @@ class PaperDetailResponse(BaseModel):
     keywords_ko: Optional[list[str]] = Field(None, description="한국어 키워드")
     keywords_en: Optional[list[str]] = Field(None, description="영문 키워드")
     published_at: Optional[str] = Field(None, description="발행일 (ISO8601). pubdate 우선, 없으면 '{year}-01-01'")
-    paper_type: Optional[str] = Field(None, description="논문 유형. '저널' | '학위논문' | '학회' | null")
+    paper_type: Optional[str] = Field(None, description="논문 유형. '박사 학위 논문' | '석사 학위 논문' | '학술 저널' | null")
     journal_name: Optional[str] = Field(None, description="학술지명. 없으면 null")
     doi: Optional[str] = Field(None, description="DOI. 없으면 null")
     citation_count: Optional[int] = Field(None, description="인용 수. 없으면 null")

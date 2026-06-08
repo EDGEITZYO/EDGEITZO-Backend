@@ -30,6 +30,7 @@ from app.services.bookmark_service import (
 from app.services.credibility_service import (
     _journal_to_evidence,
     build_trust_badge,
+    paper_type_label,
     resolve_paper_type,
 )
 
@@ -81,7 +82,7 @@ def _to_card(
 
     return SavedPaperCard(
         paper_id=paper.id,
-        paper_type=ptype,
+        paper_type=paper_type_label(ptype),
         journal_name=journal.title if journal else None,
         published_at=published_at,
         title=paper.title or "",

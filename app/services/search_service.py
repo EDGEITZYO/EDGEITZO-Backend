@@ -11,8 +11,9 @@ from app.schemas.search import (
     SearchPapersRequest,
     SearchPapersResponse,
 )
+from app.repositories.paper_repository import get_paper_cards_batch
 from app.services.chroma_search_service import get_chroma_search_service
-from app.services.credibility_service import enrich_items_with_credibility
+from app.services.credibility_service import enrich_items_with_credibility, paper_type_label, resolve_paper_type
 
 logger = logging.getLogger(__name__)
 
@@ -34,23 +35,6 @@ _SCORE_BADGE_MEDIUM = 0.1
 # 키워드 수 가중치
 _SCORE_KEYWORD_PER = 0.03
 _SCORE_KEYWORD_MAX = 0.15
-
-_PAPER_TYPE_MAP: dict[str, str] = {
-    "JAKO": "저널",
-    "JAFO": "저널",
-    "DIKO": "학위논문",
-    "CFKO": "학회",
-    "CFFO": "학회",
-}
-
-
-def _db_code_to_paper_type(db_code: str | None) -> str | None:
-    if db_code is None:
-        return None
-    result = _PAPER_TYPE_MAP.get(db_code)
-    if result is None:
-        logger.warning("unknown DBCode for paper_type mapping: %s", db_code)
-    return result
 
 
 def _resolve_scope_badge(credibility) -> str | None:
@@ -210,8 +194,20 @@ async def execute_search(
     items = _apply_scoring(items, research_purpose=research_purpose)
     items = _sort_items(items)
 
+    # DB에서 degree 조회 → paper_type 세분화
+    db_extra: dict = {}
+    if db is not None:
+        try:
+            db_extra = await get_paper_cards_batch(db, [i.paper_id for i in items])
+        except Exception:
+            pass
+
+    def _resolve_type(item: PaperSearchItem) -> str | None:
+        degree = (db_extra.get(item.paper_id) or {}).get("degree")
+        return paper_type_label(resolve_paper_type(item.db_code, degree))
+
     if filter_paper_type and filter_paper_type != "전체":
-        items = [i for i in items if _db_code_to_paper_type(i.db_code) == filter_paper_type]
+        items = [i for i in items if _resolve_type(i) == filter_paper_type]
 
     if sort_order == "year_asc":
         items = sorted(items, key=lambda i: (i.year is None, i.year or 0))
@@ -226,7 +222,7 @@ async def execute_search(
             "authors":        [a.name for a in item.authors],
             "pub_year":       item.year,
             "journal":        item.journal_name,
-            "paper_type":     _db_code_to_paper_type(item.db_code),
+            "paper_type":     _resolve_type(item),
             "abstract":       item.abstract,
             "keywords":       item.keywords,
             "doi":            item.doi,

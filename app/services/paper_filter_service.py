@@ -8,7 +8,7 @@ from app.repositories.paper_repository import get_paper_cards_batch
 from app.schemas.paper import PaperCardResponse, PaperCardTrustBadge
 from app.schemas.search import PaperSearchItem
 
-_PAPER_TYPE_MAP = {"JAKO": "저널", "JAFO": "저널", "DIKO": "학위논문", "CFKO": "학회"}
+_PAPER_TYPE_MAP = {"JAKO": "학술 저널", "JAFO": "학술 저널", "DIKO": "학위논문", "CFKO": "학술 저널", "CFFO": "학술 저널"}
 _YEAR_CUTOFF = {"3y": 2023, "5y": 2021, "10y": 2016}
 
 
@@ -76,12 +76,15 @@ async def build_paper_cards(
         citation_count: Optional[int] = extra.get("citation_count")
 
         degree_type: Optional[str] = None
+        card_paper_type: Optional[str] = _PAPER_TYPE_MAP.get(item.db_code or "")
         if (item.db_code or "") == "DIKO":
             degree = extra.get("degree") or ""
             if "박사" in degree:
-                degree_type = "박사학위 논문"
+                degree_type = "박사 학위 논문"
+                card_paper_type = "박사 학위 논문"
             elif "석사" in degree:
-                degree_type = "석사학위 논문"
+                degree_type = "석사 학위 논문"
+                card_paper_type = "석사 학위 논문"
             else:
                 degree_type = "학위논문"
 
@@ -98,7 +101,7 @@ async def build_paper_cards(
             authors=[a.name for a in item.authors],
             pub_year=item.year,
             journal_name=item.journal_name,
-            paper_type=_PAPER_TYPE_MAP.get(item.db_code or ""),
+            paper_type=card_paper_type,
             abstract=item.abstract,
             keywords=item.keywords,
             doi=item.doi or None,

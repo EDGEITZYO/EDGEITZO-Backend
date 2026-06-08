@@ -16,6 +16,7 @@ from app.services.credibility_service import (
     JournalEvidence,
     _journal_to_evidence,
     build_trust_badge,
+    paper_type_label,
     resolve_paper_type,
 )
 
@@ -95,7 +96,7 @@ def _build_paper(paper: Paper, journal: Journal | None) -> BookmarkedPaper:
 
     return BookmarkedPaper(
         id=paper.id,
-        paper_type=ptype,
+        paper_type=paper_type_label(ptype),
         title=paper.title,
         authors=paper.authors or None,
         published_at=published_at,

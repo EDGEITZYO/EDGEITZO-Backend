@@ -247,6 +247,16 @@ def resolve_paper_type(db_code: str | None, degree: str | None = None) -> str:
     return "journal"  # 기타 fallback
 
 
+def paper_type_label(paper_type: str) -> str:
+    """internal paper_type code → 사용자 노출 레이블 (3분류)"""
+    return {
+        "thesis_phd": "박사 학위 논문",
+        "thesis_master": "석사 학위 논문",
+        "journal": "학술 저널",
+        "conference": "학술 저널",
+    }.get(paper_type, "학술 저널")
+
+
 def build_trust_badge(
     paper_type: str,
     *,

@@ -20,14 +20,13 @@ from app.services.credibility_service import (
     build_trust_badge,
     calculate_credibility,
     calculate_thesis_credibility,
+    paper_type_label,
     resolve_paper_type,
 )
 
 router = APIRouter(prefix="/papers", tags=["Paper"])
 
 _scienceon = ScienceOnClient()
-
-_PAPER_TYPE_LABEL = {"JAKO": "저널", "JAFO": "저널", "DIKO": "학위논문", "CFKO": "학회"}
 
 
 @router.get(
@@ -44,7 +43,7 @@ _PAPER_TYPE_LABEL = {"JAKO": "저널", "JAFO": "저널", "DIKO": "학위논문",
         "- `abstract` / `abstract_en` — 한국어·영문 초록\n"
         "- `keywords_ko` / `keywords_en` — 한국어·영문 키워드\n"
         "- `published_at` — pubdate 우선, 없으면 `{pubyear}-01-01`, 둘 다 없으면 null\n"
-        "- `paper_type` — `'저널'` | `'학위논문'` | `'학회'` | null\n"
+        "- `paper_type` — `'박사 학위 논문'` | `'석사 학위 논문'` | `'학술 저널'` | null\n"
         "- `journal_name` — 학술지명. 학위논문·학회는 null일 수 있음\n"
         "- `degree` / `affiliation` — 학위논문 전용. 저널·학회는 null\n"
         "- `fulltext_flag` — 원문 제공 여부. 없으면 null\n"
@@ -102,7 +101,7 @@ async def get_paper_detail(
         keywords_ko=paper.keywords_ko,
         keywords_en=paper.keywords_en,
         published_at=published_at,
-        paper_type=_PAPER_TYPE_LABEL.get(paper.db_code),
+        paper_type=paper_type_label(resolve_paper_type(paper.db_code, paper.degree)),
         journal_name=paper.journal.title if paper.journal else None,
         doi=paper.doi,
         citation_count=paper.citation_count,
