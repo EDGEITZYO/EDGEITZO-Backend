@@ -56,3 +56,17 @@ class Paper(Base):
     __table_args__ = (
         Index("ix_papers_source_pubyear", "source", "pubyear"),
     )
+
+
+class PaperSimilar(Base):
+    __tablename__ = "paper_similar"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_cn = Column(String(100), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False, index=True)
+    similar_cn = Column(String(100), nullable=True, index=True)
+    title = Column(String(1000), nullable=True)
+    author = Column(String(500), nullable=True)
+    pubyear = Column(Integer, nullable=True)
+    issn = Column(String(50), nullable=True)
+    material_type = Column(String(50), nullable=True)
+    internal_paper_id = Column(String(100), ForeignKey("papers.id", ondelete="SET NULL"), nullable=True, index=True)
