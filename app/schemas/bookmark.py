@@ -28,7 +28,7 @@ class BookmarkCheckResponse(BaseModel):
 
 class BookmarkedPaper(BaseModel):
     id: str = Field(description="논문 고유 ID")
-    paper_type: Optional[str] = Field(None, description="논문 유형. 'journal' | 'thesis_phd' | 'thesis_master' | 'conference' | null")
+    paper_type: Optional[str] = Field(None, description="논문 유형. '저널' | '학위논문' | '학회' | null(분류 불가)")
     title: str = Field(description="논문 제목")
     authors: Optional[list[str]] = Field(None, description="저자 목록")
     published_at: Optional[str] = Field(None, description="발행일 (ISO8601)")
