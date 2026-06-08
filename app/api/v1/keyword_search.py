@@ -104,6 +104,7 @@ async def get_keyword_map(user_id: str, db: AsyncSession = Depends(get_db)):
     response_description="필터/정렬/페이지네이션 적용된 논문 카드 목록. trust_badge는 papers 테이블 존재 시 채워짐",
     responses={
         200: {"description": "정상 응답. papers 빈 배열도 200 반환"},
+        422: {"description": "요청 바디 유효성 오류 (필수 필드 누락 등)"},
     },
     summary="키워드 기반 논문 검색",
     description="""키워드 노드 클릭 시 호출. Neo4j → ChromaDB 순서로 논문을 조회합니다.
@@ -123,6 +124,27 @@ async def get_keyword_map(user_id: str, db: AsyncSession = Depends(get_db)):
 
 **검색 이력**
 - `user_id` 제공 + `page=1`일 때 Redis에 검색 이력 자동 저장 (실패해도 결과에 영향 없음)
+
+**응답 `papers[]` 예시 (PaperCardResponse)**
+```json
+{
+  "paper_id": "JAKO202312345678",
+  "title": "딥러닝 기반 이미지 분류 연구",
+  "authors": ["홍길동", "김철수"],
+  "published_at": "2023-06-01",
+  "paper_type": "저널",
+  "journal_name": "한국정보과학회 논문지",
+  "keywords": ["딥러닝", "CNN", "이미지 분류"],
+  "abstract": "본 연구는...",
+  "doi": null,
+  "trust_badge": {
+    "kci": true,
+    "sci": false,
+    "citation_count": 12,
+    "degree_type": null
+  }
+}
+```
 """,
 )
 async def search_papers_by_keyword(

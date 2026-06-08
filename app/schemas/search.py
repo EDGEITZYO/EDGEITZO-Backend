@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -61,3 +61,13 @@ class PaperSearchItem(BaseModel):
 class SearchPapersResponse(BaseModel):
     search_id: str
     items: list[PaperSearchItem]
+
+
+class SearchParamsDoc(BaseModel):
+    """SearchParams TypedDict의 Swagger 노출용 Pydantic 래퍼."""
+    keywords: List[str] = Field(description="검색 키워드 목록", example=["딥러닝", "CNN"])
+    scope: str = Field(description="논문 범위. 'KCI' | 'SCI' | 'ALL' | 'ANY'", example="KCI")
+    pub_year_start: Optional[int] = Field(None, description="발행 연도 시작. 예: 2021 (5Y 선택 시)", example=2021)
+    research_purpose: str = Field(description="연구 목적. '연구주제탐색' | '논문작성참고' | '랩미팅발표' | '최신트렌드'", example="연구주제탐색")
+    trust_level: Optional[str] = Field(None, description="신뢰도 필터. 현재 항상 null", example=None)
+    advanced_filters: Dict[str, Any] = Field(default_factory=dict, description="고급 필터. 예: {'extra': '한국 저자만'}", example={"extra": "한국 저자만"})

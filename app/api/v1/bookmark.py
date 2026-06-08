@@ -42,7 +42,18 @@ router = APIRouter(prefix="/bookmarks", tags=["Bookmark"])
         "- `journal`: 학술지 논문\n"
         "- `thesis`: 학위논문 (박사+석사 통합)\n"
         "- `conference`: 학술대회 (현재 데이터 없음)\n\n"
-        "**검색 (`search_query`)**: 제목·저자·키워드 부분일치, 완전/접두/부분 순 우선"
+        "**검색 (`search_query`)**: 제목·저자·키워드 부분일치, 완전/접두/부분 순 우선\n\n"
+        "**`paper.paper_type` 값 범위**\n"
+        "- `'저널'`: JAKO/JAFO 코드 논문 (KCI 학술지)\n"
+        "- `'학위논문'`: DIKO 코드 논문 (박사/석사 학위논문)\n"
+        "- `'학회'`: CFKO 코드 논문 (학술대회)\n"
+        "- `null`: 분류 불가\n\n"
+        "**`paper.trust_badge` 구조 (PaperCardTrustBadge — 4필드)**\n"
+        "- `kci` (bool | null): KCI 등재 여부\n"
+        "- `sci` (bool | null): SCI 등재 여부\n"
+        "- `citation_count` (int | null): 인용 수\n"
+        "- `degree_type` (str | null): 학위 유형. `'박사'` | `'석사'` | null (학위논문에만 존재)\n\n"
+        "**`degree_type` 값 범위**: DIKO 코드(학위논문) 논문만 채워짐. 저널/학회 논문은 항상 null"
     ),
 )
 async def list_bookmarks(

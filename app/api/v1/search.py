@@ -26,7 +26,7 @@ from app.langgraph.search_state import (
     empty_slots,
 )
 from app.schemas.common import ApiErrorResponse, ApiResponse
-from app.schemas.search import SearchPapersRequest, SearchPapersResponse
+from app.schemas.search import SearchPapersRequest, SearchPapersResponse, SearchParamsDoc
 from app.services.search_service import execute_search, search_papers_service
 
 router = APIRouter()
@@ -678,7 +678,7 @@ class PaperResult(BaseModel):
 
 class ExecuteRequest(BaseModel):
     session_id: str = Field(description="/search/chat 응답의 session_id")
-    search_params: SearchParams = Field(description="/search/chat 응답의 final_search_params 그대로 전달")
+    search_params: SearchParamsDoc = Field(description="/search/chat 응답의 final_search_params 그대로 전달")
     filter_paper_type: Optional[Literal["저널", "학위논문", "학회", "전체"]] = Field(None, description="논문 유형 필터. null 또는 '전체' 시 전체 조회")
     sort_order: Literal["relevance", "year_asc", "year_desc"] = Field("relevance", description="정렬 기준. 'relevance': 유사도 / 'year_asc': 발행일 오름차순 / 'year_desc': 발행일 내림차순")
     user_id: Optional[str] = Field(None, description="검색 이력 저장용 유저 ID (선택). 제공 시 Redis에 AI 검색 이력 저장")
@@ -716,8 +716,9 @@ async def execute_search_endpoint(
     request: ExecuteRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    sp = request.search_params.model_dump()
     result = await execute_search(
-        dict(request.search_params),
+        sp,
         db,
         filter_paper_type=request.filter_paper_type,
         sort_order=request.sort_order,
@@ -730,7 +731,7 @@ async def execute_search_endpoint(
             state = _load_state(request.session_id)
             slots = (state or {}).get("slots", {})
             user_query = (state or {}).get("user_query", "")
-            kws = request.search_params.get("keywords") or []
+            kws = sp.get("keywords") or []
             save_search_history(
                 user_id=request.user_id,
                 search_type="ai",
