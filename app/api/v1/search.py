@@ -544,6 +544,7 @@ async def stream_preview(session_id: str):
 
 @router.post(
     "/search/feedback",
+    response_model=ApiResponse[dict],
     summary="논문 좋아요/싫어요",
     description="검색 결과 또는 대화 중 논문에 대한 피드백. session 당 paper별로 Redis에 저장.",
 )
@@ -558,6 +559,7 @@ async def submit_feedback(request: FeedbackRequest):
 
 @router.get(
     "/search/feedback/{session_id}",
+    response_model=ApiResponse[dict],
     summary="세션 피드백 조회",
     description="session_id로 저장된 전체 피드백 목록 반환. {paper_id: 'like'|'dislike'}",
 )

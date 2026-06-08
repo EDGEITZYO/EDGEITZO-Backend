@@ -256,6 +256,7 @@ class RecentListResponse(BaseModel):
 
 @router.get(
     "/recent",
+    response_model=ApiResponse[RecentListResponse | RecentChartResponse],
     responses={401: {"model": ApiErrorResponse}},
     summary="저장한 논문 — 최근 읽은 탭",
     description=(

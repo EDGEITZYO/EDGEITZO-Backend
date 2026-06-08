@@ -46,6 +46,7 @@ class KeywordPaperRequest(BaseModel):
 
 @router.get(
     "/keyword-search/map/{user_id}",
+    response_model=ApiResponse[KeywordMapResponse],
     summary="사용자 키워드맵 조회",
     description="""사용자의 연구 분야 키워드 트리를 반환합니다.
 

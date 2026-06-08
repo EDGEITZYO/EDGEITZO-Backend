@@ -80,6 +80,7 @@ class KeywordMapGenerateResponse(BaseModel):
 
 @router.get(
     "/keyword-map",
+    response_model=ApiResponse[dict],
     summary="키워드맵 트리 조회",
     description="""연구 분야(`topic`)로 LLM 키워드 트리를 생성해 반환합니다.
 
@@ -190,6 +191,7 @@ async def get_node_papers(
 
 @router.post(
     "/keyword-map/generate",
+    response_model=ApiResponse[KeywordMapGenerateResponse],
     summary="키워드맵 생성 및 저장",
     description="""연구 분야 텍스트로 4축 키워드 트리를 LLM으로 생성하고 저장합니다.
 
@@ -265,6 +267,7 @@ class ExpandNodeResponse(BaseModel):
 
 @router.post(
     "/keyword-map/node/{node_id}/expand",
+    response_model=ApiResponse[ExpandNodeResponse],
     summary="키워드 노드 하위 키워드 LLM 생성",
     description="선택된 노드(node_id)의 하위 키워드 2~3개를 LLM으로 생성. axis, research_field, depth 정보 필수.",
 )
