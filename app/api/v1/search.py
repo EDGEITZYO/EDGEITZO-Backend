@@ -296,7 +296,7 @@ def _turn_count(messages: list) -> int:
     description="""AI와 대화하며 검색 조건을 채워나가는 슬롯 방식 검색입니다.
 
 **사용 순서**
-1. **첫 턴** — `session_id: null`, `message`에 검색 주제 입력
+1. **첫 턴** — `session_id: null`, `message`에 검색 주제 입력 (**주의: 첫 턴의 `session_id`는 따옴표 없이 `null`로 전달, 이후 턴부터는 `"session_id"` 처럼 따옴표 포함 문자열로 전달**)
 2. **이후 턴** — 응답의 `session_id` 재사용, `selected_options`에 `options[].value` 전달
 3. **검색 실행** — `search_ready: true`가 되면 `final_search_params`를 `/search/execute`로 전달
 
@@ -605,9 +605,21 @@ class ExecuteResponse(BaseModel):
     response_model=ApiResponse[ExecuteResponse],
     summary="슬롯 대화 완료 후 실행 검색",
     description=(
-        "search_ready=true 상태의 final_search_params를 그대로 search_params에 전달.\n"
-        "filter_paper_type: '저널'|'학위논문'|'학회'|'전체'|null (null=전체).\n"
-        "sort_order: 'relevance'|'year_asc'|'year_desc'."
+        "`/search/chat`에서 `search_ready: true`가 반환된 이후 실제 논문 검색을 실행하는 엔드포인트입니다.\n\n"
+        "**사용 순서**\n"
+        "1. `/search/chat`을 반복 호출하여 `search_ready: true` 응답을 받는다\n"
+        "2. 해당 응답의 `session_id`와 `final_search_params`를 그대로 이 API의 `session_id`, `search_params`에 전달한다\n"
+        "3. 응답의 `papers` 목록을 논문 검색 결과 화면에 표시한다\n\n"
+        "**요청 필드**\n"
+        "- `session_id` — `/search/chat` 응답의 `session_id` (검색 이력 저장에 사용)\n"
+        "- `search_params` — `/search/chat` 응답의 `final_search_params` 그대로 전달\n"
+        "- `filter_paper_type` — 논문 유형 필터. `'저널'`|`'학위논문'`|`'학회'`|`'전체'`|null (null = 전체)\n"
+        "- `sort_order` — 정렬 기준. `'relevance'`(유사도순) | `'year_asc'`(오래된순) | `'year_desc'`(최신순)\n"
+        "- `user_id` — 제공 시 Redis에 AI 검색 이력 저장 (선택)\n\n"
+        "**응답 필드**\n"
+        "- `papers` — 논문 결과 목록\n"
+        "- `total` — 전체 결과 수\n"
+        "- `search_id` — 검색 고유 ID (피드백 `/search/feedback` 연동 시 사용)"
     ),
 )
 async def execute_search_endpoint(
