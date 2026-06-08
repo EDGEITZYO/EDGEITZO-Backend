@@ -65,9 +65,9 @@ services:
     expose:
       - "8000"
     volumes:
-      - chroma_data:/chroma/chroma
+      - chroma_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v2/heartbeat')\""]
       interval: 10s
       timeout: 5s
       retries: 5
