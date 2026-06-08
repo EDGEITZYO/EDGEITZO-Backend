@@ -74,7 +74,7 @@ async def paper_exists_by_doi(db: AsyncSession, doi: str) -> bool:
 async def get_paper_cards_batch(
     db: AsyncSession, paper_ids: list[str]
 ) -> dict[str, dict]:
-    """paper_id 목록 → {paper_id: {citation_count, kci_registered, sci_indexed}} IN 쿼리 1회.
+    """paper_id 목록 → {paper_id: {citation_count, kci_registered, sci_indexed, degree}} IN 쿼리 1회.
     papers.journal_id → journals.id LEFT JOIN으로 sci_indexed 함께 조회.
     """
     from app.models.journal import Journal
@@ -87,6 +87,7 @@ async def get_paper_cards_batch(
             Paper.id,
             Paper.citation_count,
             Paper.db_code,
+            Paper.degree,
             Journal.sci_indexed,
         )
         .outerjoin(Journal, Paper.journal_id == Journal.id)
@@ -97,6 +98,7 @@ async def get_paper_cards_batch(
             "citation_count": row.citation_count,
             "kci_registered": row.db_code == "JAKO",
             "sci_indexed": bool(row.sci_indexed) if row.sci_indexed is not None else False,
+            "degree": row.degree,
         }
         for row in result.fetchall()
     }

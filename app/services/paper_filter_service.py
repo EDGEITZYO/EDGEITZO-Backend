@@ -75,9 +75,15 @@ async def build_paper_cards(
         sci_indexed: bool = extra.get("sci_indexed", False)
         citation_count: Optional[int] = extra.get("citation_count")
 
-        # ChromaDB에는 degree 필드 없음 — 박사/석사 구분 불가
-        # 정확한 degree_type은 GET /papers/{paper_id} 상세 조회에서 제공
-        degree_type = "학위논문" if (item.db_code or "") == "DIKO" else None
+        degree_type: Optional[str] = None
+        if (item.db_code or "") == "DIKO":
+            degree = extra.get("degree") or ""
+            if "박사" in degree:
+                degree_type = "박사학위 논문"
+            elif "석사" in degree:
+                degree_type = "석사학위 논문"
+            else:
+                degree_type = "학위논문"
 
         trust_badge = PaperCardTrustBadge(
             kci=kci_registered,

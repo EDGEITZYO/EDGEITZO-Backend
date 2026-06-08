@@ -91,6 +91,18 @@ async def _browse(client: httpx.AsyncClient, cn: str) -> dict | None:
     return None
 
 
+def _normalize_degree(raw: str | None) -> str | None:
+    """ScienceON Degree 값 → 정규화. '국내박사'/'박사' → '박사', '국내석사'/'석사' → '석사', 그 외 → None."""
+    if not raw:
+        return None
+    s = raw.strip()
+    if "박사" in s:
+        return "박사"
+    if "석사" in s:
+        return "석사"
+    return None
+
+
 def _extract_meta(parsed: dict) -> dict | None:
     """browse 응답에서 메타 4개 필드 추출."""
     try:
@@ -114,7 +126,7 @@ def _extract_meta(parsed: dict) -> dict | None:
         if code:
             flat[code] = val
 
-    degree       = flat.get("Degree")
+    degree_raw   = flat.get("Degree")
     affiliation  = flat.get("Affiliation")
     publisher    = flat.get("Publisher")
     fulltext_raw = flat.get("FulltextFlag")
@@ -126,8 +138,10 @@ def _extract_meta(parsed: dict) -> dict | None:
         except (ValueError, TypeError):
             pass
 
+    degree = _normalize_degree(degree_raw)
+
     return {
-        "degree":       degree.strip() if degree else None,
+        "degree":       degree,
         "affiliation":  affiliation.strip() if affiliation else None,
         "publisher":    publisher.strip() if publisher else None,
         "fulltext_flag": fulltext_flag,
