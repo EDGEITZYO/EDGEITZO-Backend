@@ -1,5 +1,6 @@
 from __future__ import annotations
 from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.paper import Paper
@@ -23,6 +24,23 @@ def normalize_doi(doi: str) -> str:
 async def get_paper_by_id(db: AsyncSession, paper_id: str) -> Paper | None:
     result = await db.execute(select(Paper).where(Paper.id == paper_id))
     return result.scalar_one_or_none()
+
+
+async def get_paper_with_journal(db: AsyncSession, paper_id: str) -> Paper | None:
+    result = await db.execute(
+        select(Paper)
+        .options(joinedload(Paper.journal))
+        .where(Paper.id == paper_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_similar_papers(db: AsyncSession, paper_id: str):
+    from app.models.paper import PaperSimilar
+    result = await db.execute(
+        select(PaperSimilar).where(PaperSimilar.source_cn == paper_id)
+    )
+    return result.scalars().all()
 
 
 async def get_doi_by_paper_id(db: AsyncSession, paper_id: str) -> str | None:

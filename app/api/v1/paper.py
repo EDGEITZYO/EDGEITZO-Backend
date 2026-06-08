@@ -8,15 +8,151 @@ from app.integrations.scienceon.client import ScienceOnClient
 from app.integrations.scienceon.parser import ScienceOnReference, parse_cited_references
 from app.repositories.paper_repository import (
     get_paper_meta,
+    get_paper_with_journal,
     get_papers_by_dois_batch,
+    get_similar_papers,
     normalize_doi,
 )
 from app.schemas.common import ApiErrorResponse, ApiResponse
-from app.schemas.paper import ReferenceResponse
+from app.schemas.paper import PaperDetailResponse, ReferenceResponse, SimilarPaperResponse
+from app.services.credibility_service import (
+    _journal_to_evidence,
+    build_trust_badge,
+    calculate_credibility,
+    calculate_thesis_credibility,
+    resolve_paper_type,
+)
 
 router = APIRouter(prefix="/papers", tags=["Paper"])
 
 _scienceon = ScienceOnClient()
+
+_PAPER_TYPE_LABEL = {"JAKO": "저널", "JAFO": "저널", "DIKO": "학위논문", "CFKO": "학회"}
+
+
+@router.get(
+    "/{paper_id}",
+    response_model=ApiResponse[PaperDetailResponse],
+    responses={
+        404: {"model": ApiErrorResponse},
+    },
+    summary="논문 단건 조회",
+    description=(
+        "paper_id로 논문 상세 정보를 반환합니다.\n\n"
+        "**응답 필드**\n"
+        "- `title` / `title_en` — 한국어·영문 제목\n"
+        "- `abstract` / `abstract_en` — 한국어·영문 초록\n"
+        "- `keywords_ko` / `keywords_en` — 한국어·영문 키워드\n"
+        "- `published_at` — pubdate 우선, 없으면 `{pubyear}-01-01`, 둘 다 없으면 null\n"
+        "- `paper_type` — `'저널'` | `'학위논문'` | `'학회'` | null\n"
+        "- `journal_name` — 학술지명. 학위논문·학회는 null일 수 있음\n"
+        "- `degree` / `affiliation` — 학위논문 전용. 저널·학회는 null\n"
+        "- `fulltext_flag` — 원문 제공 여부. 없으면 null\n"
+        "- `credibility` — 신뢰도 정보 (badge: `high`|`medium`|`low`|`unknown`)\n"
+        "- `trust_badge` — 신뢰도 뱃지 (kci, sci, if_value, degree_type 등)\n\n"
+        "**404** — 해당 paper_id가 서비스 DB에 없는 경우"
+    ),
+)
+async def get_paper_detail(
+    paper_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    paper = await get_paper_with_journal(db, paper_id)
+    if paper is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="해당 논문을 찾을 수 없습니다",
+        )
+
+    journal_evidence = _journal_to_evidence(paper.journal)
+    paper_type = resolve_paper_type(paper.db_code, paper.degree)
+
+    if paper_type in ("thesis_phd", "thesis_master"):
+        credibility = calculate_thesis_credibility(paper.degree, paper.affiliation)
+    else:
+        credibility = calculate_credibility(
+            citation_count=paper.citation_count,
+            journal_name=paper.journal.title if paper.journal else None,
+            journal=journal_evidence,
+        )
+
+    trust_badge = build_trust_badge(
+        paper_type,
+        journal=journal_evidence,
+        citation_count=paper.citation_count,
+        degree=paper.degree,
+        institution=paper.affiliation,
+        full_text_available=paper.fulltext_flag,
+    )
+
+    if paper.pubdate:
+        published_at = paper.pubdate
+    elif paper.pubyear:
+        published_at = f"{paper.pubyear}-01-01"
+    else:
+        published_at = None
+
+    data = PaperDetailResponse(
+        paper_id=paper.id,
+        title=paper.title,
+        title_en=paper.title_en,
+        authors=paper.authors,
+        abstract=paper.abstract,
+        abstract_en=paper.abstract_en,
+        keywords_ko=paper.keywords_ko,
+        keywords_en=paper.keywords_en,
+        published_at=published_at,
+        paper_type=_PAPER_TYPE_LABEL.get(paper.db_code),
+        journal_name=paper.journal.title if paper.journal else None,
+        doi=paper.doi,
+        citation_count=paper.citation_count,
+        degree=paper.degree,
+        affiliation=paper.affiliation,
+        fulltext_flag=paper.fulltext_flag,
+        credibility=credibility,
+        trust_badge=trust_badge,
+    )
+    return success_response(data=data, message="ok")
+
+
+@router.get(
+    "/{paper_id}/similar",
+    response_model=ApiResponse[list[SimilarPaperResponse]],
+    responses={
+        404: {"model": ApiErrorResponse},
+    },
+    summary="유사 논문 조회",
+    description=(
+        "논문의 유사 논문 목록을 반환합니다.\n\n"
+        "- `in_service: true` — 서비스 DB에 있는 논문. `paper_id`로 상세 페이지 이동 가능\n"
+        "- `in_service: false` — 서비스 외 논문. `paper_id`는 null\n"
+        "- 유사 논문이 없는 경우 빈 리스트 반환"
+    ),
+)
+async def get_paper_similar(
+    paper_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    paper_meta = await get_paper_meta(db, paper_id)
+    if paper_meta[0] is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="해당 논문을 찾을 수 없습니다",
+        )
+
+    similars = await get_similar_papers(db, paper_id)
+    result = [
+        SimilarPaperResponse(
+            title=s.title,
+            author=s.author,
+            pubyear=s.pubyear,
+            material_type=s.material_type,
+            in_service=s.internal_paper_id is not None,
+            paper_id=s.internal_paper_id,
+        )
+        for s in similars
+    ]
+    return success_response(data=result, message="ok")
 
 
 @router.get(
