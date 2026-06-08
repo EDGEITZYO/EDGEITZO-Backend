@@ -16,9 +16,11 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.redis import get_redis
 from app.core.response import success_response
+from app.models.journal import Journal
 from app.models.paper import Paper
 from app.models.recent_read import RecentRead
 from app.models.user import User
+from app.schemas.paper import PaperCardTrustBadge
 
 router = APIRouter()
 
@@ -39,11 +41,6 @@ class RecentSearchItem(BaseModel):
     created_at: str = Field(description="탐색 생성 시각 (ISO8601)", example="2024-03-15T10:30:00+00:00")
 
 
-class PaperBadges(BaseModel):
-    kci: Optional[str] = Field(None, description="KCI 등재 여부. 'O': 등재지, 'X': 비등재지, null: 정보 없음", example="O")
-    citation_count: Optional[int] = Field(None, description="인용 수. 없으면 null", example=42)
-
-
 class RecentPaperItem(BaseModel):
     paper_id: str = Field(description="논문 고유 ID", example="JAKO202312345678")
     paper_type: Optional[str] = Field(None, description="논문 유형. '저널' | '학위논문' | '학회' | null", example="저널")
@@ -51,7 +48,7 @@ class RecentPaperItem(BaseModel):
     published_at: Optional[str] = Field(None, description="발행일 (ISO8601). pubdate 우선, 없으면 pubyear 기준 '{year}-01-01' 형태", example="2023-06-15")
     title: str = Field(description="논문 제목", example="BERT를 활용한 자연어처리 연구")
     keywords: List[str] = Field(description="논문 키워드 (최대 5개)", example=["BERT", "자연어처리", "딥러닝"])
-    badges: PaperBadges
+    badges: PaperCardTrustBadge
     viewed_at: str = Field(description="열람 시각 (ISO8601)", example="2024-03-15T10:30:00+00:00")
 
 
@@ -115,8 +112,9 @@ async def get_home(
 
     # ── 최근 열람 논문 (DB) ────────────────────────────────────────────
     rows = (await db.execute(
-        select(RecentRead, Paper)
+        select(RecentRead, Paper, Journal)
         .join(Paper, RecentRead.paper_id == Paper.id)
+        .outerjoin(Journal, Paper.journal_id == Journal.id)
         .where(
             RecentRead.user_id == current_user.id,
             RecentRead.deleted_at.is_(None),
@@ -126,26 +124,39 @@ async def get_home(
     )).all()
 
     recent_papers: list[RecentPaperItem] = []
-    for read, paper in rows:
+    for read, paper, journal in rows:
         kws = paper.keywords_ko or []
         db_code = paper.db_code or ""
-        # published_at: pubdate 우선, 없으면 pubyear로 연도만 ISO8601 변환
         if paper.pubdate:
             published_at = str(paper.pubdate).replace('.', '-')
         elif paper.pubyear:
             published_at = f"{paper.pubyear}-01-01"
         else:
             published_at = None
+
+        degree = paper.degree or ""
+        if db_code == "DIKO":
+            if "박사" in degree:
+                degree_type = "박사학위 논문"
+            elif "석사" in degree:
+                degree_type = "석사학위 논문"
+            else:
+                degree_type = "학위논문"
+        else:
+            degree_type = None
+
         recent_papers.append(RecentPaperItem(
             paper_id=paper.id,
             paper_type=_PAPER_TYPE_MAP.get(db_code),
-            journal_name=paper.journal.title if paper.journal else None,
+            journal_name=journal.title if journal else None,
             published_at=published_at,
             title=paper.title or "",
             keywords=kws[:5],
-            badges=PaperBadges(
-                kci="O" if db_code == "JAKO" else ("X" if db_code else None),
+            badges=PaperCardTrustBadge(
+                kci=bool(journal.kci_indexed) if journal else (db_code == "JAKO"),
+                sci=bool(journal.sci_indexed) if journal else False,
                 citation_count=paper.citation_count or None,
+                degree_type=degree_type,
             ),
             viewed_at=read.read_at.isoformat(),
         ))
