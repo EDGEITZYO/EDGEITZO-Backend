@@ -207,7 +207,10 @@ async def execute_search(
         return paper_type_label(resolve_paper_type(item.db_code, degree))
 
     if filter_paper_type and filter_paper_type != "전체":
-        items = [i for i in items if _resolve_type(i) == filter_paper_type]
+        if filter_paper_type == "학위논문":
+            items = [i for i in items if _resolve_type(i) in ("박사학위 논문", "석사학위 논문", "학위논문")]
+        else:
+            items = [i for i in items if _resolve_type(i) == filter_paper_type]
 
     if sort_order == "year_asc":
         items = sorted(items, key=lambda i: (i.year is None, i.year or 0))

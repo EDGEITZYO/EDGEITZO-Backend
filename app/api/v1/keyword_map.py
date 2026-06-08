@@ -19,7 +19,13 @@ from app.schemas.paper import PaperListResponse
 from app.services.chroma_search_service import get_chroma_search_service
 from app.services.keyword_map_service import expand_keyword_node, generate_keyword_map
 from app.services.neo4j_search_service import get_paper_ids_by_keyword
-from app.services.paper_filter_service import apply_filters, apply_sort, build_paper_cards, paginate
+from app.services.paper_filter_service import (
+    apply_filters,
+    apply_paper_type_postfilter,
+    apply_sort,
+    build_paper_cards,
+    paginate,
+)
 
 _AXIS_LABEL = {
     "core_technology": "핵심기술",
@@ -147,7 +153,7 @@ async def get_keyword_map_by_topic(
 
 **필터 파라미터**
 - `year_range`: `'3y'`(2023~) / `'5y'`(2021~) / `'10y'`(2016~) / null(전체)
-- `paper_type`: `'학술 저널'` / `'학위논문'` / null(전체)
+- `paper_type`: `'학술 저널'` / `'박사학위 논문'` / `'석사학위 논문'` / `'학위논문'` / null(전체)
 - `kci`: `true`(KCI만) / `false`(비KCI만) / null(전체)
 - `sci`: `true`(SCI 계열만) / null(전체) — 현재 SCI 데이터 미수집으로 true 시 결과 없을 수 있음
 - `sort`: `'date'`(발행일 내림차순, 기본값) / `'citation'`(인용수 내림차순)
@@ -156,7 +162,7 @@ async def get_keyword_map_by_topic(
 async def get_node_papers(
     node_id: str,
     year_range: Optional[str] = Query(None, description="'3y'|'5y'|'10y'|null"),
-    paper_type: Optional[str] = Query(None, description="'학술 저널'|'학위논문'"),
+    paper_type: Optional[str] = Query(None, description="'학술 저널'|'박사학위 논문'|'석사학위 논문'|'학위논문'"),
     kci: Optional[bool] = Query(None, description="KCI 등재 여부"),
     sci: Optional[bool] = Query(None, description="SCI 등재 여부"),
     sort: Literal["citation", "date"] = Query("date", description="'date'(발행일) | 'citation'(인용수)"),
@@ -174,9 +180,13 @@ async def get_node_papers(
 
     items = apply_filters(items, year_range=year_range, paper_type=paper_type, kci=kci, sci=sci)
     items = apply_sort(items, sort)
-    paged, total = paginate(items, page, size)
 
-    cards = await build_paper_cards(paged, db)
+    # degree 기반 세분화 필터("박사학위 논문"/"석사학위 논문")는 DB 조회 후 2차 필터 적용
+    all_cards = await build_paper_cards(items, db)
+    all_cards = apply_paper_type_postfilter(all_cards, paper_type)
+    paged, total = paginate(all_cards, page, size)
+
+    cards = paged
     return success_response(
         data=PaperListResponse(
             keyword=node_id,

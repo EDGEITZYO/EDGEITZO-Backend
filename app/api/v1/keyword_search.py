@@ -17,7 +17,13 @@ from app.schemas.common import ApiResponse
 from app.schemas.paper import PaperListResponse
 from app.services.chroma_search_service import get_chroma_search_service
 from app.services.neo4j_search_service import get_paper_ids_by_keyword
-from app.services.paper_filter_service import apply_filters, apply_sort, build_paper_cards, paginate
+from app.services.paper_filter_service import (
+    apply_filters,
+    apply_paper_type_postfilter,
+    apply_sort,
+    build_paper_cards,
+    paginate,
+)
 from app.api.v1.home import save_search_history
 
 router = APIRouter()
@@ -36,7 +42,7 @@ class KeywordPaperRequest(BaseModel):
     keyword_en: str = Field("", description="검색할 키워드 (영어). Neo4j 실패 시 ChromaDB fallback 검색에 사용", example="deep learning")
     sort: Literal["citation", "date"] = Field("date", description="정렬 기준. 'citation': 인용수 내림차순, 'date': 발행일 내림차순")
     year_range: Optional[str] = Field(None, description="발행 연도 필터. '3y'(2023~) / '5y'(2021~) / '10y'(2016~) / null(전체)")
-    paper_type: Optional[str] = Field(None, description="논문 유형 필터. '학술 저널' | '학위논문' | null(전체)")
+    paper_type: Optional[str] = Field(None, description="논문 유형 필터. '학술 저널' | '박사학위 논문' | '석사학위 논문' | '학위논문' | null(전체)")
     kci: Optional[bool] = Field(None, description="KCI 등재 필터. true(KCI만) / false(비KCI만) / null(전체)")
     sci: Optional[bool] = Field(None, description="SCI 계열 필터. true(SCI만) / null(전체)")
     page: int = Field(1, description="페이지 번호 (1부터 시작)")
@@ -117,7 +123,7 @@ async def get_keyword_map(user_id: str, db: AsyncSession = Depends(get_db)):
 
 **필터 파라미터**
 - `year_range`: `'3y'`(2023~) / `'5y'`(2021~) / `'10y'`(2016~) / null(전체)
-- `paper_type`: `'학술 저널'` / `'학위논문'` / null(전체)
+- `paper_type`: `'학술 저널'` / `'박사학위 논문'` / `'석사학위 논문'` / `'학위논문'` / null(전체)
 - `kci`: `true`(KCI만) / `false`(비KCI만) / null(전체)
 - `sci`: `true`(SCI 계열만) / null(전체) — 현재 SCI 데이터 미수집으로 true 시 결과 없을 수 있음
 - `sort`: `'date'`(발행일 내림차순, 기본값) / `'citation'`(인용수 내림차순)
@@ -169,7 +175,11 @@ async def search_papers_by_keyword(
         sci=request.sci,
     )
     items = apply_sort(items, request.sort)
-    paged, total = paginate(items, request.page, request.size)
+
+    # degree 기반 세분화 필터("박사학위 논문"/"석사학위 논문")는 DB 조회 후 2차 필터 적용
+    all_cards = await build_paper_cards(items, db)
+    all_cards = apply_paper_type_postfilter(all_cards, request.paper_type)
+    paged, total = paginate(all_cards, request.page, request.size)
 
     if request.user_id and request.page == 1:
         try:
@@ -183,7 +193,7 @@ async def search_papers_by_keyword(
         except Exception:
             pass
 
-    cards = await build_paper_cards(paged, db)
+    cards = paged
     return success_response(
         data=PaperListResponse(
             keyword=request.keyword,

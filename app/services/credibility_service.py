@@ -230,8 +230,8 @@ async def find_journal_evidence(
 
 
 def resolve_paper_type(db_code: str | None, degree: str | None = None) -> str:
-    """db_code + degree → paper_type 문자열.
-    반환값: 'journal' | 'conference' | 'thesis_phd' | 'thesis_master'
+    """db_code + degree → internal paper_type 코드.
+    반환값: 'thesis_phd' | 'thesis_master' | 'thesis' | 'journal' | 'conference'
     """
     if db_code == "DIKO":
         if degree:
@@ -239,7 +239,7 @@ def resolve_paper_type(db_code: str | None, degree: str | None = None) -> str:
                 return "thesis_phd"
             if "석사" in degree:
                 return "thesis_master"
-        return "thesis_phd"  # fallback
+        return "thesis"  # degree 정보 없는 fallback
     if db_code in ("JAKO", "JAFO"):
         return "journal"
     if db_code == "CFKO":
@@ -248,12 +248,13 @@ def resolve_paper_type(db_code: str | None, degree: str | None = None) -> str:
 
 
 def paper_type_label(paper_type: str) -> str:
-    """internal paper_type code → 사용자 노출 레이블 (3분류)"""
+    """internal paper_type code → 사용자 노출 레이블"""
     return {
-        "thesis_phd": "박사 학위 논문",
-        "thesis_master": "석사 학위 논문",
-        "journal": "학술 저널",
-        "conference": "학술 저널",
+        "thesis_phd":    "박사학위 논문",
+        "thesis_master": "석사학위 논문",
+        "thesis":        "학위논문",
+        "journal":       "학술 저널",
+        "conference":    "학술 저널",
     }.get(paper_type, "학술 저널")
 
 
