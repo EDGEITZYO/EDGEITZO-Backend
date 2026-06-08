@@ -307,11 +307,33 @@ def _turn_count(messages: list) -> int:
 - `interim_papers`: 키워드 추출 완료 후(60% 이상) 미리 보여줄 논문 5건
 - `options[].value`: 다음 턴 `selected_options`에 그대로 전달
 
-**selected_options 값 예시**
+**selected_options 전체 value 목록** (단일 선택이어도 배열로 전달: `["KCI"]`)
+
+슬롯 값:
 - 연구 목적: `"연구주제탐색"` `"논문작성참고"` `"랩미팅발표"` `"최신트렌드"`
 - 논문 범위: `"KCI"` `"SCI"` `"ALL"` `"ANY"`
 - 발행 연도: `"3Y"` `"5Y"` `"10Y"` `"YEAR_ALL"` `"SKIP"`
-- 검색 시작: `"start_search"`
+
+검색 제어:
+- `"start_search"` — 논문 탐색 시작
+- `"force_start"` — 80% 미만 상태에서 강제 탐색
+- `"restart"` — 처음부터 다시 시작 (슬롯 전체 초기화)
+
+키워드 제어:
+- `"confirm_keywords"` — 추출된 키워드 확정
+- `"edit_keywords"` — 키워드 수정 (후보 5개 다시 제시)
+- `"add_keywords"` — 키워드 추가 입력 유도
+- `"select_kw:{키워드명}"` — 후보 중 특정 키워드 선택 (예: `"select_kw:딥러닝"`)
+
+주제/충돌 처리:
+- `"keep_topic"` — 현재 주제로 계속 탐색 (주제 변경 확인 시)
+- `"new_topic"` — 새 주제로 처음부터 검색 (키워드만 초기화, session 유지)
+- `"continue"` — 탐색 계속 (off-topic 복귀 시)
+- `"keep"` — 슬롯 충돌 시 기존 값 유지
+- `"confirm_change:{slot}:{value}"` — 슬롯 충돌 시 새 값으로 변경 (예: `"confirm_change:paper_scope:SCI"`)
+- `"merge:{slot}"` — 슬롯 충돌 시 둘 다 포함 (예: `"merge:paper_scope"`)
+- `"tell_purpose"` — 연구 목적 입력 유도로 이동
+- `"narrow_field"` — 키워드 추출 실패 시 분야 좁히기 유도
 """,
 )
 async def chat_search(request: ChatRequest):
@@ -388,17 +410,83 @@ async def chat_search(request: ChatRequest):
 
 ⚠️ POST 방식이므로 `EventSource`(GET 전용) 사용 불가. `fetch` + `ReadableStream` 필요.
 
-**SSE 이벤트 순서**
-1. `slot_update` — selected_options 처리 후 변경된 슬롯 `{slot, value}`
-2. `completeness` — options 처리 직후 구체화도 `{pct, stage}`
-3. `keyword_progress` `{stage: "started"}` — 키워드 추출 시작 시
-4. _(LLM 호출 블로킹 구간)_
-5. `slot_update` — 그래프 실행 후 변경된 슬롯
-6. `completeness` — 업데이트된 구체화도
-7. `keyword_progress` `{stage: "completed", keywords: [...]}` — 추출 완료
-8. `token` — ai_message 청크 `{text}` (10자씩)
-9. `done` — 최종 상태 전체 (session_id, options, search_ready, final_search_params 등)
-- `error` — 예외 발생 시. done 없이 스트림 즉시 종료
+**SSE 수신 방법 (fetch + ReadableStream)**
+```js
+const res = await fetch('/api/v1/search/chat/stream', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ session_id, message, selected_options }),
+});
+const reader = res.body.getReader();
+const decoder = new TextDecoder();
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  const lines = decoder.decode(value).split('\\n');
+  for (const line of lines) {
+    if (line.startsWith('data: ')) {
+      const event = JSON.parse(line.slice(6));
+      // event.type으로 분기
+    }
+  }
+}
+```
+
+**SSE 이벤트 순서 및 payload 구조**
+
+1. `slot_update` — selected_options 처리 후 변경된 슬롯 (슬롯별 1회, 복수 emit 가능)
+```json
+{"type": "slot_update", "slot": "paper_scope", "value": "KCI"}
+```
+slot: `"research_purpose"` | `"paper_scope"` | `"pub_year_range"` | `"keywords"`
+
+2. `completeness` — options 처리 직후 구체화도
+```json
+{"type": "completeness", "pct": 60, "stage": "none"}
+```
+stage: `"none"`(<80%) | `"ready"`(80~89%) | `"emphasized"`(90~99%) | `"complete"`(100%)
+
+3. `keyword_progress` — 키워드 추출 시작 (키워드 슬롯 비어있을 때만 emit)
+```json
+{"type": "keyword_progress", "stage": "started"}
+```
+
+4. _(LLM + 그래프 실행 — 블로킹 구간)_
+
+5. `slot_update` — 그래프 실행 후 변경된 슬롯 (1~4번과 동일 구조)
+
+6. `completeness` — 그래프 실행 후 업데이트된 구체화도 (2번과 동일 구조)
+
+7. `keyword_progress` — 키워드 추출 완료
+```json
+{"type": "keyword_progress", "stage": "completed", "keywords": ["딥러닝", "CNN"]}
+```
+
+8. `token` — ai_message 10자씩 청크 (서버 chunking, LLM 스트리밍 아님)
+```json
+{"type": "token", "text": "입력하신 내용에"}
+```
+
+9. `done` — 최종 상태 전체
+```json
+{
+  "type": "done",
+  "session_id": "abc123",
+  "ai_message": "전체 AI 메시지",
+  "options": [{"label": "이대로 검색", "value": "confirm_keywords"}],
+  "allow_multiple": false,
+  "search_ready": false,
+  "completeness_pct": 70,
+  "search_stage": "none",
+  "search_preview": {"topic": "...", "keywords": [], "completeness_pct": 70},
+  "final_search_params": null
+}
+```
+
+`error` — 예외 발생 시. done 없이 스트림 즉시 종료
+```json
+{"type": "error", "message": "서버 오류가 발생했어요. 잠시 후 다시 시도해주세요."}
+```
 """,
 )
 async def stream_chat(request: ChatRequest):
