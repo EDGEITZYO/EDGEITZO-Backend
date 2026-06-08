@@ -258,3 +258,47 @@ async def get_folders_enriched(
             updated_at=stat.updated_at if stat else None,
         ))
     return result
+
+
+async def get_folder_enriched_single(
+    db: AsyncSession,
+    user_id: UUID,
+    folder_id: UUID,
+) -> BookmarkFolderResponse | None:
+    """단건 폴더 조회 — 본인 폴더가 아니거나 없으면 None 반환."""
+    folder_result = await db.execute(
+        select(BookmarkFolder).where(
+            BookmarkFolder.id == folder_id,
+            BookmarkFolder.user_id == user_id,
+        )
+    )
+    folder = folder_result.scalar_one_or_none()
+    if not folder:
+        return None
+
+    stats_result = await db.execute(
+        select(
+            func.count(Bookmark.id).label("paper_count"),
+            func.max(Bookmark.created_at).label("updated_at"),
+        ).where(Bookmark.folder_id == folder_id)
+    )
+    stat = stats_result.one()
+
+    kw_result = await db.execute(
+        select(Paper.keywords_ko)
+        .join(Bookmark, Bookmark.paper_id == Paper.id)
+        .where(Bookmark.folder_id == folder_id, Paper.keywords_ko.isnot(None))
+    )
+    all_kws: list[str] = []
+    for (kws,) in kw_result.all():
+        all_kws.extend(kws or [])
+    top2 = [kw for kw, _ in Counter(all_kws).most_common(2)]
+
+    return BookmarkFolderResponse(
+        id=folder.id,
+        name=folder.name,
+        created_at=folder.created_at,
+        paper_count=stat.paper_count or 0,
+        representative_keywords=top2,
+        updated_at=stat.updated_at,
+    )

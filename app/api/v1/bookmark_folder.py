@@ -18,7 +18,7 @@ from app.services.bookmark_folder_service import (
     delete_folder,
     update_folder,
 )
-from app.services.bookmark_service import get_folders_enriched
+from app.services.bookmark_service import get_folder_enriched_single, get_folders_enriched
 
 router = APIRouter(prefix="/bookmark-folders", tags=["Bookmark"])
 
@@ -64,6 +64,30 @@ async def create_bookmark_folder(
         ),
         message="폴더가 생성되었습니다",
     )
+
+
+@router.get(
+    "/{folder_id}",
+    response_model=ApiResponse[BookmarkFolderResponse],
+    responses={401: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
+    summary="폴더 단건 조회",
+    description=(
+        "폴더 상세 페이지 진입 시 해당 폴더 정보를 반환합니다. **Authorization 헤더에 Bearer 토큰 필요.**\n\n"
+        "- `paper_count`: 폴더 내 북마크 수\n"
+        "- `representative_keywords`: 폴더 내 논문 키워드 상위 2개\n"
+        "- `updated_at`: 마지막 북마크 추가 시각. 북마크 없으면 null\n\n"
+        "본인 폴더가 아니거나 존재하지 않으면 404 반환."
+    ),
+)
+async def get_bookmark_folder(
+    folder_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    folder = await get_folder_enriched_single(db, current_user.id, folder_id)
+    if not folder:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="폴더를 찾을 수 없습니다")
+    return success_response(data=folder, message="ok")
 
 
 @router.patch(
