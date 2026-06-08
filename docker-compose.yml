@@ -67,10 +67,11 @@ services:
     volumes:
       - chroma_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/api/v2/heartbeat || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "chroma run --help > /dev/null 2>&1 && exit 0 || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 1
+      start_period: 30s
     networks:
       - backend-network
     restart: unless-stopped

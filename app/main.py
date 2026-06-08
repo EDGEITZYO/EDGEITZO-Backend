@@ -1,6 +1,11 @@
+import asyncio
+import logging
+
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+
+logger = logging.getLogger(__name__)
 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.bookmark import router as bookmark_router
@@ -44,6 +49,23 @@ app.add_middleware(
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
+
+
+@app.on_event("startup")
+async def startup_check_chromadb():
+    import chromadb
+    from app.core.settings import settings
+    for attempt in range(1, 6):
+        try:
+            client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+            client.heartbeat()
+            logger.info("ChromaDB 연결 성공")
+            return
+        except Exception as e:
+            logger.warning("ChromaDB 연결 실패 (%d/5): %s", attempt, e)
+            if attempt < 5:
+                await asyncio.sleep(2)
+    logger.warning("ChromaDB 연결 불가 — 앱은 계속 시작합니다")
 
 
 @app.get("/")
