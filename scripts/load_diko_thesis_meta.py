@@ -226,7 +226,7 @@ def _load_diko_cns(limit: int | None) -> list[str]:
     return cns
 
 
-async def process(cns: list[str], *, dry_run: bool, driver) -> None:
+async def process(cns: list[str], *, dry_run: bool, driver, skip_neo4j: bool = False) -> None:
     checkpoint = _load_checkpoint()
     unmatched: list[dict] = []
     success = failed = skipped = 0
@@ -264,7 +264,8 @@ async def process(cns: list[str], *, dry_run: bool, driver) -> None:
             )
 
             if not dry_run:
-                _neo4j_update(driver, cn, meta)
+                if not skip_neo4j:
+                    _neo4j_update(driver, cn, meta)
                 await _postgres_update(cn, meta)
 
             checkpoint[cn] = {
@@ -289,6 +290,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--limit", type=int, default=None, help="처리할 CN 수 제한 (테스트용)")
     parser.add_argument("--reset-checkpoint", action="store_true", help="체크포인트 초기화")
+    parser.add_argument("--skip-neo4j", action="store_true", help="Neo4j 업데이트 건너뜀 (Postgres만 업데이트)")
     args = parser.parse_args()
 
     if not settings.scienceon_client_id or not settings.scienceon_token:
@@ -303,15 +305,21 @@ def main() -> None:
     print(f"=== DIKO 학위논문 메타 보강 시작: {len(cns)}개 ===")
     if args.dry_run:
         print("[dry-run] Neo4j/Postgres 쓰기 생략\n")
+    if args.skip_neo4j:
+        print("[skip-neo4j] Neo4j 업데이트 생략\n")
 
-    driver = GraphDatabase.driver(
-        settings.neo4j_uri,
-        auth=(settings.neo4j_user, settings.neo4j_password),
-    )
+    if args.skip_neo4j:
+        driver = None
+    else:
+        driver = GraphDatabase.driver(
+            settings.neo4j_uri,
+            auth=(settings.neo4j_user, settings.neo4j_password),
+        )
     try:
-        asyncio.run(process(cns, dry_run=args.dry_run, driver=driver))
+        asyncio.run(process(cns, dry_run=args.dry_run, driver=driver, skip_neo4j=args.skip_neo4j))
     finally:
-        driver.close()
+        if driver:
+            driver.close()
 
 
 if __name__ == "__main__":
