@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from typing import Any, Dict
 
 from langgraph.graph import END, StateGraph
@@ -47,9 +48,9 @@ SLOT_QUESTIONS: Dict[str, Dict[str, Any]] = {
         "context": "최신 연구만 필요하시면 범위를 좁혀드릴게요.",
         "question": "논문의 발행 시기 범위도 설정하시겠어요?",
         "options": [
-            {"label": "최근 3년 (2023~현재)", "value": "3Y"},
-            {"label": "최근 5년 (2021~현재)", "value": "5Y"},
-            {"label": "최근 10년 (2016~현재)", "value": "10Y"},
+            {"label": f"최근 3년 ({datetime.now().year - 3}~현재)", "value": "3Y"},
+            {"label": f"최근 5년 ({datetime.now().year - 5}~현재)", "value": "5Y"},
+            {"label": f"최근 10년 ({datetime.now().year - 10}~현재)", "value": "10Y"},
             {"label": "전체", "value": "YEAR_ALL"},
             {"label": "건너뛰기", "value": "SKIP"},
         ],
@@ -112,9 +113,9 @@ async def node_intent_extractor(state: SearchState) -> SearchState:
   | "ALL" (둘 다 포함, 국내외 모두, 제한 없음)
   | "ANY" (상관없음, 아무거나)
 - pub_year_range:
-    "3Y" (최근 3년, 2023년 이후)
-  | "5Y" (최근 5년, 2021년 이후)
-  | "10Y" (최근 10년, 2016년 이후)
+    "3Y" (최근 3년, {datetime.now().year - 3}년 이후)
+  | "5Y" (최근 5년, {datetime.now().year - 5}년 이후)
+  | "10Y" (최근 10년, {datetime.now().year - 10}년 이후)
   | "YEAR_ALL" (전체, 연도 제한 없음, 오래된 논문도 포함)
   | "SKIP" (건너뛰기, 모르겠음, 연도 상관없음)
 - advanced_filter: 구체화도와 무관한 추가 조건 문자열 (예: "한국 저자만")
@@ -141,15 +142,30 @@ JSON만 반환:
     extracted = result.get("extracted", {})
 
     new_slots = dict(slots)
+    code_conflict_slot: str | None = None
+    code_conflict_value: str | None = None
     for key in ("research_purpose", "paper_scope", "pub_year_range"):
         val = extracted.get(key)
-        if val and not new_slots.get(key):
+        existing = new_slots.get(key)
+        if val and existing and existing != val:
+            # LLM 응답 무관하게 코드 레벨에서 충돌 기록
+            code_conflict_slot = key
+            code_conflict_value = val
+        elif val and not existing:
             new_slots[key] = val
 
     adv_filter = result.get("advanced_filter")
     adv_filters = dict(state.get("advanced_filters") or {})
     if adv_filter:
         adv_filters["extra"] = adv_filter
+
+    # 코드 레벨 충돌이 감지됐으면 LLM 결과를 덮어씀
+    if code_conflict_slot:
+        result = {
+            **result,
+            "conflict_slot": code_conflict_slot,
+            "conflict_new_value": code_conflict_value,
+        }
 
     return {
         **state,
@@ -381,8 +397,8 @@ def node_response_builder(state: SearchState) -> SearchState:
                 "search_ready": True,
                 "search_preview": _preview()}
 
-    # 50% 이하 + 강제 시작 요청
-    if completeness <= 50:
+    # 80% 미만 + 강제 시작 요청
+    if completeness < 80:
         msg = ("아직 필수 정보가 부족해서 검색 정확도가 낮을 수 있어요. 그래도 진행하시겠어요?\n"
                "('연구 목적'만 알려주시면 정확도가 훨씬 올라가요)")
         options = [
@@ -419,7 +435,8 @@ def node_router(state: SearchState) -> SearchState:
 def _build_search_params(state: SearchState):
     from app.langgraph.search_state import SearchParams
     slots = state.get("slots") or empty_slots()
-    year_map = {"3Y": 2022, "5Y": 2020, "10Y": 2015}
+    _y = datetime.now().year
+    year_map = {"3Y": _y - 3, "5Y": _y - 5, "10Y": _y - 10}
     pub_year_start = year_map.get(slots.get("pub_year_range") or "", None)
     return SearchParams(
         keywords=slots.get("keywords") or [],

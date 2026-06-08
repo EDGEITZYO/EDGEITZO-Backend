@@ -1,9 +1,106 @@
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
 from app.schemas.search import CredibilityInfo
 from app.schemas.trust_badge import TrustBadge
+
+
+class PaperCardTrustBadge(BaseModel):
+    """논문 카드(목록)에서 사용하는 신뢰도 뱃지. 상세 페이지용 TrustBadge와 별개."""
+    kci: bool = Field(description="KCI 등재 여부. papers.db_code='JAKO'이면 true", example=True)
+    sci: bool = Field(description="SCI 계열 등재 여부. journals.sci_indexed 기준. 현재 미수집으로 대부분 false", example=False)
+    citation_count: Optional[int] = Field(None, description="인용 수. papers.citation_count 기준. null이면 미집계", example=15)
+    degree_type: Optional[str] = Field(None, description="학위 구분. '박사 학위 논문' | '석사 학위 논문' | null. 학위논문 유형 배지로 활용", example=None)
+
+
+class PaperCardResponse(BaseModel):
+    """키워드 검색 / 키워드맵 노드 논문 목록에서 공통으로 사용하는 논문 카드 스키마."""
+    paper_id: str = Field(
+        description="논문 고유 ID. papers 테이블 id (CN 형식)",
+        example="JAKO202509339655899",
+    )
+    title: str = Field(
+        description="논문 제목 (한국어)",
+        example="Streptococcus mutans의 성장 및 구강 바이오필름 형성에 대한 wasabi 유래 성분 연구",
+    )
+    authors: List[str] = Field(
+        description="저자 목록. ChromaDB Author 필드 기준",
+        example=["조하랑", "김기림"],
+    )
+    pub_year: Optional[int] = Field(
+        None,
+        description="발행 연도. ChromaDB Pubyear 기준. 없으면 null",
+        example=2025,
+    )
+    journal_name: Optional[str] = Field(
+        None,
+        description="학술지명. ChromaDB JournalName 기준. 학위논문/미등록 시 null",
+        example="한국임상치위생학회지 = Korean journal of clinical dental hygiene",
+    )
+    paper_type: Optional[str] = Field(
+        None,
+        description="논문 유형. DBCode 기반 매핑: JAKO/JAFO→'저널', DIKO→'학위논문', CFKO→'학회'. null이면 미분류",
+        example="저널",
+    )
+    abstract: Optional[str] = Field(
+        None,
+        description="초록 원문. ChromaDB Abstract 기준. 없으면 null",
+        example="This study evaluated the antibacterial and antibiofilm activities of wasabi-derived 6-(methylsulfinyl)hexyl isothiocyanate against Streptococcus mutans.",
+    )
+    keywords: List[str] = Field(
+        description="논문 키워드 목록. ChromaDB Keyword 기준",
+        example=["6-(메틸설피닐)헥실 이소티오시아네이트", "항균", "항바이오필름 스트렙토코쿠스 뮤탄스"],
+    )
+    doi: Optional[str] = Field(
+        None,
+        description="DOI URL. ChromaDB DOI 기준. 없으면 null",
+        example="https://doi.org/10.12972/kjcdh.2025.13.4.2",
+    )
+    kci_registered: bool = Field(
+        description="KCI 등재 여부. papers.db_code = 'JAKO'이면 true. PostgreSQL IN 쿼리로 확인",
+        example=True,
+    )
+    sci_indexed: bool = Field(
+        description="SCI 계열 등재 여부. journals.sci_indexed 기준 (papers.journal_id JOIN). 현재 SCI 논문 미수집으로 대부분 false",
+        example=False,
+    )
+    citation_count: Optional[int] = Field(
+        None,
+        description="인용 수. papers.citation_count 기준. PostgreSQL IN 쿼리로 조회. papers 테이블에 없는 논문은 null",
+        example=15,
+    )
+    relevance_score: float = Field(
+        description="ChromaDB RRF(Reciprocal Rank Fusion) 유사도 점수. 키워드 직접 조회(get_by_ids)시 0.0 고정, 시맨틱 검색 시 0~1 범위",
+        example=0.8732,
+    )
+    trust_badge: Optional[PaperCardTrustBadge] = Field(
+        None,
+        description="신뢰도 뱃지. kci/sci/citation_count/degree_type 포함. papers 테이블에 없는 논문은 null",
+    )
+
+
+class PaperListResponse(BaseModel):
+    """키워드 검색 / 키워드맵 노드 논문 목록 공통 응답 래퍼."""
+    keyword: str = Field(
+        description="검색에 사용한 키워드",
+        example="딥러닝",
+    )
+    papers: List[PaperCardResponse] = Field(
+        description="논문 카드 목록. 필터/정렬/페이지네이션 적용 후 결과",
+    )
+    total: int = Field(
+        description="필터 적용 후 전체 결과 수. 페이지네이션 기준값",
+        example=142,
+    )
+    page: int = Field(
+        description="현재 페이지 번호 (1부터 시작)",
+        example=1,
+    )
+    size: int = Field(
+        description="페이지당 결과 수",
+        example=20,
+    )
 
 
 class PaperDetailResponse(BaseModel):

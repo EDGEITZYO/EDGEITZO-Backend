@@ -71,6 +71,37 @@ async def paper_exists_by_doi(db: AsyncSession, doi: str) -> bool:
     return result.scalar_one_or_none() is not None
 
 
+async def get_paper_cards_batch(
+    db: AsyncSession, paper_ids: list[str]
+) -> dict[str, dict]:
+    """paper_id 목록 → {paper_id: {citation_count, kci_registered, sci_indexed}} IN 쿼리 1회.
+    papers.journal_id → journals.id LEFT JOIN으로 sci_indexed 함께 조회.
+    """
+    from app.models.journal import Journal
+
+    if not paper_ids:
+        return {}
+
+    result = await db.execute(
+        select(
+            Paper.id,
+            Paper.citation_count,
+            Paper.db_code,
+            Journal.sci_indexed,
+        )
+        .outerjoin(Journal, Paper.journal_id == Journal.id)
+        .where(Paper.id.in_(paper_ids))
+    )
+    return {
+        row.id: {
+            "citation_count": row.citation_count,
+            "kci_registered": row.db_code == "JAKO",
+            "sci_indexed": bool(row.sci_indexed) if row.sci_indexed is not None else False,
+        }
+        for row in result.fetchall()
+    }
+
+
 async def get_papers_by_dois_batch(
     db: AsyncSession, bare_dois: list[str]
 ) -> dict[str, Paper]:

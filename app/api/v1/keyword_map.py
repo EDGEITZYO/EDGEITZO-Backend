@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid as _uuid
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query
@@ -14,7 +14,12 @@ from app.core.database import get_db
 from app.core.redis import get_redis
 from app.core.response import success_response
 from app.models.user_keyword_map import UserKeywordMap
+from app.schemas.common import ApiResponse
+from app.schemas.paper import PaperListResponse
+from app.services.chroma_search_service import get_chroma_search_service
 from app.services.keyword_map_service import expand_keyword_node, generate_keyword_map
+from app.services.neo4j_search_service import get_paper_ids_by_keyword
+from app.services.paper_filter_service import apply_filters, apply_sort, build_paper_cards, paginate
 
 _AXIS_LABEL = {
     "core_technology": "핵심기술",
@@ -125,36 +130,39 @@ async def get_keyword_map_by_topic(
 
 @router.get(
     "/keyword-map/node/{node_id}/papers",
+    response_model=ApiResponse[PaperListResponse],
+    response_description="필터/정렬/페이지네이션 적용된 논문 카드 목록. trust_badge는 papers 테이블 존재 시 채워짐",
+    responses={
+        200: {"description": "정상 응답. papers 빈 배열도 200 반환"},
+    },
     summary="키워드 노드 논문 목록",
     description="""노드명(`node_id`)으로 Neo4j 조회 후 ChromaDB에서 논문 메타데이터를 반환합니다. Neo4j 실패 시 ChromaDB 직접 검색으로 자동 fallback.
 
-**필터 옵션**
-- `year`: `'3y'`(2023~) / `'5y'`(2021~) / `'10y'`(2016~) / null(전체)
-- `type`: `'저널'` / `'학위논문'` / `'학회'` / null(전체)
-- `kci`: `true`(JAKO 논문만) / `false`(비KCI만) / null(전체)
-- `sci`: `true`(SCI 계열만) / null(전체) — 현재 SCI 데이터 없으므로 true 시 결과 없을 수 있음
+**동작 흐름**
+1. Neo4j에서 node_id(키워드명)에 연결된 논문 ID 목록 조회
+2. ChromaDB에서 해당 ID의 메타데이터 fetch (유사도 계산 없음)
+3. Neo4j 실패(다운) 시 ChromaDB 시맨틱 검색으로 자동 fallback
+4. PostgreSQL IN 쿼리 1회로 `citation_count`, `kci_registered`, `sci_indexed`, `trust_badge` 보강
 
-정렬은 발행일 내림차순 고정.
+**필터 파라미터**
+- `year_range`: `'3y'`(2023~) / `'5y'`(2021~) / `'10y'`(2016~) / null(전체)
+- `paper_type`: `'저널'` / `'학위논문'` / `'학회'` / null(전체)
+- `kci`: `true`(KCI만) / `false`(비KCI만) / null(전체)
+- `sci`: `true`(SCI 계열만) / null(전체) — 현재 SCI 데이터 미수집으로 true 시 결과 없을 수 있음
+- `sort`: `'date'`(발행일 내림차순, 기본값) / `'citation'`(인용수 내림차순)
 """,
 )
 async def get_node_papers(
     node_id: str,
-    year: Optional[str] = Query(None, description="'3y'|'5y'|'10y'|'all'"),
-    type: Optional[str] = Query(None, description="'저널'|'학위논문'|'학회'"),
-    sci: Optional[bool] = Query(None, description="SCI 등재 여부"),
+    year_range: Optional[str] = Query(None, description="'3y'|'5y'|'10y'|null"),
+    paper_type: Optional[str] = Query(None, description="'저널'|'학위논문'|'학회'"),
     kci: Optional[bool] = Query(None, description="KCI 등재 여부"),
+    sci: Optional[bool] = Query(None, description="SCI 등재 여부"),
+    sort: Literal["citation", "date"] = Query("date", description="'date'(발행일) | 'citation'(인용수)"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
 ):
-    from app.api.v1.keyword_search import (
-        KeywordPaperRequest,
-        _apply_year_filter,
-        _sort_items,
-        _to_result,
-    )
-    from app.services.chroma_search_service import get_chroma_search_service
-    from app.services.neo4j_search_service import get_paper_ids_by_keyword
-
     service = get_chroma_search_service()
     paper_ids = await get_paper_ids_by_keyword(node_id)
 
@@ -163,33 +171,19 @@ async def get_node_papers(
     else:
         items = await service.search(query=node_id, n_results=size * 2)
 
-    items = _apply_year_filter(items, year)
+    items = apply_filters(items, year_range=year_range, paper_type=paper_type, kci=kci, sci=sci)
+    items = apply_sort(items, sort)
+    paged, total = paginate(items, page, size)
 
-    # type 필터
-    _tmap = {"JAKO": "저널", "JAFO": "저널", "DIKO": "학위논문", "CFKO": "학회"}
-    if type:
-        items = [i for i in items if _tmap.get(i.db_code or "") == type]
-    # kci 필터
-    if kci is True:
-        items = [i for i in items if i.db_code == "JAKO"]
-    elif kci is False:
-        items = [i for i in items if i.db_code != "JAKO"]
-    # sci 필터 (현재 데이터에 SCI 없으므로 kci=False와 동일 효과)
-    if sci is True:
-        items = [i for i in items if i.db_code in ("SCIE", "SSCI", "AHCI")]
-
-    items = _sort_items(items, "date")
-    total = len(items)
-    offset = (page - 1) * size
-    paged = items[offset: offset + size]
-
+    cards = await build_paper_cards(paged, db)
     return success_response(
-        data={
-            "keyword": node_id,
-            "total": total,
-            "page": page,
-            "papers": [_to_result(p) for p in paged],
-        },
+        data=PaperListResponse(
+            keyword=node_id,
+            papers=cards,
+            total=total,
+            page=page,
+            size=size,
+        ),
         message="node papers fetched",
     )
 
