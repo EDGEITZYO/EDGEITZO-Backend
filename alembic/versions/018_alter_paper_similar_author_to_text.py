@@ -1,4 +1,4 @@
-"""alter paper_similar author to text
+"""alter paper_similar/paper_references author, journal to text
 
 Revision ID: 018
 Revises: 017
@@ -21,12 +21,40 @@ def upgrade() -> None:
         existing_type=sa.String(length=500),
         existing_nullable=True,
     )
+    op.alter_column(
+        "paper_references",
+        "author",
+        type_=sa.Text(),
+        existing_type=sa.String(length=500),
+        existing_nullable=True,
+    )
+    op.alter_column(
+        "paper_references",
+        "journal",
+        type_=sa.Text(),
+        existing_type=sa.String(length=500),
+        existing_nullable=True,
+    )
 
 
 def downgrade() -> None:
     op.alter_column(
         "paper_similar",
         "author",
+        type_=sa.String(length=500),
+        existing_type=sa.Text(),
+        existing_nullable=True,
+    )
+    op.alter_column(
+        "paper_references",
+        "author",
+        type_=sa.String(length=500),
+        existing_type=sa.Text(),
+        existing_nullable=True,
+    )
+    op.alter_column(
+        "paper_references",
+        "journal",
         type_=sa.String(length=500),
         existing_type=sa.Text(),
         existing_nullable=True,
