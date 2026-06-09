@@ -65,7 +65,7 @@ class PaperSimilar(Base):
     source_cn = Column(String(100), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False, index=True)
     similar_cn = Column(String(100), nullable=True, index=True)
     title = Column(String(1000), nullable=True)
-    author = Column(String(500), nullable=True)
+    author = Column(Text, nullable=True)
     pubyear = Column(Integer, nullable=True)
     issn = Column(String(50), nullable=True)
     material_type = Column(String(50), nullable=True)
