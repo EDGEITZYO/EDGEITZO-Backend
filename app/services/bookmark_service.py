@@ -12,6 +12,7 @@ from app.models.journal import Journal
 from app.models.paper import Paper
 from app.schemas.bookmark import BookmarkedPaper, BookmarkListItem, BookmarkListResponse
 from app.schemas.bookmark_folder import BookmarkFolderResponse
+from app.schemas.paper import PaperCardTrustBadge
 from app.services.credibility_service import (
     JournalEvidence,
     _journal_to_evidence,
@@ -86,12 +87,18 @@ def _build_paper(paper: Paper, journal: Journal | None) -> BookmarkedPaper:
     else:
         published_at = None
 
-    trust = build_trust_badge(
+    trust_badge_full = build_trust_badge(
         ptype,
         journal=j_ev,
         citation_count=paper.citation_count or None,
         institution=paper.affiliation or paper.publisher,
         full_text_available=paper.fulltext_flag,
+    )
+    trust_badge = PaperCardTrustBadge(
+        kci=trust_badge_full.kci,
+        sci=trust_badge_full.sci,
+        citation_count=trust_badge_full.citation_count,
+        degree_type=trust_badge_full.degree_type,
     )
 
     return BookmarkedPaper(
@@ -105,7 +112,7 @@ def _build_paper(paper: Paper, journal: Journal | None) -> BookmarkedPaper:
         abstract=paper.abstract,
         keywords=keywords or None,
         journal_name=journal.title if journal else None,
-        trust_badge=trust,
+        trust_badge=trust_badge,
         related_papers=[],
     )
 
