@@ -38,9 +38,11 @@ async def get_paper_with_journal(db: AsyncSession, paper_id: str) -> Paper | Non
 async def get_similar_papers(db: AsyncSession, paper_id: str):
     from app.models.paper import PaperSimilar
     result = await db.execute(
-        select(PaperSimilar).where(PaperSimilar.source_cn == paper_id)
+        select(PaperSimilar, Paper)
+        .outerjoin(Paper, PaperSimilar.internal_paper_id == Paper.id)
+        .where(PaperSimilar.source_cn == paper_id)
     )
-    return result.scalars().all()
+    return result.all()
 
 
 async def get_doi_by_paper_id(db: AsyncSession, paper_id: str) -> str | None:

@@ -143,13 +143,13 @@ async def get_paper_similar(
     result = [
         SimilarPaperResponse(
             title=s.title,
-            author=s.author,
-            pubyear=s.pubyear,
+            author=", ".join(p.authors) if p and p.authors else s.author,
+            pubyear=p.pubyear if p else s.pubyear,
             material_type=s.material_type,
             in_service=s.internal_paper_id is not None,
             paper_id=s.internal_paper_id,
         )
-        for s in similars
+        for s, p in similars
     ]
     return success_response(data=result, message="ok")
 
