@@ -121,7 +121,7 @@ async def update_bookmark_folder(
     response_model=ApiResponse[None],
     responses={401: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
     summary="폴더 삭제",
-    description="폴더를 삭제합니다. **Authorization 헤더에 Bearer 토큰 필요.** 폴더 내 북마크도 함께 삭제됩니다. 본인 폴더가 아니거나 존재하지 않으면 404 반환.",
+    description="폴더를 삭제합니다. **Authorization 헤더에 Bearer 토큰 필요.** 폴더 내 북마크는 삭제되지 않고 유지됩니다. 본인 폴더가 아니거나 존재하지 않으면 404 반환.",
 )
 async def delete_bookmark_folder(
     folder_id: UUID,

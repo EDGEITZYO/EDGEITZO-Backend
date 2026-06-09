@@ -236,7 +236,12 @@ async def get_saved_bookmark_folders(
 
 class ChartPoint(BaseModel):
     paper_id: str
+    paper_type: str
+    journal_name: Optional[str]
     title: str
+    authors: List[str]
+    keywords: List[str]
+    doi: Optional[str]
     published_year: Optional[int]
     citation_count: Optional[int]
     view_count: int
@@ -299,7 +304,12 @@ async def get_saved_recent(
         chart_data = [
             ChartPoint(
                 paper_id=p.id,
+                paper_type=paper_type_label(resolve_paper_type(p.db_code, p.degree)),
+                journal_name=j.title if j else None,
                 title=p.title or "",
+                authors=p.authors or [],
+                keywords=(p.keywords_ko or [])[:5],
+                doi=p.doi,
                 published_year=p.pubyear,
                 citation_count=p.citation_count or None,
                 view_count=rr.view_count,
@@ -339,7 +349,7 @@ class RecentStatsResponse(BaseModel):
         "- `total_papers`: 총 탐색 논문 수\n"
         "- `keyword_count`: 고유 키워드 수\n"
         "- `top_keyword`: 가장 많이 등장한 키워드\n"
-        "- `chart_data`: 산점도 전체 데이터 (`published_year` / `citation_count` / `view_count`)"
+        "- `chart_data`: 산점도 전체 데이터 (`paper_id` / `paper_type` / `journal_name` / `title` / `authors` / `keywords` / `doi` / `published_year` / `citation_count` / `view_count`)"
     ),
 )
 async def get_recent_stats(
@@ -352,8 +362,9 @@ async def get_recent_stats(
     start, end = _period_range(period, ref)
 
     rows = (await db.execute(
-        select(RecentRead, Paper)
+        select(RecentRead, Paper, Journal)
         .join(Paper, RecentRead.paper_id == Paper.id)
+        .outerjoin(Journal, _JOURNAL_JOIN)
         .where(
             RecentRead.user_id == current_user.id,
             RecentRead.deleted_at.is_(None),
@@ -364,11 +375,16 @@ async def get_recent_stats(
 
     all_kws: list[str] = []
     chart_data: list[ChartPoint] = []
-    for rr, p in rows:
+    for rr, p, j in rows:
         all_kws.extend(p.keywords_ko or [])
         chart_data.append(ChartPoint(
             paper_id=p.id,
+            paper_type=paper_type_label(resolve_paper_type(p.db_code, p.degree)),
+            journal_name=j.title if j else None,
             title=p.title or "",
+            authors=p.authors or [],
+            keywords=(p.keywords_ko or [])[:5],
+            doi=p.doi,
             published_year=p.pubyear,
             citation_count=p.citation_count or None,
             view_count=rr.view_count,

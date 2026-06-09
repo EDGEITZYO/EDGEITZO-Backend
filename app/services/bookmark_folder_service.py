@@ -1,10 +1,10 @@
 from __future__ import annotations
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.bookmark import Bookmark, BookmarkFolder
+from app.models.bookmark import BookmarkFolder
 
 
 async def get_folders(db: AsyncSession, user_id: UUID) -> list[BookmarkFolder]:
@@ -56,7 +56,6 @@ async def delete_folder(db: AsyncSession, user_id: UUID, folder_id: UUID) -> boo
     folder = result.scalar_one_or_none()
     if not folder:
         return False
-    await db.execute(delete(Bookmark).where(Bookmark.folder_id == folder_id))
     await db.delete(folder)
     await db.commit()
     return True
