@@ -8,8 +8,8 @@ from app.schemas.trust_badge import TrustBadge
 
 class PaperCardTrustBadge(BaseModel):
     """논문 카드(목록)에서 사용하는 신뢰도 뱃지. 상세 페이지용 TrustBadge와 별개."""
-    kci: bool = Field(description="KCI 등재 여부. papers.db_code='JAKO'이면 true", example=True)
-    sci: bool = Field(description="SCI 계열 등재 여부. journals.sci_indexed 기준. 현재 미수집으로 대부분 false", example=False)
+    kci: Optional[bool] = Field(None, description="KCI 등재 여부. papers.db_code='JAKO'이면 true", example=True)
+    sci: Optional[bool] = Field(None, description="SCI 계열 등재 여부. journals.sci_indexed 기준. 현재 미수집으로 대부분 false", example=False)
     citation_count: Optional[int] = Field(None, description="인용 수. papers.citation_count 기준. null이면 미집계", example=15)
     degree_type: Optional[str] = Field(None, description="학위 구분. '박사 학위 논문' | '석사 학위 논문' | null. 학위논문 유형 배지로 활용", example=None)
 
