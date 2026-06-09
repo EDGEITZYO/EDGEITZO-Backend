@@ -113,7 +113,6 @@ def _build_paper(paper: Paper, journal: Journal | None) -> BookmarkedPaper:
         keywords=keywords or None,
         journal_name=journal.title if journal else None,
         trust_badge=trust_badge,
-        related_papers=[],
     )
 
 

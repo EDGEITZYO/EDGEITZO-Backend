@@ -53,7 +53,6 @@ class SavedPaperCard(BaseModel):
     bookmarked_at: Optional[str] = None
     viewed_at: Optional[str] = None
     view_count: Optional[int] = None
-    related_papers: list = []
 
 
 def _to_card(

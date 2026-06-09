@@ -38,7 +38,6 @@ class BookmarkedPaper(BaseModel):
     keywords: Optional[list[str]] = Field(None, description="논문 키워드")
     journal_name: Optional[str] = Field(None, description="학술지명")
     trust_badge: Optional[PaperCardTrustBadge] = Field(None, description="신뢰도 뱃지 (kci, sci, citation_count, degree_type)")
-    related_papers: list = Field(default=[], description="연관 논문 목록 (MVP 이후 제공 예정)")
 
     model_config = {"from_attributes": True}
 
