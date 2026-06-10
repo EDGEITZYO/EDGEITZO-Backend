@@ -244,6 +244,9 @@ class ChartPoint(BaseModel):
     published_year: Optional[int]
     citation_count: Optional[int]
     view_count: int
+    viewed_at: datetime
+    published_at: Optional[str]
+    trust_badge: TrustBadge
 
 
 class RecentListGroup(BaseModel):
@@ -376,9 +379,24 @@ async def get_recent_stats(
     chart_data: list[ChartPoint] = []
     for rr, p, j in rows:
         all_kws.extend(p.keywords_ko or [])
+        ptype = resolve_paper_type(p.db_code, p.degree)
+        j_ev = _journal_to_evidence(j)
+        trust = build_trust_badge(
+            ptype,
+            journal=j_ev,
+            citation_count=p.citation_count or None,
+            institution=p.affiliation or p.publisher,
+            full_text_available=p.fulltext_flag,
+        )
+        if p.pubdate:
+            published_at = str(p.pubdate).replace('.', '-')
+        elif p.pubyear:
+            published_at = f"{p.pubyear}-01-01"
+        else:
+            published_at = None
         chart_data.append(ChartPoint(
             paper_id=p.id,
-            paper_type=paper_type_label(resolve_paper_type(p.db_code, p.degree)),
+            paper_type=paper_type_label(ptype),
             journal_name=j.title if j else None,
             title=p.title or "",
             authors=p.authors or [],
@@ -387,6 +405,9 @@ async def get_recent_stats(
             published_year=p.pubyear,
             citation_count=p.citation_count or None,
             view_count=rr.view_count,
+            viewed_at=rr.read_at,
+            published_at=published_at,
+            trust_badge=trust,
         ))
 
     top_kw = Counter(all_kws).most_common(1)
