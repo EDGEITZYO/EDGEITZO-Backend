@@ -56,7 +56,10 @@ async def _call_claude(
     messages: list[dict], model: str, temperature: float, max_tokens: int
 ) -> tuple[str, int, int]:
     import anthropic
-    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    client = anthropic.AsyncAnthropic(
+        api_key=settings.anthropic_api_key,
+        timeout=settings.llm_timeout_seconds,
+    )
     resp = await client.messages.create(
         model=model, max_tokens=max_tokens, temperature=temperature, messages=messages
     )

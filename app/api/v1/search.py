@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.redis import get_redis
 from app.core.response import success_response
+from app.core.settings import settings
 from app.langgraph.search_graph import get_graph
 from app.langgraph.search_state import (
     SearchParams,
@@ -349,7 +350,13 @@ async def chat_search(request: ChatRequest):
     state = _apply_selected_options(session_id, state, request.selected_options)
 
     graph = get_graph()
-    result_state: SearchState = await graph.ainvoke(state)
+    try:
+        result_state: SearchState = await asyncio.wait_for(
+            graph.ainvoke(state),
+            timeout=settings.graph_timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="요청 시간이 초과됐어요. 다시 시도해주세요.")
     _save_state(session_id, result_state)
 
     slots = result_state.get("slots") or empty_slots()
@@ -544,7 +551,14 @@ async def stream_chat(request: ChatRequest):
 
             # ── 4. graph.ainvoke (내부 LLM 호출 포함, async 블로킹) ───────
             graph = get_graph()
-            result_state: SearchState = await graph.ainvoke(state)
+            try:
+                result_state: SearchState = await asyncio.wait_for(
+                    graph.ainvoke(state),
+                    timeout=settings.graph_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                yield _sse("error", {"message": "요청 시간이 초과됐어요. 다시 시도해주세요."})
+                return
             _save_state(session_id, result_state)
 
             slots_final = result_state.get("slots") or empty_slots()
