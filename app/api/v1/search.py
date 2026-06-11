@@ -336,6 +336,10 @@ def _turn_count(messages: list) -> int:
 - `"merge:{slot}"` — 슬롯 충돌 시 둘 다 포함 (예: `"merge:paper_scope"`)
 - `"tell_purpose"` — 연구 목적 입력 유도로 이동
 - `"narrow_field"` — 키워드 추출 실패 시 분야 좁히기 유도
+
+**타임아웃**
+- LLM 호출: 120초
+- 전체 그래프 실행: 300초 초과 시 HTTP 504 반환
 """,
 )
 async def chat_search(request: ChatRequest):
@@ -491,10 +495,18 @@ stage: `"none"`(<80%) | `"ready"`(80~89%) | `"emphasized"`(90~99%) | `"complete"
 }
 ```
 
-`error` — 예외 발생 시. done 없이 스트림 즉시 종료
+`error` — 예외 발생 시 또는 타임아웃 시. done 없이 스트림 즉시 종료
 ```json
 {"type": "error", "message": "서버 오류가 발생했어요. 잠시 후 다시 시도해주세요."}
 ```
+타임아웃 시:
+```json
+{"type": "error", "message": "요청 시간이 초과됐어요. 다시 시도해주세요."}
+```
+
+**타임아웃**
+- LLM 호출: 120초
+- 전체 그래프 실행: 300초 초과 시 error 이벤트 emit 후 스트림 종료
 """,
 )
 async def stream_chat(request: ChatRequest):
