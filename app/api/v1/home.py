@@ -64,7 +64,7 @@ class RecordReadRequest(BaseModel):
 
 # ── 헬퍼 ───────────────────────────────────────────────────────────────
 
-_JOURNAL_DB_CODES = {"JAKO", "JAFO", "CFKO"}
+_JOURNAL_DB_CODES = {"JAKO", "JAFO", "CFKO", "CFFO"}
 _GREETING = [
     "오늘도 좋은 연구 하세요, {name}님!",
     "새로운 논문이 기다리고 있어요, {name}님.",

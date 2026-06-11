@@ -27,6 +27,7 @@ from app.langgraph.search_state import (
 )
 from app.schemas.common import ApiErrorResponse, ApiResponse
 from app.schemas.search import SearchPapersRequest, SearchPapersResponse, SearchParamsDoc
+from app.services.credibility_service import paper_type_label, resolve_paper_type
 from app.services.search_service import execute_search, search_papers_service
 
 router = APIRouter()
@@ -89,7 +90,7 @@ class InterimPaper(BaseModel):
     title: str = Field(description="논문 제목")
     journal: Optional[str] = Field(None, description="학술지명")
     pub_year: Optional[int] = Field(None, description="발행 연도")
-    paper_type: Optional[str] = Field(None, description="논문 유형. '저널' | '학위논문' | '학회' | null")
+    paper_type: Optional[str] = Field(None, description="논문 유형. '박사학위 논문' | '석사학위 논문' | '학위논문' | '학술 저널' | null")
     keywords: List[str] = Field(description="논문 키워드 (최대 4개)")
     scope_badge: Optional[str] = Field(None, description="논문 범위 뱃지. 'KCI' | null")
 
@@ -368,21 +369,14 @@ async def chat_search(request: ChatRequest):
                 from app.services.chroma_search_service import get_chroma_search_service
                 svc = get_chroma_search_service()
                 items = await svc.search(query=" ".join(kws), n_results=5)
-                _journal_codes = {"JAKO", "JAFO", "CFKO", "CFFO"}
                 for it in items:
                     db_c = it.db_code or ""
-                    if db_c in _journal_codes:
-                        _itype: str | None = "학술 저널"
-                    elif db_c == "DIKO":
-                        _itype = "학위논문"
-                    else:
-                        _itype = None
                     interim.append(InterimPaper(
                         paper_id=it.paper_id,
                         title=it.title,
                         journal=it.journal_name,
                         pub_year=it.year,
-                        paper_type=_itype,
+                        paper_type=paper_type_label(resolve_paper_type(db_c or None)),
                         keywords=it.keywords[:4],
                         scope_badge="KCI" if db_c == "JAKO" else None,
                     ))
@@ -594,21 +588,14 @@ async def stream_chat(request: ChatRequest):
                         from app.services.chroma_search_service import get_chroma_search_service
                         svc = get_chroma_search_service()
                         items = await svc.search(query=" ".join(kws), n_results=5)
-                        _journal_codes = {"JAKO", "JAFO", "CFKO", "CFFO"}
                         for it in items:
                             db_c = it.db_code or ""
-                            if db_c in _journal_codes:
-                                _itype: str | None = "학술 저널"
-                            elif db_c == "DIKO":
-                                _itype = "학위논문"
-                            else:
-                                _itype = None
                             interim.append(InterimPaper(
                                 paper_id=it.paper_id,
                                 title=it.title,
                                 journal=it.journal_name,
                                 pub_year=it.year,
-                                paper_type=_itype,
+                                paper_type=paper_type_label(resolve_paper_type(db_c or None)),
                                 keywords=it.keywords[:4],
                                 scope_badge="KCI" if db_c == "JAKO" else None,
                             ).model_dump())
