@@ -206,6 +206,39 @@ async def execute_search(
         degree = (db_extra.get(item.paper_id) or {}).get("degree")
         return paper_type_label(resolve_paper_type(item.db_code, degree))
 
+    def _resolve_card_trust_badge(item: PaperSearchItem) -> dict:
+        extra = db_extra.get(item.paper_id) or {}
+        degree = extra.get("degree") or ""
+        degree_type = None
+        if (item.db_code or "") == "DIKO":
+            if "박사" in degree:
+                degree_type = "박사학위 논문"
+            elif "석사" in degree:
+                degree_type = "석사학위 논문"
+            else:
+                degree_type = "학위논문"
+
+        kci = extra.get("kci_registered")
+        if kci is None:
+            kci = item.credibility.kci_registered
+        if kci is None and item.db_code == "JAKO":
+            kci = True
+
+        sci = extra.get("sci_indexed")
+        if sci is None:
+            sci = item.credibility.sci_indexed
+
+        citation_count = extra.get("citation_count")
+        if citation_count is None:
+            citation_count = item.credibility.citation_count
+
+        return {
+            "kci": kci,
+            "sci": sci,
+            "citation_count": citation_count,
+            "degree_type": degree_type,
+        }
+
     if filter_paper_type and filter_paper_type != "전체":
         if filter_paper_type == "학위논문":
             items = [i for i in items if _resolve_type(i) in ("박사학위 논문", "석사학위 논문", "학위논문")]
@@ -219,6 +252,14 @@ async def execute_search(
 
     papers = []
     for item in items[:size]:
+        trust_badge = _resolve_card_trust_badge(item)
+        if trust_badge["kci"] is True:
+            scope_badge = "KCI"
+        elif trust_badge["sci"] is True:
+            scope_badge = "SCI"
+        else:
+            scope_badge = _resolve_scope_badge(item.credibility)
+
         papers.append({
             "paper_id":       item.paper_id,
             "title":          item.title,
@@ -229,10 +270,10 @@ async def execute_search(
             "abstract":       item.abstract,
             "keywords":       item.keywords,
             "doi":            item.doi,
-            "scope_badge":    _resolve_scope_badge(item.credibility),
-            "citation_count": item.credibility.citation_count,
+            "scope_badge":    scope_badge,
+            "citation_count": trust_badge["citation_count"],
             "relevance_score": item.score,
-            "trust_badge":    item.credibility.badge if item.credibility.badge != "unknown" else None,
+            "trust_badge":    trust_badge,
             "keyword_map_data": None,
         })
 
