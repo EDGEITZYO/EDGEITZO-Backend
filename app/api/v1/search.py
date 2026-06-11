@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.redis import get_redis
 from app.core.response import success_response
+from app.core.settings import settings
 from app.langgraph.search_graph import get_graph
 from app.langgraph.search_state import (
     SearchParams,
@@ -27,6 +28,7 @@ from app.langgraph.search_state import (
 )
 from app.schemas.common import ApiErrorResponse, ApiResponse
 from app.schemas.search import SearchPapersRequest, SearchPapersResponse, SearchParamsDoc
+from app.services.credibility_service import paper_type_label, resolve_paper_type
 from app.services.search_service import execute_search, search_papers_service
 
 router = APIRouter()
@@ -89,7 +91,7 @@ class InterimPaper(BaseModel):
     title: str = Field(description="논문 제목")
     journal: Optional[str] = Field(None, description="학술지명")
     pub_year: Optional[int] = Field(None, description="발행 연도")
-    paper_type: Optional[str] = Field(None, description="논문 유형. '저널' | '학위논문' | '학회' | null")
+    paper_type: Optional[str] = Field(None, description="논문 유형. '박사학위 논문' | '석사학위 논문' | '학위논문' | '학술 저널' | null")
     keywords: List[str] = Field(description="논문 키워드 (최대 4개)")
     scope_badge: Optional[str] = Field(None, description="논문 범위 뱃지. 'KCI' | null")
 
@@ -334,6 +336,10 @@ def _turn_count(messages: list) -> int:
 - `"merge:{slot}"` — 슬롯 충돌 시 둘 다 포함 (예: `"merge:paper_scope"`)
 - `"tell_purpose"` — 연구 목적 입력 유도로 이동
 - `"narrow_field"` — 키워드 추출 실패 시 분야 좁히기 유도
+
+**타임아웃**
+- LLM 호출: 120초
+- 전체 그래프 실행: 300초 초과 시 HTTP 504 반환
 """,
 )
 async def chat_search(request: ChatRequest):
@@ -348,7 +354,13 @@ async def chat_search(request: ChatRequest):
     state = _apply_selected_options(session_id, state, request.selected_options)
 
     graph = get_graph()
-    result_state: SearchState = await graph.ainvoke(state)
+    try:
+        result_state: SearchState = await asyncio.wait_for(
+            graph.ainvoke(state),
+            timeout=settings.graph_timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="요청 시간이 초과됐어요. 다시 시도해주세요.")
     _save_state(session_id, result_state)
 
     slots = result_state.get("slots") or empty_slots()
@@ -368,21 +380,14 @@ async def chat_search(request: ChatRequest):
                 from app.services.chroma_search_service import get_chroma_search_service
                 svc = get_chroma_search_service()
                 items = await svc.search(query=" ".join(kws), n_results=5)
-                _journal_codes = {"JAKO", "JAFO", "CFKO", "CFFO"}
                 for it in items:
                     db_c = it.db_code or ""
-                    if db_c in _journal_codes:
-                        _itype: str | None = "학술 저널"
-                    elif db_c == "DIKO":
-                        _itype = "학위논문"
-                    else:
-                        _itype = None
                     interim.append(InterimPaper(
                         paper_id=it.paper_id,
                         title=it.title,
                         journal=it.journal_name,
                         pub_year=it.year,
-                        paper_type=_itype,
+                        paper_type=paper_type_label(resolve_paper_type(db_c or None)),
                         keywords=it.keywords[:4],
                         scope_badge="KCI" if db_c == "JAKO" else None,
                     ))
@@ -452,7 +457,7 @@ slot: `"research_purpose"` | `"paper_scope"` | `"pub_year_range"` | `"keywords"`
 ```
 stage: `"none"`(<80%) | `"ready"`(80~89%) | `"emphasized"`(90~99%) | `"complete"`(100%)
 
-3. `keyword_progress` — 키워드 추출 시작 (키워드 슬롯 비어있을 때만 emit)
+3. `keyword_progress` — 키워드 추출 시작 (키워드 슬롯 비어있을 때, 또는 `edit_keywords`/`add_keywords` 선택 시 emit)
 ```json
 {"type": "keyword_progress", "stage": "started"}
 ```
@@ -484,16 +489,24 @@ stage: `"none"`(<80%) | `"ready"`(80~89%) | `"emphasized"`(90~99%) | `"complete"
   "search_ready": false,
   "completeness_pct": 70,
   "search_stage": "none",
-  "search_preview": {"topic": "...", "keywords": [], "completeness_pct": 70},
+  "search_preview": {"topic": "...", "purpose": null, "scope": null, "pub_year": null, "keywords": [], "completeness_pct": 70},
   "interim_papers": [{"paper_id": "JAKO...", "title": "...", "journal": null, "pub_year": 2023, "paper_type": "학술 저널", "keywords": ["딥러닝"], "scope_badge": "KCI"}],
   "final_search_params": null
 }
 ```
 
-`error` — 예외 발생 시. done 없이 스트림 즉시 종료
+`error` — 예외 발생 시 또는 타임아웃 시. done 없이 스트림 즉시 종료
 ```json
 {"type": "error", "message": "서버 오류가 발생했어요. 잠시 후 다시 시도해주세요."}
 ```
+타임아웃 시:
+```json
+{"type": "error", "message": "요청 시간이 초과됐어요. 다시 시도해주세요."}
+```
+
+**타임아웃**
+- LLM 호출: 120초
+- 전체 그래프 실행: 300초 초과 시 error 이벤트 emit 후 스트림 종료
 """,
 )
 async def stream_chat(request: ChatRequest):
@@ -513,7 +526,7 @@ async def stream_chat(request: ChatRequest):
       7. keyword_progress {stage:"completed"} — 추출 후 결과
       8. token         — ai_message 서버 chunking (A방식, LLM 스트리밍 아님)
       9. done          — 최종 상태 전체
-    error — 예외 발생 시. done 없이 스트림 즉시 종료.
+    error — 예외 발생 시 또는 graph 타임아웃(300초) 시. done 없이 스트림 즉시 종료.
     """
     session_id = request.session_id or str(uuid.uuid4())
 
@@ -550,7 +563,14 @@ async def stream_chat(request: ChatRequest):
 
             # ── 4. graph.ainvoke (내부 LLM 호출 포함, async 블로킹) ───────
             graph = get_graph()
-            result_state: SearchState = await graph.ainvoke(state)
+            try:
+                result_state: SearchState = await asyncio.wait_for(
+                    graph.ainvoke(state),
+                    timeout=settings.graph_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                yield _sse("error", {"message": "요청 시간이 초과됐어요. 다시 시도해주세요."})
+                return
             _save_state(session_id, result_state)
 
             slots_final = result_state.get("slots") or empty_slots()
@@ -594,21 +614,14 @@ async def stream_chat(request: ChatRequest):
                         from app.services.chroma_search_service import get_chroma_search_service
                         svc = get_chroma_search_service()
                         items = await svc.search(query=" ".join(kws), n_results=5)
-                        _journal_codes = {"JAKO", "JAFO", "CFKO", "CFFO"}
                         for it in items:
                             db_c = it.db_code or ""
-                            if db_c in _journal_codes:
-                                _itype: str | None = "학술 저널"
-                            elif db_c == "DIKO":
-                                _itype = "학위논문"
-                            else:
-                                _itype = None
                             interim.append(InterimPaper(
                                 paper_id=it.paper_id,
                                 title=it.title,
                                 journal=it.journal_name,
                                 pub_year=it.year,
-                                paper_type=_itype,
+                                paper_type=paper_type_label(resolve_paper_type(db_c or None)),
                                 keywords=it.keywords[:4],
                                 scope_badge="KCI" if db_c == "JAKO" else None,
                             ).model_dump())

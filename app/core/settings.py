@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     llm_default_model: str = "claude-haiku-4-5"
     llm_budget_total_usd: float = 30.0
+    llm_timeout_seconds: int = 120
+    graph_timeout_seconds: int = 300
 
     # CrossRef polite mode
     crossref_contact_email: str = "yuri12120771@gmail.com"
