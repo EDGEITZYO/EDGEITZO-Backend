@@ -386,7 +386,7 @@ async def chat_search(request: ChatRequest, db: AsyncSession = Depends(get_db)):
                 raw_scope = slots.get("paper_scope") or None
                 scope = raw_scope if raw_scope not in (None, "ANY", "ALL") else None
                 year_range = slots.get("pub_year_range") or None
-                pub_year_start = _YEAR_CUTOFF.get(year_range) if year_range else None
+                pub_year_start = _YEAR_CUTOFF.get(year_range.lower()) if year_range else None
                 svc = get_chroma_search_service()
                 items = await svc.search(query=" ".join(kws), n_results=n, scope=scope, pub_year_start=pub_year_start)
                 db_extra = await get_paper_cards_batch(db, [it.paper_id for it in items])
@@ -623,7 +623,7 @@ async def stream_chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
                     from app.services.paper_filter_service import _YEAR_CUTOFF
                     n = 20 if _search_ready else 5
                     scope = _interim_scope if _interim_scope not in (None, "ANY", "ALL") else None
-                    pub_year_start = _YEAR_CUTOFF.get(_interim_year) if _interim_year else None
+                    pub_year_start = _YEAR_CUTOFF.get(_interim_year.lower()) if _interim_year else None
                     svc = get_chroma_search_service()
                     items = await svc.search(query=" ".join(kws), n_results=n, scope=scope, pub_year_start=pub_year_start)
                     db_extra = await get_paper_cards_batch(db, [it.paper_id for it in items])
