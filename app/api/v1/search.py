@@ -342,7 +342,7 @@ def _turn_count(messages: list) -> int:
 - 전체 그래프 실행: 300초 초과 시 HTTP 504 반환
 """,
 )
-async def chat_search(request: ChatRequest):
+async def chat_search(request: ChatRequest, db: AsyncSession = Depends(get_db)):
     session_id = request.session_id or str(uuid.uuid4())
     state = _load_state(session_id) or _new_state(session_id, request.message)
 
@@ -524,7 +524,7 @@ stage: `"none"`(<80%) | `"ready"`(80~89%) | `"emphasized"`(90~99%) | `"complete"
 - 전체 그래프 실행: 300초 초과 시 error 이벤트 emit 후 스트림 종료
 """,
 )
-async def stream_chat(request: ChatRequest):
+async def stream_chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
     """슬롯 대화 턴을 SSE로 스트리밍.
 
     ⚠️  클라이언트 수신: fetch + ReadableStream 필수.
