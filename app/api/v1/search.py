@@ -404,10 +404,8 @@ async def chat_search(request: ChatRequest, db: AsyncSession = Depends(get_db)):
                         keywords=it.keywords[:4],
                         scope_badge="KCI" if kci else None,
                     ))
-            except Exception as e:
-                import traceback
-                print(f"[_fetch_interim ERROR] {e}")
-                traceback.print_exc()
+            except Exception:
+                pass
 
     messages = result_state.get("messages") or []
     return success_response(
@@ -645,10 +643,7 @@ async def stream_chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
                             scope_badge="KCI" if kci else None,
                         ).model_dump())
                     return result
-                except Exception as e:
-                    import traceback
-                    print(f"[_fetch_interim ERROR] {e}")
-                    traceback.print_exc()
+                except Exception:
                     return []
 
             kws_for_interim = slots_final.get("keywords") or []
