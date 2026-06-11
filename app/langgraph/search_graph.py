@@ -140,7 +140,6 @@ JSON만 반환:
 
     result = await _llm_json(_INTENT_SYSTEM, prompt)
     extracted = result.get("extracted", {})
-    logger.warning("[intent] user_message=%r extracted=%s slots_before=%s", user_message, extracted, dict(slots))
 
     new_slots = dict(slots)
     code_conflict_slot: str | None = None
@@ -168,7 +167,6 @@ JSON만 반환:
             "conflict_new_value": code_conflict_value,
         }
 
-    logger.warning("[intent] slots_after=%s", dict(new_slots))
     return {
         **state,
         "slots": new_slots,
@@ -365,9 +363,6 @@ def node_response_builder(state: SearchState) -> SearchState:
 
     # completeness >= 100
     if completeness >= 100:
-        # start_search 클릭 후 재진입 시 같은 메시지 중복 방지
-        if state.get("search_ready"):
-            return state
         msg = "충분한 조건이 모였어요! 논문 탐색을 시작할게요."
         options = [{"label": "논문 탐색 시작하기", "value": "start_search"}]
         return {**state, "ai_message": msg, "options": options, "allow_multiple": False,
@@ -377,7 +372,6 @@ def node_response_builder(state: SearchState) -> SearchState:
     # 다음 빈 슬롯 질문
     priority = ["research_purpose", "paper_scope", "keywords", "pub_year_range"]
     next_slot = next((s for s in priority if not slots.get(s)), None)
-    logger.warning("[response_builder] completeness=%s next_slot=%s slots=%s", completeness, next_slot, dict(slots))
 
     if next_slot and next_slot in SLOT_QUESTIONS:
         q = SLOT_QUESTIONS[next_slot]
