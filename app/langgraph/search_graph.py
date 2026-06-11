@@ -140,7 +140,7 @@ JSON만 반환:
 
     result = await _llm_json(_INTENT_SYSTEM, prompt)
     extracted = result.get("extracted", {})
-    logger.info("[intent] user_message=%r extracted=%s slots_before=%s", user_message, extracted, dict(slots))
+    logger.warning("[intent] user_message=%r extracted=%s slots_before=%s", user_message, extracted, dict(slots))
 
     new_slots = dict(slots)
     code_conflict_slot: str | None = None
@@ -168,7 +168,7 @@ JSON만 반환:
             "conflict_new_value": code_conflict_value,
         }
 
-    logger.info("[intent] slots_after=%s", dict(new_slots))
+    logger.warning("[intent] slots_after=%s", dict(new_slots))
     return {
         **state,
         "slots": new_slots,
@@ -377,7 +377,7 @@ def node_response_builder(state: SearchState) -> SearchState:
     # 다음 빈 슬롯 질문
     priority = ["research_purpose", "paper_scope", "keywords", "pub_year_range"]
     next_slot = next((s for s in priority if not slots.get(s)), None)
-    logger.info("[response_builder] completeness=%s next_slot=%s slots=%s", completeness, next_slot, dict(slots))
+    logger.warning("[response_builder] completeness=%s next_slot=%s slots=%s", completeness, next_slot, dict(slots))
 
     if next_slot and next_slot in SLOT_QUESTIONS:
         q = SLOT_QUESTIONS[next_slot]
