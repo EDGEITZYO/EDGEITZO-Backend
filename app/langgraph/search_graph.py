@@ -363,6 +363,9 @@ def node_response_builder(state: SearchState) -> SearchState:
 
     # completeness >= 100
     if completeness >= 100:
+        # start_search 클릭 후 재진입 시 같은 메시지 중복 방지
+        if state.get("search_ready"):
+            return state
         msg = "충분한 조건이 모였어요! 논문 탐색을 시작할게요."
         options = [{"label": "논문 탐색 시작하기", "value": "start_search"}]
         return {**state, "ai_message": msg, "options": options, "allow_multiple": False,

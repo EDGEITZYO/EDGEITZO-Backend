@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     # CrossRef polite mode
     crossref_contact_email: str = "yuri12120771@gmail.com"
 
+    # SSE 스트리밍
+    sse_chunk_size: int = 2
+    sse_chunk_delay_seconds: float = 0.04
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
