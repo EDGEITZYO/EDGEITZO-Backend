@@ -26,7 +26,6 @@ from app.langgraph.search_state import (
     empty_slots,
 )
 from app.schemas.common import ApiErrorResponse, ApiResponse
-from app.schemas.paper import PaperCardTrustBadge
 from app.schemas.search import SearchPapersRequest, SearchPapersResponse, SearchParamsDoc
 from app.services.search_service import execute_search, search_papers_service
 
@@ -290,42 +289,6 @@ def _turn_count(messages: list) -> int:
     return sum(1 for m in messages if m.get("role") == "assistant")
 
 
-async def _build_interim_papers(slots: dict, pct: int) -> list[InterimPaper]:
-    if pct < _INTERIM_THRESHOLD:
-        return []
-
-    kws = slots.get("keywords") or []
-    if not kws:
-        return []
-
-    interim: list[InterimPaper] = []
-    try:
-        from app.services.chroma_search_service import get_chroma_search_service
-        svc = get_chroma_search_service()
-        items = await svc.search(query=" ".join(kws), n_results=5)
-        journal_codes = {"JAKO", "JAFO", "CFKO", "CFFO"}
-        for it in items:
-            db_c = it.db_code or ""
-            if db_c in journal_codes:
-                paper_type: str | None = "학술 저널"
-            elif db_c == "DIKO":
-                paper_type = "학위논문"
-            else:
-                paper_type = None
-            interim.append(InterimPaper(
-                paper_id=it.paper_id,
-                title=it.title,
-                journal=it.journal_name,
-                pub_year=it.year,
-                paper_type=paper_type,
-                keywords=it.keywords[:4],
-                scope_badge="KCI" if db_c == "JAKO" else None,
-            ))
-    except Exception:
-        pass
-    return interim
-
-
 @router.post(
     "/search/chat",
     response_model=ApiResponse[ChatResponse],
@@ -396,7 +359,35 @@ async def chat_search(request: ChatRequest):
     multi  = result_state.get("allow_multiple", False)
     ready  = result_state.get("search_ready", False)
 
-    interim = await _build_interim_papers(slots, pct)
+    # interim_papers: 키워드 추출 후(completeness>=60) 상위 5건 미리 노출
+    interim: list[InterimPaper] = []
+    if pct >= _INTERIM_THRESHOLD:
+        kws = slots.get("keywords") or []
+        if kws:
+            try:
+                from app.services.chroma_search_service import get_chroma_search_service
+                svc = get_chroma_search_service()
+                items = await svc.search(query=" ".join(kws), n_results=5)
+                _journal_codes = {"JAKO", "JAFO", "CFKO", "CFFO"}
+                for it in items:
+                    db_c = it.db_code or ""
+                    if db_c in _journal_codes:
+                        _itype: str | None = "학술 저널"
+                    elif db_c == "DIKO":
+                        _itype = "학위논문"
+                    else:
+                        _itype = None
+                    interim.append(InterimPaper(
+                        paper_id=it.paper_id,
+                        title=it.title,
+                        journal=it.journal_name,
+                        pub_year=it.year,
+                        paper_type=_itype,
+                        keywords=it.keywords[:4],
+                        scope_badge="KCI" if db_c == "JAKO" else None,
+                    ))
+            except Exception:
+                pass
 
     messages = result_state.get("messages") or []
     return success_response(
@@ -494,7 +485,6 @@ stage: `"none"`(<80%) | `"ready"`(80~89%) | `"emphasized"`(90~99%) | `"complete"
   "completeness_pct": 70,
   "search_stage": "none",
   "search_preview": {"topic": "...", "keywords": [], "completeness_pct": 70},
-  "interim_papers": [],
   "final_search_params": null
 }
 ```
@@ -594,7 +584,6 @@ async def stream_chat(request: ChatRequest):
             # ── 9. done ───────────────────────────────────────────────────
             preview = (result_state.get("search_preview")
                        or build_search_preview(slots_final, state.get("user_query", "")))
-            interim = await _build_interim_papers(slots_final, pct)
             yield _sse("done", {
                 "session_id": session_id,
                 "ai_message": ai_message,
@@ -604,7 +593,6 @@ async def stream_chat(request: ChatRequest):
                 "completeness_pct": pct,
                 "search_stage": _completeness_stage(pct),
                 "search_preview": preview,
-                "interim_papers": [paper.model_dump() for paper in interim],
                 "final_search_params": result_state.get("final_search_params"),
             })
 
@@ -690,7 +678,7 @@ class PaperResult(BaseModel):
     scope_badge: Optional[str] = Field(None, description="논문 범위 뱃지. 'KCI' | null")
     citation_count: Optional[int] = Field(None, description="인용 수")
     relevance_score: float = Field(description="ChromaDB 유사도 점수 (0~1)")
-    trust_badge: Optional[PaperCardTrustBadge] = Field(None, description="신뢰도 뱃지 (kci, sci, citation_count, degree_type)")
+    trust_badge: Optional[str] = Field(None, description="신뢰도 뱃지 (MVP 이후 제공 예정)")
     keyword_map_data: None = Field(None, description="키워드맵 연결 데이터 (MVP 이후 제공 예정)")
 
 

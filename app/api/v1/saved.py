@@ -35,7 +35,6 @@ from app.services.credibility_service import (
 )
 
 router = APIRouter(prefix="/saved", tags=["Saved"])
-KST = timezone(timedelta(hours=9), "Asia/Seoul")
 
 
 # ── 공통 논문 카드 ──────────────────────────────────────────────────────
@@ -102,28 +101,22 @@ def _to_card(
 def _period_range(
     period: str, ref_date: date
 ) -> tuple[datetime, datetime]:
-    """period(day|week|month) + KST ref_date → UTC DB query range."""
+    """period(day|week|month) + ref_date → (start, end) UTC datetime."""
     if period == "day":
-        local_start = datetime(ref_date.year, ref_date.month, ref_date.day, tzinfo=KST)
-        local_end = local_start + timedelta(days=1)
+        start = datetime(ref_date.year, ref_date.month, ref_date.day, tzinfo=timezone.utc)
+        end = start + timedelta(days=1)
     elif period == "week":
         # ref_date가 속한 주(월~일)
         monday = ref_date - timedelta(days=ref_date.weekday())
-        local_start = datetime(monday.year, monday.month, monday.day, tzinfo=KST)
-        local_end = local_start + timedelta(weeks=1)
+        start = datetime(monday.year, monday.month, monday.day, tzinfo=timezone.utc)
+        end = start + timedelta(weeks=1)
     else:  # month
-        local_start = datetime(ref_date.year, ref_date.month, 1, tzinfo=KST)
+        start = datetime(ref_date.year, ref_date.month, 1, tzinfo=timezone.utc)
         if ref_date.month == 12:
-            local_end = datetime(ref_date.year + 1, 1, 1, tzinfo=KST)
+            end = datetime(ref_date.year + 1, 1, 1, tzinfo=timezone.utc)
         else:
-            local_end = datetime(ref_date.year, ref_date.month + 1, 1, tzinfo=KST)
-    return local_start.astimezone(timezone.utc), local_end.astimezone(timezone.utc)
-
-
-def _to_kst(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(KST)
+            end = datetime(ref_date.year, ref_date.month + 1, 1, tzinfo=timezone.utc)
+    return start, end
 
 
 # ── 북마크 탭 ──────────────────────────────────────────────────────────
@@ -310,26 +303,10 @@ async def get_saved_recent(
     )).all()
 
     if view == "chart":
-        chart_data: list[ChartPoint] = []
-        for rr, p, j in rows:
-            ptype = resolve_paper_type(p.db_code, p.degree)
-            j_ev = _journal_to_evidence(j)
-            trust = build_trust_badge(
-                ptype,
-                journal=j_ev,
-                citation_count=p.citation_count or None,
-                institution=p.affiliation or p.publisher,
-                full_text_available=p.fulltext_flag,
-            )
-            if p.pubdate:
-                published_at = str(p.pubdate).replace('.', '-')
-            elif p.pubyear:
-                published_at = f"{p.pubyear}-01-01"
-            else:
-                published_at = None
-            chart_data.append(ChartPoint(
+        chart_data = [
+            ChartPoint(
                 paper_id=p.id,
-                paper_type=paper_type_label(ptype),
+                paper_type=paper_type_label(resolve_paper_type(p.db_code, p.degree)),
                 journal_name=j.title if j else None,
                 title=p.title or "",
                 authors=p.authors or [],
@@ -338,16 +315,15 @@ async def get_saved_recent(
                 published_year=p.pubyear,
                 citation_count=p.citation_count or None,
                 view_count=rr.view_count,
-                viewed_at=rr.read_at,
-                published_at=published_at,
-                trust_badge=trust,
-            ))
+            )
+            for rr, p, j in rows
+        ]
         return success_response(data=RecentChartResponse(chart_data=chart_data), message="ok")
 
     # list view — 날짜별 그룹핑
     groups_dict: dict[str, list[SavedPaperCard]] = {}
     for rr, p, j in rows:
-        day_key = _to_kst(rr.read_at).strftime("%Y-%m-%d")
+        day_key = rr.read_at.strftime("%Y-%m-%d")
         card = _to_card(p, j, viewed_at=rr.read_at, view_count=rr.view_count)
         groups_dict.setdefault(day_key, []).append(card)
 
@@ -448,8 +424,8 @@ async def get_recent_stats(
 
 def _parse_date(date_str: str | None) -> date:
     if not date_str:
-        return datetime.now(KST).date()
+        return datetime.now(timezone.utc).date()
     try:
         return date.fromisoformat(date_str)
     except ValueError:
-        return datetime.now(KST).date()
+        return datetime.now(timezone.utc).date()
