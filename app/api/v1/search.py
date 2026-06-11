@@ -597,36 +597,51 @@ async def stream_chat(request: ChatRequest):
 
             # ── 8. ai_message chunking → token 이벤트 (A방식: 서버 chunking)
             ai_message = result_state.get("ai_message", "")
-            chunk_size = 10
-            for i in range(0, len(ai_message), chunk_size):
-                yield _sse("token", {"text": ai_message[i:i + chunk_size]})
-                await asyncio.sleep(0.015)
+
+            # interim_papers 조회를 token 스트리밍과 병렬 실행
+            async def _fetch_interim(kws: list[str]) -> list[dict]:
+                try:
+                    from app.services.chroma_search_service import get_chroma_search_service
+                    svc = get_chroma_search_service()
+                    items = await svc.search(query=" ".join(kws), n_results=5)
+                    result = []
+                    for it in items:
+                        db_c = it.db_code or ""
+                        result.append(InterimPaper(
+                            paper_id=it.paper_id,
+                            title=it.title,
+                            journal=it.journal_name,
+                            pub_year=it.year,
+                            paper_type=paper_type_label(resolve_paper_type(db_c or None)),
+                            keywords=it.keywords[:4],
+                            scope_badge="KCI" if db_c == "JAKO" else None,
+                        ).model_dump())
+                    return result
+                except Exception:
+                    return []
+
+            kws_for_interim = slots_final.get("keywords") or []
+            interim_task = (
+                asyncio.create_task(_fetch_interim(kws_for_interim))
+                if pct >= _INTERIM_THRESHOLD and kws_for_interim
+                else None
+            )
+
+            for i in range(0, len(ai_message), settings.sse_chunk_size):
+                yield _sse("token", {"text": ai_message[i:i + settings.sse_chunk_size]})
+                await asyncio.sleep(settings.sse_chunk_delay_seconds)
 
             # ── 9. done ───────────────────────────────────────────────────
             preview = (result_state.get("search_preview")
                        or build_search_preview(slots_final, state.get("user_query", "")))
 
-            interim: list[dict] = []
-            if pct >= _INTERIM_THRESHOLD:
-                kws = slots_final.get("keywords") or []
-                if kws:
-                    try:
-                        from app.services.chroma_search_service import get_chroma_search_service
-                        svc = get_chroma_search_service()
-                        items = await svc.search(query=" ".join(kws), n_results=5)
-                        for it in items:
-                            db_c = it.db_code or ""
-                            interim.append(InterimPaper(
-                                paper_id=it.paper_id,
-                                title=it.title,
-                                journal=it.journal_name,
-                                pub_year=it.year,
-                                paper_type=paper_type_label(resolve_paper_type(db_c or None)),
-                                keywords=it.keywords[:4],
-                                scope_badge="KCI" if db_c == "JAKO" else None,
-                            ).model_dump())
-                    except Exception:
-                        pass
+            if interim_task is not None:
+                try:
+                    interim: list[dict] = await interim_task
+                except Exception:
+                    interim = []
+            else:
+                interim = []
 
             yield _sse("done", {
                 "session_id": session_id,
