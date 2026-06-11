@@ -457,7 +457,7 @@ slot: `"research_purpose"` | `"paper_scope"` | `"pub_year_range"` | `"keywords"`
 ```
 stage: `"none"`(<80%) | `"ready"`(80~89%) | `"emphasized"`(90~99%) | `"complete"`(100%)
 
-3. `keyword_progress` — 키워드 추출 시작 (키워드 슬롯 비어있을 때만 emit)
+3. `keyword_progress` — 키워드 추출 시작 (키워드 슬롯 비어있을 때, 또는 `edit_keywords`/`add_keywords` 선택 시 emit)
 ```json
 {"type": "keyword_progress", "stage": "started"}
 ```
@@ -489,7 +489,7 @@ stage: `"none"`(<80%) | `"ready"`(80~89%) | `"emphasized"`(90~99%) | `"complete"
   "search_ready": false,
   "completeness_pct": 70,
   "search_stage": "none",
-  "search_preview": {"topic": "...", "keywords": [], "completeness_pct": 70},
+  "search_preview": {"topic": "...", "purpose": null, "scope": null, "pub_year": null, "keywords": [], "completeness_pct": 70},
   "interim_papers": [{"paper_id": "JAKO...", "title": "...", "journal": null, "pub_year": 2023, "paper_type": "학술 저널", "keywords": ["딥러닝"], "scope_badge": "KCI"}],
   "final_search_params": null
 }
@@ -526,7 +526,7 @@ async def stream_chat(request: ChatRequest):
       7. keyword_progress {stage:"completed"} — 추출 후 결과
       8. token         — ai_message 서버 chunking (A방식, LLM 스트리밍 아님)
       9. done          — 최종 상태 전체
-    error — 예외 발생 시. done 없이 스트림 즉시 종료.
+    error — 예외 발생 시 또는 graph 타임아웃(300초) 시. done 없이 스트림 즉시 종료.
     """
     session_id = request.session_id or str(uuid.uuid4())
 
