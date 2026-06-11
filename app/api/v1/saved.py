@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
+
+_KST = timezone(timedelta(hours=9))
 from typing import List, Literal, Optional
 from uuid import UUID
 
@@ -101,22 +103,22 @@ def _to_card(
 def _period_range(
     period: str, ref_date: date
 ) -> tuple[datetime, datetime]:
-    """period(day|week|month) + ref_date → (start, end) UTC datetime."""
+    """period(day|week|month) + ref_date(KST 기준) → (start, end) UTC datetime."""
     if period == "day":
-        start = datetime(ref_date.year, ref_date.month, ref_date.day, tzinfo=timezone.utc)
+        start = datetime(ref_date.year, ref_date.month, ref_date.day, tzinfo=_KST)
         end = start + timedelta(days=1)
     elif period == "week":
         # ref_date가 속한 주(월~일)
         monday = ref_date - timedelta(days=ref_date.weekday())
-        start = datetime(monday.year, monday.month, monday.day, tzinfo=timezone.utc)
+        start = datetime(monday.year, monday.month, monday.day, tzinfo=_KST)
         end = start + timedelta(weeks=1)
     else:  # month
-        start = datetime(ref_date.year, ref_date.month, 1, tzinfo=timezone.utc)
+        start = datetime(ref_date.year, ref_date.month, 1, tzinfo=_KST)
         if ref_date.month == 12:
-            end = datetime(ref_date.year + 1, 1, 1, tzinfo=timezone.utc)
+            end = datetime(ref_date.year + 1, 1, 1, tzinfo=_KST)
         else:
-            end = datetime(ref_date.year, ref_date.month + 1, 1, tzinfo=timezone.utc)
-    return start, end
+            end = datetime(ref_date.year, ref_date.month + 1, 1, tzinfo=_KST)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
 # ── 북마크 탭 ──────────────────────────────────────────────────────────
@@ -323,7 +325,7 @@ async def get_saved_recent(
     # list view — 날짜별 그룹핑
     groups_dict: dict[str, list[SavedPaperCard]] = {}
     for rr, p, j in rows:
-        day_key = rr.read_at.strftime("%Y-%m-%d")
+        day_key = rr.read_at.replace(tzinfo=timezone.utc).astimezone(_KST).strftime("%Y-%m-%d")
         card = _to_card(p, j, viewed_at=rr.read_at, view_count=rr.view_count)
         groups_dict.setdefault(day_key, []).append(card)
 
@@ -424,8 +426,8 @@ async def get_recent_stats(
 
 def _parse_date(date_str: str | None) -> date:
     if not date_str:
-        return datetime.now(timezone.utc).date()
+        return datetime.now(_KST).date()
     try:
         return date.fromisoformat(date_str)
     except ValueError:
-        return datetime.now(timezone.utc).date()
+        return datetime.now(_KST).date()

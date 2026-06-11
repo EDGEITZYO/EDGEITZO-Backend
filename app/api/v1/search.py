@@ -485,6 +485,7 @@ stage: `"none"`(<80%) | `"ready"`(80~89%) | `"emphasized"`(90~99%) | `"complete"
   "completeness_pct": 70,
   "search_stage": "none",
   "search_preview": {"topic": "...", "keywords": [], "completeness_pct": 70},
+  "interim_papers": [{"paper_id": "JAKO...", "title": "...", "journal": null, "pub_year": 2023, "paper_type": "학술 저널", "keywords": ["딥러닝"], "scope_badge": "KCI"}],
   "final_search_params": null
 }
 ```
@@ -584,6 +585,36 @@ async def stream_chat(request: ChatRequest):
             # ── 9. done ───────────────────────────────────────────────────
             preview = (result_state.get("search_preview")
                        or build_search_preview(slots_final, state.get("user_query", "")))
+
+            interim: list[dict] = []
+            if pct >= _INTERIM_THRESHOLD:
+                kws = slots_final.get("keywords") or []
+                if kws:
+                    try:
+                        from app.services.chroma_search_service import get_chroma_search_service
+                        svc = get_chroma_search_service()
+                        items = await svc.search(query=" ".join(kws), n_results=5)
+                        _journal_codes = {"JAKO", "JAFO", "CFKO", "CFFO"}
+                        for it in items:
+                            db_c = it.db_code or ""
+                            if db_c in _journal_codes:
+                                _itype: str | None = "학술 저널"
+                            elif db_c == "DIKO":
+                                _itype = "학위논문"
+                            else:
+                                _itype = None
+                            interim.append(InterimPaper(
+                                paper_id=it.paper_id,
+                                title=it.title,
+                                journal=it.journal_name,
+                                pub_year=it.year,
+                                paper_type=_itype,
+                                keywords=it.keywords[:4],
+                                scope_badge="KCI" if db_c == "JAKO" else None,
+                            ).model_dump())
+                    except Exception:
+                        pass
+
             yield _sse("done", {
                 "session_id": session_id,
                 "ai_message": ai_message,
@@ -593,6 +624,7 @@ async def stream_chat(request: ChatRequest):
                 "completeness_pct": pct,
                 "search_stage": _completeness_stage(pct),
                 "search_preview": preview,
+                "interim_papers": interim,
                 "final_search_params": result_state.get("final_search_params"),
             })
 
