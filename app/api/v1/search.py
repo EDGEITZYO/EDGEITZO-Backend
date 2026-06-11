@@ -122,7 +122,7 @@ class ChatResponse(BaseModel):
     search_ready: bool = Field(description="true 시 검색 실행 가능 상태. final_search_params를 /search/execute에 전달")
     search_progress: SearchProgress = Field(description="검색 구체화 진행 상태")
     search_stage: str = Field(description="버튼 활성화 분기용. 'none'(<80%) / 'ready'(80~89%) / 'emphasized'(90~99%) / 'complete'(100%)")
-    interim_papers: List[InterimPaper] = Field(default=[], description="키워드 추출 완료(60% 이상) 후 미리 보여줄 논문 최대 5건")
+    interim_papers: List[InterimPaper] = Field(default=[], description="키워드 추출 완료(60% 이상) 후 미리 보여줄 논문. search_ready=true(80% 이상)이면 최대 20건, 60~79%이면 최대 5건. slots의 paper_scope(KCI/SCI)·pub_year_range 필터 적용")
     final_search_params: Optional[SearchParams] = Field(None, description="search_ready=true일 때 채워짐. /search/execute의 search_params에 그대로 전달")
 
 
@@ -306,7 +306,7 @@ def _turn_count(messages: list) -> int:
 - `response_type`: `"options"` → 버튼 선택 UI / `"free_input"` → 텍스트 입력 / `"confirm"` → 확인 버튼
 - `completeness_pct`: 0~100, 검색 구체화 진행률 (80% 이상이면 검색 가능 상태)
 - `search_stage`: `"none"` / `"ready"` / `"emphasized"` / `"complete"` — 버튼 활성화 분기용
-- `interim_papers`: 키워드 추출 완료 후(60% 이상) 미리 보여줄 논문 5건
+- `interim_papers`: 키워드 추출 완료 후(60% 이상) 미리 보여줄 논문. `search_ready=true`(80% 이상)이면 최대 20건, 60~79%이면 최대 5건
 - `options[].value`: 다음 턴 `selected_options`에 그대로 전달
 
 **selected_options 전체 value 목록** (단일 선택이어도 배열로 전달: `["KCI"]`)
@@ -371,25 +371,38 @@ async def chat_search(request: ChatRequest):
     multi  = result_state.get("allow_multiple", False)
     ready  = result_state.get("search_ready", False)
 
-    # interim_papers: 키워드 추출 후(completeness>=60) 상위 5건 미리 노출
+    # interim_papers: 키워드 추출 후(completeness>=60) 미리 노출
+    # search_ready(>=80%): 20건 / 60~79%: 힌트용 5건
     interim: list[InterimPaper] = []
     if pct >= _INTERIM_THRESHOLD:
         kws = slots.get("keywords") or []
+        search_ready = result_state.get("search_ready", False)
         if kws:
             try:
+                from app.repositories.paper_repository import get_paper_cards_batch
                 from app.services.chroma_search_service import get_chroma_search_service
+                from app.services.paper_filter_service import _YEAR_CUTOFF
+                n = 20 if search_ready else 5
+                raw_scope = slots.get("paper_scope") or None
+                scope = raw_scope if raw_scope not in (None, "ANY", "ALL") else None
+                year_range = slots.get("pub_year_range") or None
+                pub_year_start = _YEAR_CUTOFF.get(year_range) if year_range else None
                 svc = get_chroma_search_service()
-                items = await svc.search(query=" ".join(kws), n_results=5)
+                items = await svc.search(query=" ".join(kws), n_results=n, scope=scope, pub_year_start=pub_year_start)
+                db_extra = await get_paper_cards_batch(db, [it.paper_id for it in items])
                 for it in items:
                     db_c = it.db_code or ""
+                    extra = db_extra.get(it.paper_id, {})
+                    degree = extra.get("degree")
+                    kci = extra.get("kci_registered", db_c == "JAKO")
                     interim.append(InterimPaper(
                         paper_id=it.paper_id,
                         title=it.title,
                         journal=it.journal_name,
                         pub_year=it.year,
-                        paper_type=paper_type_label(resolve_paper_type(db_c or None)),
+                        paper_type=paper_type_label(resolve_paper_type(db_c or None, degree)),
                         keywords=it.keywords[:4],
-                        scope_badge="KCI" if db_c == "JAKO" else None,
+                        scope_badge="KCI" if kci else None,
                     ))
             except Exception:
                 pass
@@ -599,22 +612,35 @@ async def stream_chat(request: ChatRequest):
             ai_message = result_state.get("ai_message", "")
 
             # interim_papers 조회를 token 스트리밍과 병렬 실행
+            _search_ready = result_state.get("search_ready", False)
+            _interim_scope = slots_final.get("paper_scope") or None
+            _interim_year = slots_final.get("pub_year_range") or None
+
             async def _fetch_interim(kws: list[str]) -> list[dict]:
                 try:
+                    from app.repositories.paper_repository import get_paper_cards_batch
                     from app.services.chroma_search_service import get_chroma_search_service
+                    from app.services.paper_filter_service import _YEAR_CUTOFF
+                    n = 20 if _search_ready else 5
+                    scope = _interim_scope if _interim_scope not in (None, "ANY", "ALL") else None
+                    pub_year_start = _YEAR_CUTOFF.get(_interim_year) if _interim_year else None
                     svc = get_chroma_search_service()
-                    items = await svc.search(query=" ".join(kws), n_results=5)
+                    items = await svc.search(query=" ".join(kws), n_results=n, scope=scope, pub_year_start=pub_year_start)
+                    db_extra = await get_paper_cards_batch(db, [it.paper_id for it in items])
                     result = []
                     for it in items:
                         db_c = it.db_code or ""
+                        extra = db_extra.get(it.paper_id, {})
+                        degree = extra.get("degree")
+                        kci = extra.get("kci_registered", db_c == "JAKO")
                         result.append(InterimPaper(
                             paper_id=it.paper_id,
                             title=it.title,
                             journal=it.journal_name,
                             pub_year=it.year,
-                            paper_type=paper_type_label(resolve_paper_type(db_c or None)),
+                            paper_type=paper_type_label(resolve_paper_type(db_c or None, degree)),
                             keywords=it.keywords[:4],
-                            scope_badge="KCI" if db_c == "JAKO" else None,
+                            scope_badge="KCI" if kci else None,
                         ).model_dump())
                     return result
                 except Exception:
