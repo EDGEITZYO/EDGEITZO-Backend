@@ -236,14 +236,29 @@ class ExpandNodeRequest(BaseModel):
 
 class ExpandNodeResponse(BaseModel):
     parent_label: str = Field(description="확장한 부모 노드명")
-    new_children: list[dict] = Field(description="새로 생성된 하위 노드 배열 (ko, en, definition 포함)")
+    new_children: list[dict] = Field(description="새로 생성된 하위 노드 배열. 각 노드: {id(ko값), ko, en, depth}")
 
 
 @router.post(
     "/keyword-map/node/{node_id}/expand",
     response_model=ApiResponse[ExpandNodeResponse],
     summary="키워드 노드 하위 키워드 LLM 생성",
-    description="선택된 노드(node_id)의 하위 키워드 2~3개를 LLM으로 생성. axis, research_field, depth 정보 필수. node_id 공백은 `%20` 또는 `+` 모두 허용.",
+    description="""선택된 노드(node_id)의 하위 키워드 2~3개를 LLM으로 생성. axis, research_field, depth 정보 필수. node_id 공백은 `%20` 또는 `+` 모두 허용.
+
+**응답 `data.new_children` 구조**
+```json
+[
+  {
+    "id": "CRISPR-Cas9",
+    "ko": "CRISPR-Cas9",
+    "en": "CRISPR-Cas9",
+    "depth": 3
+  }
+]
+```
+- `id`: ko 값과 동일 (ko 없으면 en). `/node/{node_id}/papers` 호출 시 그대로 사용 가능
+- `depth`: 부모 노드 depth + 1
+""",
 )
 async def expand_node(
     node_id: str,
