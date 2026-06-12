@@ -188,6 +188,7 @@ async def expand_keyword_node(
             "ko": c.get("ko", ""),
             "en": c.get("en", ""),
             "depth": depth + 1,
+            "edge_type": axis,
         }
         for c in children_raw
     ]
