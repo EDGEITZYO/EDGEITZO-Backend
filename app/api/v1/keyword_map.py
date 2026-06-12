@@ -17,7 +17,7 @@ from app.models.user_keyword_map import UserKeywordMap
 from app.schemas.common import ApiResponse
 from app.schemas.paper import PaperListResponse
 from app.services.chroma_search_service import get_chroma_search_service
-from app.services.keyword_map_service import expand_keyword_node, generate_keyword_map
+from app.services.keyword_map_service import expand_keyword_node, generate_keyword_map, transform_tree
 from app.services.neo4j_search_service import get_paper_ids_by_keyword
 from app.services.paper_filter_service import (
     apply_filters,
@@ -26,47 +26,6 @@ from app.services.paper_filter_service import (
     build_paper_cards,
     paginate,
 )
-
-_AXIS_LABEL = {
-    "core_technology": "핵심기술",
-    "research_target": "연구대상",
-    "parent_domain": "상위분야",
-    "application_domain": "응용분야",
-}
-
-
-def _transform_tree(raw: dict) -> dict:
-    """LLM 4축 트리 → {root > children(recursive, edge_type 포함)} 변환."""
-    root_raw = raw.get("root", {})
-    axes = raw.get("axes", {})
-
-    def _convert_node(node: dict, edge_type: str | None, depth: int) -> dict:
-        node_id = f"{node.get('en', node.get('ko', ''))}-{depth}".replace(" ", "_").lower()
-        children_raw = node.get("children", [])
-        return {
-            "id": node_id,
-            "ko": node.get("ko", ""),
-            "en": node.get("en", ""),
-            "depth": depth,
-            "edge_type": edge_type,
-            "definition": node.get("definition"),
-            "children": [_convert_node(c, edge_type, depth + 1) for c in children_raw],
-        }
-
-    children: list[dict] = []
-    for axis_key, axis_label in _AXIS_LABEL.items():
-        for node in axes.get(axis_key, []):
-            children.append(_convert_node(node, axis_label, 1))
-
-    return {
-        "id": "root",
-        "ko": root_raw.get("ko", ""),
-        "en": root_raw.get("en", ""),
-        "depth": 0,
-        "edge_type": None,
-        "definition": None,
-        "children": children,
-    }
 
 router = APIRouter()
 
@@ -118,7 +77,7 @@ async def get_keyword_map_by_topic(
         )
 
     raw = await generate_keyword_map(topic)
-    tree = _transform_tree(raw)
+    tree = transform_tree(raw)
     r.set(cache_key, json.dumps(tree, ensure_ascii=False), ex=_MAP_TTL)
 
     # user_id 있으면 기존 사용자 맵 저장도 유지
@@ -145,6 +104,10 @@ async def get_keyword_map_by_topic(
     summary="키워드 노드 논문 목록",
     description="""노드명(`node_id`)으로 Neo4j 조회 후 ChromaDB에서 논문 메타데이터를 반환합니다. Neo4j 실패 시 ChromaDB 직접 검색으로 자동 fallback.
 
+**node_id 인코딩**
+- 공백은 `%20` 또는 `+` 모두 허용 (서버에서 자동 정규화)
+- 예: `유전자%20편집`, `유전자+편집` → 동일하게 처리
+
 **동작 흐름**
 1. Neo4j에서 node_id(키워드명)에 연결된 논문 ID 목록 조회
 2. ChromaDB에서 해당 ID의 메타데이터 fetch (유사도 계산 없음)
@@ -170,6 +133,7 @@ async def get_node_papers(
     size: int = Query(20, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
 ):
+    node_id = node_id.replace("+", " ")
     service = get_chroma_search_service()
     paper_ids = await get_paper_ids_by_keyword(node_id)
 
@@ -279,12 +243,13 @@ class ExpandNodeResponse(BaseModel):
     "/keyword-map/node/{node_id}/expand",
     response_model=ApiResponse[ExpandNodeResponse],
     summary="키워드 노드 하위 키워드 LLM 생성",
-    description="선택된 노드(node_id)의 하위 키워드 2~3개를 LLM으로 생성. axis, research_field, depth 정보 필수.",
+    description="선택된 노드(node_id)의 하위 키워드 2~3개를 LLM으로 생성. axis, research_field, depth 정보 필수. node_id 공백은 `%20` 또는 `+` 모두 허용.",
 )
 async def expand_node(
     node_id: str,
     request: ExpandNodeRequest,
 ):
+    node_id = node_id.replace("+", " ")
     # node_id가 부모 노드명 (URL 경로), request.parent_label은 오버라이드 용
     parent_label = request.parent_label or node_id
     children = await expand_keyword_node(
