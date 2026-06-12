@@ -55,6 +55,7 @@ from app.models.paper import Paper
 CHECKPOINT_PATH = PROJECT_ROOT / "data" / "checkpoints" / "diko_thesis_meta.json"
 UNMATCHED_PATH  = PROJECT_ROOT / "data" / "unmatched"   / "diko_thesis_meta.json"
 PARSED_PATH     = PROJECT_ROOT / "data" / "parsed"      / "scienceon_enriched.json"
+RAW_PATH        = PROJECT_ROOT / "data" / "raw"         / "scienceon_raw.json"
 
 RATE_LIMIT_DELAY = 0.15
 MAX_RETRIES      = 3
@@ -130,6 +131,7 @@ def _extract_meta(parsed: dict) -> dict | None:
     affiliation  = flat.get("Affiliation")
     publisher    = flat.get("Publisher")
     fulltext_raw = flat.get("FulltextFlag")
+    keyword_raw  = flat.get("Keyword")
 
     fulltext_flag: bool | None = None
     if fulltext_raw is not None:
@@ -140,11 +142,16 @@ def _extract_meta(parsed: dict) -> dict | None:
 
     degree = _normalize_degree(degree_raw)
 
+    keywords: list[str] = []
+    if keyword_raw:
+        keywords = [k.strip() for k in keyword_raw.split(";") if k.strip()]
+
     return {
-        "degree":       degree,
-        "affiliation":  affiliation.strip() if affiliation else None,
-        "publisher":    publisher.strip() if publisher else None,
+        "degree":        degree,
+        "affiliation":   affiliation.strip() if affiliation else None,
+        "publisher":     publisher.strip() if publisher else None,
         "fulltext_flag": fulltext_flag,
+        "keywords":      keywords,
     }
 
 
@@ -175,9 +182,11 @@ def _neo4j_update(driver, cn: str, meta: dict) -> None:
         session.run(query, **params)
 
 
+_POSTGRES_FIELDS = {"degree", "affiliation", "publisher", "fulltext_flag"}
+
 async def _postgres_update(cn: str, meta: dict) -> None:
     updates: dict[str, Any] = {
-        k: v for k, v in meta.items() if v is not None
+        k: v for k, v in meta.items() if v is not None and k in _POSTGRES_FIELDS
     }
     if not updates:
         return
@@ -231,6 +240,11 @@ async def process(cns: list[str], *, dry_run: bool, driver, skip_neo4j: bool = F
     unmatched: list[dict] = []
     success = failed = skipped = 0
 
+    # raw JSON 로드 (keyword 업데이트용)
+    raw_data = json.loads(RAW_PATH.read_text(encoding="utf-8")) if RAW_PATH.exists() else None
+    raw_papers: list[dict] = raw_data.get("papers", []) if raw_data else []
+    raw_index = {p["CN"]: p for p in raw_papers if p.get("CN")}
+
     async with httpx.AsyncClient() as client:
         for i, cn in enumerate(cns):
             if cn in checkpoint:
@@ -260,7 +274,7 @@ async def process(cns: list[str], *, dry_run: bool, driver, skip_neo4j: bool = F
             print(
                 f"  [{i+1}/{len(cns)}] {cn} "
                 f"degree={meta['degree']} affil={str(meta['affiliation'])[:20]} "
-                f"fulltext={meta['fulltext_flag']}"
+                f"keywords={len(meta['keywords'])}개"
             )
 
             if not dry_run:
@@ -268,13 +282,25 @@ async def process(cns: list[str], *, dry_run: bool, driver, skip_neo4j: bool = F
                     _neo4j_update(driver, cn, meta)
                 await _postgres_update(cn, meta)
 
+                # raw JSON 키워드 업데이트
+                if cn in raw_index and meta["keywords"]:
+                    raw_index[cn]["Keyword"] = meta["keywords"]
+
             checkpoint[cn] = {
                 "status": "ok",
                 "degree": meta["degree"],
+                "keywords_count": len(meta["keywords"]),
                 "processed_at": datetime.now(timezone.utc).isoformat(),
             }
             _save_checkpoint(checkpoint)
             success += 1
+
+    # raw JSON 저장
+    if not dry_run and raw_data is not None:
+        RAW_PATH.write_text(
+            json.dumps(raw_data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"  raw JSON 키워드 업데이트 저장 완료: {RAW_PATH.name}")
 
     print(f"\n[완료] 성공={success} 실패={failed} 스킵(기존)={skipped}")
     if unmatched:
