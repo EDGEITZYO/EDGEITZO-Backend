@@ -236,7 +236,7 @@ class ExpandNodeRequest(BaseModel):
 
 class ExpandNodeResponse(BaseModel):
     parent_label: str = Field(description="확장한 부모 노드명")
-    new_children: list[dict] = Field(description="새로 생성된 하위 노드 배열. 각 노드: {id(ko값), ko, en, depth}")
+    new_children: list[dict] = Field(description="새로 생성된 하위 노드 배열. 각 노드: {id(ko값), ko, en, depth, edge_type}")
 
 
 @router.post(
@@ -252,12 +252,14 @@ class ExpandNodeResponse(BaseModel):
     "id": "CRISPR-Cas9",
     "ko": "CRISPR-Cas9",
     "en": "CRISPR-Cas9",
-    "depth": 3
+    "depth": 3,
+    "edge_type": "핵심기술"
   }
 ]
 ```
 - `id`: ko 값과 동일 (ko 없으면 en). `/node/{node_id}/papers` 호출 시 그대로 사용 가능
 - `depth`: 부모 노드 depth + 1
+- `edge_type`: 요청 바디의 `axis` 값과 동일
 """,
 )
 async def expand_node(
