@@ -184,10 +184,10 @@ async def expand_keyword_node(
     children_raw = json.loads(raw)
     return [
         {
-            "id": f"{parent_label}_{i}",
+            "id": c.get("ko") or c.get("en", ""),
             "ko": c.get("ko", ""),
             "en": c.get("en", ""),
             "depth": depth + 1,
         }
-        for i, c in enumerate(children_raw)
+        for c in children_raw
     ]
