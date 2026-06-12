@@ -16,6 +16,7 @@ from app.core.response import success_response
 from app.models.user_keyword_map import UserKeywordMap
 from app.schemas.common import ApiResponse
 from app.schemas.paper import PaperListResponse
+from app.api.v1.home import save_search_history
 from app.services.chroma_search_service import get_chroma_search_service
 from app.services.keyword_map_service import expand_keyword_node, generate_keyword_map, transform_tree
 from app.services.neo4j_search_service import get_paper_ids_by_keyword
@@ -120,6 +121,10 @@ async def get_keyword_map_by_topic(
 - `kci`: `true`(KCI만) / `false`(비KCI만) / null(전체)
 - `sci`: `true`(SCI 계열만) / null(전체) — 현재 SCI 데이터 미수집으로 true 시 결과 없을 수 있음
 - `sort`: `'date'`(발행일 내림차순, 기본값) / `'citation'`(인용수 내림차순)
+
+**탐색 이력**
+- `user_id` 제공 + `page=1`일 때 Redis에 탐색 이력 자동 저장 (실패해도 결과에 영향 없음)
+- 저장된 이력은 `GET /home`의 `recent_searches`에서 조회 가능
 """,
 )
 async def get_node_papers(
@@ -131,6 +136,7 @@ async def get_node_papers(
     sort: Literal["citation", "date"] = Query("date", description="'date'(발행일) | 'citation'(인용수)"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
+    user_id: Optional[str] = Query(None, description="탐색 이력 저장용 유저 ID (선택). 제공 시 첫 페이지 반환 시 이력 저장"),
     db: AsyncSession = Depends(get_db),
 ):
     node_id = node_id.replace("+", " ")
@@ -149,6 +155,18 @@ async def get_node_papers(
     all_cards = await build_paper_cards(items, db)
     all_cards = apply_paper_type_postfilter(all_cards, paper_type)
     paged, total = paginate(all_cards, page, size)
+
+    if user_id and page == 1:
+        try:
+            save_search_history(
+                user_id=user_id,
+                search_type="keyword",
+                title=node_id,
+                search_id=str(_uuid.uuid4()),
+                keyword_path=[node_id],
+            )
+        except Exception:
+            pass
 
     cards = paged
     return success_response(
