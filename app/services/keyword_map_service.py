@@ -116,6 +116,47 @@ _EXPAND_SYSTEM = """당신은 학술 키워드 구조 전문가입니다.
 ]"""
 
 
+_AXIS_LABEL = {
+    "core_technology": "핵심기술",
+    "research_target": "연구대상",
+    "parent_domain": "상위분야",
+    "application_domain": "응용분야",
+}
+
+
+def transform_tree(raw: dict) -> dict:
+    """LLM 4축 트리 → {root > children(recursive, edge_type 포함)} 변환."""
+    root_raw = raw.get("root", {})
+    axes = raw.get("axes", {})
+
+    def _convert_node(node: dict, edge_type: str | None, depth: int) -> dict:
+        children_raw = node.get("children", [])
+        return {
+            "id": node.get("ko") or node.get("en", ""),
+            "ko": node.get("ko", ""),
+            "en": node.get("en", ""),
+            "depth": depth,
+            "edge_type": edge_type,
+            "definition": node.get("definition"),
+            "children": [_convert_node(c, edge_type, depth + 1) for c in children_raw],
+        }
+
+    children: list[dict] = []
+    for axis_key, axis_label in _AXIS_LABEL.items():
+        for node in axes.get(axis_key, []):
+            children.append(_convert_node(node, axis_label, 1))
+
+    return {
+        "id": "root",
+        "ko": root_raw.get("ko", ""),
+        "en": root_raw.get("en", ""),
+        "depth": 0,
+        "edge_type": None,
+        "definition": None,
+        "children": children,
+    }
+
+
 async def expand_keyword_node(
     parent_label: str,
     parent_label_en: str,

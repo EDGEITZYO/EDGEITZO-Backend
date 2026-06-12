@@ -16,6 +16,7 @@ from app.models.user_keyword_map import UserKeywordMap
 from app.schemas.common import ApiResponse
 from app.schemas.paper import PaperListResponse
 from app.services.chroma_search_service import get_chroma_search_service
+from app.services.keyword_map_service import transform_tree
 from app.services.neo4j_search_service import get_paper_ids_by_keyword
 from app.services.paper_filter_service import (
     apply_filters,
@@ -67,10 +68,11 @@ async def get_keyword_map(user_id: str, db: AsyncSession = Depends(get_db)):
     cached = r.get(f"keyword_map:{user_id}")
     if cached:
         data = json.loads(cached)
+        raw_tree = data.get("tree", {})
         return success_response(
             data=KeywordMapResponse(
                 research_field=data.get("research_field", ""),
-                tree=data.get("tree", {}),
+                tree=transform_tree(raw_tree),
             ),
             message="keyword map found",
         )
@@ -96,7 +98,7 @@ async def get_keyword_map(user_id: str, db: AsyncSession = Depends(get_db)):
             return success_response(
                 data=KeywordMapResponse(
                     research_field=row.research_field,
-                    tree=row.tree,
+                    tree=transform_tree(row.tree),
                 ),
                 message="keyword map found",
             )
