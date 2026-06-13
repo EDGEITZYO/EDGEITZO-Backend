@@ -26,9 +26,11 @@ services:
   redis:
     image: redis:7
     container_name: edgeitzo-redis
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
     expose:
       - "6379"
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
@@ -90,3 +92,4 @@ services:
 volumes:
   postgres_data:
   chroma_data:
+  redis_data:
