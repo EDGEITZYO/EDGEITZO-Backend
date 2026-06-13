@@ -137,6 +137,7 @@ async def get_node_papers(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
     user_id: Optional[str] = Query(None, description="탐색 이력 저장용 유저 ID (선택). 제공 시 첫 페이지 반환 시 이력 저장"),
+    keyword_path: Optional[str] = Query(None, description="탐색 경로 (콤마 구분, 예: '인공지능,머신러닝,강화학습'). 미전달 시 node_id 단독 저장"),
     db: AsyncSession = Depends(get_db),
 ):
     node_id = node_id.replace("+", " ")
@@ -163,7 +164,7 @@ async def get_node_papers(
                 search_type="keyword",
                 title=node_id,
                 search_id=str(_uuid.uuid4()),
-                keyword_path=[node_id],
+                keyword_path=[k.strip() for k in keyword_path.split(",")] if keyword_path else [node_id],
             )
         except Exception:
             pass
