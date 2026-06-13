@@ -4,12 +4,12 @@ from __future__ import annotations
 import json
 import random
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -24,6 +24,7 @@ from app.schemas.paper import PaperCardTrustBadge
 
 router = APIRouter()
 
+_KST           = timezone(timedelta(hours=9))
 _REDIS_DB      = 7
 _HISTORY_KEY   = "recent_searches:{user_id}"
 _HISTORY_LIMIT = 10
@@ -112,16 +113,32 @@ async def get_home(
             recent_searches.append(RecentSearchItem(**item))
 
     # ── 최근 열람 논문 (DB) ────────────────────────────────────────────
-    rows = (await db.execute(
-        select(RecentRead, Paper, Journal)
-        .join(Paper, RecentRead.paper_id == Paper.id)
-        .outerjoin(Journal, Paper.journal_id == Journal.id)
+    # 논문당 가장 최근 read_at 1건만 조회 (날짜별 중복 제거)
+    latest_per_paper = (
+        select(
+            RecentRead.paper_id,
+            func.max(RecentRead.read_at).label("latest_read_at"),
+        )
         .where(
             RecentRead.user_id == current_user.id,
             RecentRead.deleted_at.is_(None),
         )
-        .order_by(desc(RecentRead.read_at))
+        .group_by(RecentRead.paper_id)
+        .order_by(desc("latest_read_at"))
         .limit(10)
+        .subquery()
+    )
+    rows = (await db.execute(
+        select(RecentRead, Paper, Journal)
+        .join(Paper, RecentRead.paper_id == Paper.id)
+        .outerjoin(Journal, Paper.journal_id == Journal.id)
+        .join(
+            latest_per_paper,
+            (RecentRead.paper_id == latest_per_paper.c.paper_id)
+            & (RecentRead.read_at == latest_per_paper.c.latest_read_at),
+        )
+        .where(RecentRead.user_id == current_user.id)
+        .order_by(desc(RecentRead.read_at))
     )).all()
 
     recent_papers: list[RecentPaperItem] = []
@@ -205,10 +222,13 @@ async def record_read(
     if not paper:
         raise HTTPException(status_code=404, detail="논문을 찾을 수 없습니다.")
 
+    now_kst = now.astimezone(_KST)
+    today_start = now_kst.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
     existing = (await db.execute(
         select(RecentRead).where(
             RecentRead.user_id == current_user.id,
             RecentRead.paper_id == request.paper_id,
+            RecentRead.read_at >= today_start,
         )
     )).scalar_one_or_none()
 
