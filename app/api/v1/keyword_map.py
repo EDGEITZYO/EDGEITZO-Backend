@@ -157,17 +157,19 @@ async def get_node_papers(
     all_cards = apply_paper_type_postfilter(all_cards, paper_type)
     paged, total = paginate(all_cards, page, size)
 
+    saved_search_id = None
     if user_id and page == 1:
         try:
+            saved_search_id = str(_uuid.uuid4())
             save_search_history(
                 user_id=user_id,
                 search_type="keyword",
                 title=node_id,
-                search_id=str(_uuid.uuid4()),
+                search_id=saved_search_id,
                 keyword_path=[k.strip() for k in keyword_path.split(",")] if keyword_path else [node_id],
             )
         except Exception:
-            pass
+            saved_search_id = None
 
     cards = paged
     return success_response(
@@ -177,6 +179,7 @@ async def get_node_papers(
             total=total,
             page=page,
             size=size,
+            search_id=saved_search_id,
         ),
         message="node papers fetched",
     )

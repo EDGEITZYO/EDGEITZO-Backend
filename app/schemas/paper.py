@@ -101,6 +101,11 @@ class PaperListResponse(BaseModel):
         description="페이지당 결과 수",
         example=20,
     )
+    search_id: Optional[str] = Field(
+        None,
+        description="탐색 세션 ID. 논문 열람 시 POST /home/recent-reads의 search_id로 전달하면 last_viewed_paper_title 갱신됨",
+        example="3f82a1c0-1234-4abc-8def-000000000000",
+    )
 
 
 class PaperDetailResponse(BaseModel):
