@@ -141,6 +141,7 @@ class BookmarkListResponse(BaseModel):
         "- `folder_id`: 폴더 UUID (미지정 시 전체)\n"
         "- `year`: 발행 연도 (예: `2026`|`2025`|`2024` 등 정수값, 미지정 시 전체)\n"
         "- `type`: `학술 저널`|`박사학위 논문`|`석사학위 논문` — 논문 유형\n"
+        "- `kci`: `true`|`false` — KCI 등재 여부\n"
         "- `sci`: `true`|`false` — SCI 등재 여부\n\n"
         "**trust_badge 구조**\n"
         "- 저널/학술대회: `kci`(bool), `sci`(bool), `citation_count`(int), `if_value`(float)\n"
@@ -153,6 +154,7 @@ async def get_saved_bookmarks(
     size: int = Query(default=20, ge=1, le=100),
     year: Optional[int] = Query(default=None, description="발행 연도 (예: 2026, 2025, 2024 ...)"),
     type: Optional[str] = Query(default=None, description="학술 저널|박사학위 논문|석사학위 논문"),
+    kci: Optional[bool] = Query(default=None),
     sci: Optional[bool] = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -174,10 +176,13 @@ async def get_saved_bookmarks(
     if year is not None:
         where.append(Paper.pubyear == year)
 
-    if sci is True:
-        where.append(Journal.sci_indexed.is_(True))
-    elif sci is False:
-        where.append(or_(Journal.sci_indexed.is_(False), Journal.sci_indexed.is_(None)))
+    if kci is not None:
+        where.append(Journal.id.is_not(None))
+        where.append(Journal.kci_indexed.is_(kci))
+
+    if sci is not None:
+        where.append(Journal.id.is_not(None))
+        where.append(Journal.sci_indexed.is_(sci))
 
     base = (
         select(Bookmark, Paper, Journal)
