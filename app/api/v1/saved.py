@@ -139,8 +139,8 @@ class BookmarkListResponse(BaseModel):
         "사용자가 북마크한 논문 목록을 반환합니다.\n\n"
         "**필터 파라미터**\n"
         "- `folder_id`: 폴더 UUID (미지정 시 전체)\n"
-        "- `year`: `3y`|`5y`|`10y`|`all` — 발행 연도 범위\n"
-        "- `type`: `journal`|`conference`|`thesis_phd`|`thesis_master` — 논문 유형\n"
+        "- `year`: 발행 연도 (예: `2026`|`2025`|`2024` 등 정수값, 미지정 시 전체)\n"
+        "- `type`: `학술 저널`|`박사학위 논문`|`석사학위 논문` — 논문 유형\n"
         "- `sci`: `true`|`false` — SCI 등재 여부\n\n"
         "**trust_badge 구조**\n"
         "- 저널/학술대회: `kci`(bool), `sci`(bool), `citation_count`(int), `if_value`(float)\n"
@@ -151,8 +151,8 @@ async def get_saved_bookmarks(
     folder_id: Optional[UUID] = Query(default=None),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
-    year: Optional[str] = Query(default=None, description="'3y'|'5y'|'10y'|'all'"),
-    type: Optional[str] = Query(default=None, description="journal|conference|thesis_phd|thesis_master"),
+    year: Optional[int] = Query(default=None, description="발행 연도 (예: 2026, 2025, 2024 ...)"),
+    type: Optional[str] = Query(default=None, description="학술 저널|박사학위 논문|석사학위 논문"),
     sci: Optional[bool] = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -162,21 +162,17 @@ async def get_saved_bookmarks(
     if folder_id is not None:
         where.append(Bookmark.folder_id == folder_id)
 
-    if type == "journal":
-        where.append(Paper.db_code.in_(["JAKO", "JAFO"]))
-    elif type == "conference":
-        where.append(Paper.db_code == "CFKO")
-    elif type == "thesis_phd":
+    if type == "학술 저널":
+        where.append(Paper.db_code.in_(["JAKO", "JAFO", "CFKO", "CFFO"]))
+    elif type == "박사학위 논문":
         where.append(Paper.db_code == "DIKO")
         where.append(Paper.degree.contains("박사"))
-    elif type == "thesis_master":
+    elif type == "석사학위 논문":
         where.append(Paper.db_code == "DIKO")
         where.append(Paper.degree.contains("석사"))
 
-    if year and year != "all":
-        cutoff = {"3y": 2023, "5y": 2021, "10y": 2016}.get(year)
-        if cutoff:
-            where.append(Paper.pubyear >= cutoff)
+    if year is not None:
+        where.append(Paper.pubyear == year)
 
     if sci is True:
         where.append(Journal.sci_indexed.is_(True))
