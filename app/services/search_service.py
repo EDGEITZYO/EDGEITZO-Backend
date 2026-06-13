@@ -162,6 +162,9 @@ async def execute_search(
     db: AsyncSession | None = None,
     *,
     filter_paper_type: str | None = None,
+    filter_year: int | None = None,
+    filter_kci: bool | None = None,
+    filter_sci: bool | None = None,
     sort_order: str = "relevance",
 ) -> dict:
     """SearchParams 기반 실행 검색 — 슬롯 대화 완료 후 호출"""
@@ -207,10 +210,16 @@ async def execute_search(
         return paper_type_label(resolve_paper_type(item.db_code, degree))
 
     if filter_paper_type and filter_paper_type != "전체":
-        if filter_paper_type == "학위논문":
-            items = [i for i in items if _resolve_type(i) in ("박사학위 논문", "석사학위 논문", "학위논문")]
-        else:
-            items = [i for i in items if _resolve_type(i) == filter_paper_type]
+        items = [i for i in items if _resolve_type(i) == filter_paper_type]
+
+    if filter_year is not None:
+        items = [i for i in items if i.year == filter_year]
+
+    if filter_kci is not None:
+        items = [i for i in items if i.credibility.kci_registered is not None and i.credibility.kci_registered == filter_kci]
+
+    if filter_sci is not None:
+        items = [i for i in items if i.credibility.sci_indexed is not None and i.credibility.sci_indexed == filter_sci]
 
     if sort_order == "year_asc":
         items = sorted(items, key=lambda i: (i.year is None, i.year or 0))
