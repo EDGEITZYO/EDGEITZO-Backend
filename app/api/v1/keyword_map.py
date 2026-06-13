@@ -117,7 +117,7 @@ async def get_keyword_map_by_topic(
 
 **필터 파라미터**
 - `year_range`: `'3y'`(2023~) / `'5y'`(2021~) / `'10y'`(2016~) / null(전체)
-- `paper_type`: `'학술 저널'` / `'박사학위 논문'` / `'석사학위 논문'` / `'학위논문'` / null(전체)
+- `paper_type`: `'학술 저널'` / `'박사학위 논문'` / `'석사학위 논문'` / null(전체)
 - `kci`: `true`(KCI만) / `false`(비KCI만) / null(전체)
 - `sci`: `true`(SCI 계열만) / null(전체) — 현재 SCI 데이터 미수집으로 true 시 결과 없을 수 있음
 - `sort`: `'date'`(발행일 내림차순, 기본값) / `'citation'`(인용수 내림차순)
@@ -130,7 +130,7 @@ async def get_keyword_map_by_topic(
 async def get_node_papers(
     node_id: str,
     year_range: Optional[str] = Query(None, description="'3y'|'5y'|'10y'|null"),
-    paper_type: Optional[str] = Query(None, description="'학술 저널'|'박사학위 논문'|'석사학위 논문'|'학위논문'"),
+    paper_type: Optional[str] = Query(None, description="'학술 저널'|'박사학위 논문'|'석사학위 논문'"),
     kci: Optional[bool] = Query(None, description="KCI 등재 여부"),
     sci: Optional[bool] = Query(None, description="SCI 등재 여부"),
     sort: Literal["citation", "date"] = Query("date", description="'date'(발행일) | 'citation'(인용수)"),
