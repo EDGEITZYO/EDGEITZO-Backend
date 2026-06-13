@@ -771,7 +771,10 @@ class PaperResult(BaseModel):
 class ExecuteRequest(BaseModel):
     session_id: str = Field(description="/search/chat 응답의 session_id")
     search_params: SearchParamsDoc = Field(description="/search/chat 응답의 final_search_params 그대로 전달")
-    filter_paper_type: Optional[Literal["학술 저널", "박사학위 논문", "석사학위 논문", "학위논문", "전체"]] = Field(None, description="논문 유형 필터. null 또는 '전체' 시 전체 조회")
+    filter_paper_type: Optional[Literal["학술 저널", "박사학위 논문", "석사학위 논문", "전체"]] = Field(None, description="논문 유형 필터. null 또는 '전체' 시 전체 조회")
+    filter_year: Optional[int] = Field(None, description="발행 연도 필터 (예: 2025, 2024 ...)")
+    filter_kci: Optional[bool] = Field(None, description="KCI 등재 여부 필터")
+    filter_sci: Optional[bool] = Field(None, description="SCI 등재 여부 필터")
     sort_order: Literal["relevance", "year_asc", "year_desc"] = Field("relevance", description="정렬 기준. 'relevance': 유사도 / 'year_asc': 발행일 오름차순 / 'year_desc': 발행일 내림차순")
     user_id: Optional[str] = Field(None, description="검색 이력 저장용 유저 ID (선택). 제공 시 Redis에 AI 검색 이력 저장")
 
@@ -795,7 +798,10 @@ class ExecuteResponse(BaseModel):
         "**요청 필드**\n"
         "- `session_id` — `/search/chat` 응답의 `session_id` (검색 이력 저장에 사용)\n"
         "- `search_params` — `/search/chat` 응답의 `final_search_params` 그대로 전달\n"
-        "- `filter_paper_type` — 논문 유형 필터. `'학술 저널'`|`'박사학위 논문'`|`'석사학위 논문'`|`'학위논문'`|`'전체'`|null (null = 전체)\n"
+        "- `filter_paper_type` — 논문 유형 필터. `'학술 저널'`|`'박사학위 논문'`|`'석사학위 논문'`|`'전체'`|null (null = 전체)\n"
+        "- `filter_year` — 발행 연도 필터 (예: `2025`, `2024` ...)\n"
+        "- `filter_kci` — KCI 등재 여부 필터. `true`|`false`|null(전체)\n"
+        "- `filter_sci` — SCI 등재 여부 필터. `true`|`false`|null(전체)\n"
         "- `sort_order` — 정렬 기준. `'relevance'`(유사도순) | `'year_asc'`(오래된순) | `'year_desc'`(최신순)\n"
         "- `user_id` — 제공 시 Redis에 AI 검색 이력 저장 (선택)\n\n"
         "**응답 필드**\n"
@@ -813,6 +819,9 @@ async def execute_search_endpoint(
         sp,
         db,
         filter_paper_type=request.filter_paper_type,
+        filter_year=request.filter_year,
+        filter_kci=request.filter_kci,
+        filter_sci=request.filter_sci,
         sort_order=request.sort_order,
     )
 
