@@ -60,6 +60,7 @@ class HomeResponse(BaseModel):
 
 class RecordReadRequest(BaseModel):
     paper_id: str = Field(description="열람한 논문 ID", example="JAKO202312345678")
+    search_id: str | None = Field(default=None, description="연결된 탐색 세션 ID (recent_searches 갱신용)")
 
 
 # ── 헬퍼 ───────────────────────────────────────────────────────────────
@@ -225,6 +226,14 @@ async def record_read(
         ))
 
     await db.commit()
+
+    if request.search_id:
+        update_last_viewed(
+            user_id=str(current_user.id),
+            search_id=request.search_id,
+            paper_title=paper.title,
+        )
+
     return success_response(data={"recorded": True}, message="read recorded")
 
 
