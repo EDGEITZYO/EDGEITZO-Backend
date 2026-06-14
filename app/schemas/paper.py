@@ -136,6 +136,10 @@ class SimilarPaperResponse(BaseModel):
     material_type: Optional[str] = Field(None, description="자료 유형. 없으면 null")
     in_service: bool = Field(description="서비스 DB(papers 테이블) 수록 여부. true 시 paper_id로 이동 가능")
     paper_id: Optional[str] = Field(None, description="in_service=true일 때 서비스 DB의 논문 ID. false 시 null")
+    journal_name: Optional[str] = Field(None, description="학술지명. in_service=true이고 저널 매칭 시. 없으면 null")
+    keywords: Optional[List[str]] = Field(None, description="한국어 키워드. in_service=true일 때. 없으면 null")
+    doi: Optional[str] = Field(None, description="DOI. in_service=true일 때. 없으면 null")
+    trust_badge: Optional[TrustBadge] = Field(None, description="신뢰도 뱃지. in_service=true일 때. 없으면 null")
 
 
 class ReferenceResponse(BaseModel):
