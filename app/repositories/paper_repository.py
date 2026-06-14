@@ -36,10 +36,19 @@ async def get_paper_with_journal(db: AsyncSession, paper_id: str) -> Paper | Non
 
 
 async def get_similar_papers(db: AsyncSession, paper_id: str):
+    from app.models.journal import Journal
     from app.models.paper import PaperSimilar
+    from sqlalchemy import func, or_
     result = await db.execute(
-        select(PaperSimilar, Paper)
+        select(PaperSimilar, Paper, Journal)
         .outerjoin(Paper, PaperSimilar.internal_paper_id == Paper.id)
+        .outerjoin(
+            Journal,
+            or_(
+                func.replace(Journal.p_issn, '-', '') == Paper.issn,
+                func.replace(Journal.e_issn, '-', '') == Paper.issn,
+            ),
+        )
         .where(PaperSimilar.source_cn == paper_id)
     )
     return result.all()

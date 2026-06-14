@@ -124,7 +124,7 @@ async def get_paper_detail(
     description=(
         "논문의 유사 논문 목록을 반환합니다.\n\n"
         "- `in_service: true` — 서비스 DB에 있는 논문. `paper_id`로 상세 페이지 이동 가능\n"
-        "- `in_service: false` — 서비스 외 논문. `paper_id`는 null\n"
+        "- `in_service: false` — 서비스 외 논문. `paper_id` / `journal_name` / `keywords` / `doi` / `trust_badge`는 null\n"
         "- 유사 논문이 없는 경우 빈 리스트 반환"
     ),
 )
@@ -140,17 +140,30 @@ async def get_paper_similar(
         )
 
     similars = await get_similar_papers(db, paper_id)
-    result = [
-        SimilarPaperResponse(
+    result = []
+    for s, p, j in similars:
+        trust = None
+        if p:
+            ptype = resolve_paper_type(p.db_code, p.degree)
+            trust = build_trust_badge(
+                ptype,
+                journal=_journal_to_evidence(j),
+                citation_count=p.citation_count or None,
+                institution=p.affiliation or p.publisher,
+                full_text_available=p.fulltext_flag,
+            )
+        result.append(SimilarPaperResponse(
             title=s.title,
             author=", ".join(p.authors) if p and p.authors else s.author,
             pubyear=p.pubyear if p else s.pubyear,
             material_type=s.material_type,
             in_service=s.internal_paper_id is not None,
             paper_id=s.internal_paper_id,
-        )
-        for s, p in similars
-    ]
+            journal_name=j.title if j else None,
+            keywords=(p.keywords_ko or []) if p else None,
+            doi=p.doi if p else None,
+            trust_badge=trust,
+        ))
     return success_response(data=result, message="ok")
 
 

@@ -293,9 +293,14 @@ async def get_saved_recent(
     start, end = _period_range(period, ref)
 
     rows = (await db.execute(
-        select(RecentRead, Paper, Journal)
+        select(RecentRead, Paper, Journal, Bookmark)
         .join(Paper, RecentRead.paper_id == Paper.id)
         .outerjoin(Journal, _JOURNAL_JOIN)
+        .outerjoin(
+            Bookmark,
+            (Bookmark.paper_id == RecentRead.paper_id) &
+            (Bookmark.user_id == current_user.id),
+        )
         .where(
             RecentRead.user_id == current_user.id,
             RecentRead.deleted_at.is_(None),
@@ -319,15 +324,15 @@ async def get_saved_recent(
                 citation_count=p.citation_count or None,
                 view_count=rr.view_count,
             )
-            for rr, p, j in rows
+            for rr, p, j, bm in rows
         ]
         return success_response(data=RecentChartResponse(chart_data=chart_data), message="ok")
 
     # list view — 날짜별 그룹핑
     groups_dict: dict[str, list[SavedPaperCard]] = {}
-    for rr, p, j in rows:
+    for rr, p, j, bm in rows:
         day_key = rr.read_at.replace(tzinfo=timezone.utc).astimezone(_KST).strftime("%Y-%m-%d")
-        card = _to_card(p, j, viewed_at=rr.read_at, view_count=rr.view_count)
+        card = _to_card(p, j, bookmarked_at=bm.created_at if bm else None, viewed_at=rr.read_at, view_count=rr.view_count)
         groups_dict.setdefault(day_key, []).append(card)
 
     groups = [
