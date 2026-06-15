@@ -36,10 +36,12 @@ class RecentSearchItem(BaseModel):
     id: str = Field(description="탐색 고유 ID")
     type: str = Field(description="탐색 유형. 'keyword': 키워드 탐색 (keyword_path 사용), 'ai': AI 탐색 (recommended_keywords 사용)", example="keyword")
     title: str = Field(description="탐색 제목. AI: 첫 발화 요약 / keyword: 노드명", example="딥러닝")
+    map_session_id: Optional[str] = Field(None, description="키워드맵 세션 ID (type='keyword'일 때 사용, 그룹핑 기준)")
     last_viewed_paper_title: Optional[str] = Field(None, description="해당 탐색에서 마지막으로 열람한 논문 제목. 없으면 null", example="BERT를 활용한 자연어처리 연구")
-    keyword_path: List[str] = Field(description="키워드 탐색 breadcrumb 경로 (type='keyword'일 때 사용)", example=["AI", "딥러닝", "CNN"])
-    recommended_keywords: List[str] = Field(description="AI 탐색 추천 키워드 목록 (type='ai'일 때 사용)", example=["transformer", "attention", "BERT"])
-    created_at: str = Field(description="탐색 생성 시각 (ISO8601)", example="2024-03-15T10:30:00+00:00")
+    keyword_path: List[str] = Field(default=[], description="가장 최근 탐색 경로 (type='keyword'일 때 사용)", example=["AI", "딥러닝", "CNN"])
+    keyword_paths: List[List[str]] = Field(default=[], description="누적된 모든 탐색 경로 목록 (type='keyword'일 때 사용)", example=[["AI", "딥러닝", "CNN"], ["AI", "딥러닝", "RNN"]])
+    recommended_keywords: List[str] = Field(default=[], description="AI 탐색 추천 키워드 목록 (type='ai'일 때 사용)", example=["transformer", "attention", "BERT"])
+    created_at: str = Field(description="탐색 생성/갱신 시각 (ISO8601)", example="2024-03-15T10:30:00+00:00")
 
 
 class RecentPaperItem(BaseModel):
@@ -260,27 +262,54 @@ async def record_read(
 def save_search_history(
     user_id: str,
     search_type: str,       # "ai" | "keyword"
-    title: str,             # AI: 첫 발화 요약 / keyword: 노드명
+    title: str,             # AI: 첫 발화 요약 / keyword: 연구 분야명
     search_id: str,
-    keyword_path: list[str] | None = None,          # keyword 탐색 breadcrumb
+    keyword_path: list[str] | None = None,          # keyword 탐색 breadcrumb (단일 경로)
     recommended_keywords: list[str] | None = None,  # AI 검색 추천 키워드
     last_viewed_paper_title: str | None = None,
     slots: dict | None = None,
+    map_session_id: str | None = None,              # 키워드맵 세션 ID (그룹핑 기준)
 ) -> None:
-    """검색 실행 후 호출 — Redis에 최근 탐색 이력 저장 (최대 10건 유지)."""
+    """검색 실행 후 호출 — Redis에 최근 탐색 이력 저장 (최대 10건 유지).
+
+    keyword 탐색 + map_session_id 제공 시: 동일 세션 항목이 있으면 새 항목 추가 대신 기존 항목 갱신
+    (keyword_paths 누적, 맨 앞으로 이동). 없으면 신규 항목 추가.
+    """
     r = get_redis(_REDIS_DB)
     key = _HISTORY_KEY.format(user_id=user_id)
     existing = json.loads(r.get(key) or "[]")
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    if search_type == "keyword" and map_session_id:
+        matched = next((i for i in existing if i.get("map_session_id") == map_session_id), None)
+        if matched:
+            all_paths: list[list[str]] = list(matched.get("keyword_paths") or [])
+            new_path = keyword_path or []
+            if new_path and new_path not in all_paths:
+                all_paths.append(new_path)
+            matched["keyword_paths"] = all_paths
+            matched["keyword_path"] = new_path
+            matched["title"] = title
+            matched["created_at"] = now
+            if last_viewed_paper_title:
+                matched["last_viewed_paper_title"] = last_viewed_paper_title
+            existing = [i for i in existing if i.get("map_session_id") != map_session_id]
+            existing.insert(0, matched)
+            r.set(key, json.dumps(existing[:_HISTORY_LIMIT], ensure_ascii=False), ex=86400 * 7)
+            return
 
     new_item = {
         "id": search_id,
         "type": search_type,
         "title": title,
+        "map_session_id": map_session_id,
         "last_viewed_paper_title": last_viewed_paper_title,
         "keyword_path": keyword_path or [],
+        "keyword_paths": [keyword_path] if keyword_path else [],
         "recommended_keywords": recommended_keywords or [],
         "slots": slots,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": now,
     }
     existing = [i for i in existing if i.get("id") != search_id]
     existing.insert(0, new_item)
