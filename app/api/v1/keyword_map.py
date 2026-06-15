@@ -42,6 +42,7 @@ class KeywordMapRequest(BaseModel):
 class KeywordMapGenerateResponse(BaseModel):
     research_field: str = Field(description="생성 기준 연구 분야")
     tree: dict = Field(description="4축 키워드 트리 원본 JSON (root, axes 구조)")
+    map_session_id: str = Field(description="키워드맵 탐색 세션 ID. 노드 클릭 시 이 값을 전달해야 탐색 이력이 세션 단위로 그룹핑됨")
 
 
 @router.get(
@@ -138,6 +139,8 @@ async def get_node_papers(
     size: int = Query(20, ge=1, le=50),
     user_id: Optional[str] = Query(None, description="탐색 이력 저장용 유저 ID (선택). 제공 시 첫 페이지 반환 시 이력 저장"),
     keyword_path: Optional[str] = Query(None, description="탐색 경로 (콤마 구분, 예: '인공지능,머신러닝,강화학습'). 미전달 시 node_id 단독 저장"),
+    map_session_id: Optional[str] = Query(None, description="키워드맵 생성 시 발급된 세션 ID. 제공 시 동일 세션 이력에 경로 누적"),
+    research_field: Optional[str] = Query(None, description="최상위 연구 분야 (탐색 이력 제목용)"),
     db: AsyncSession = Depends(get_db),
 ):
     node_id = node_id.replace("+", " ")
@@ -160,13 +163,14 @@ async def get_node_papers(
     saved_search_id = None
     if user_id and page == 1:
         try:
-            saved_search_id = str(_uuid.uuid4())
+            saved_search_id = map_session_id or str(_uuid.uuid4())
             save_search_history(
                 user_id=user_id,
                 search_type="keyword",
-                title=node_id,
+                title=research_field or node_id,
                 search_id=saved_search_id,
                 keyword_path=[k.strip() for k in keyword_path.split(",")] if keyword_path else [node_id],
+                map_session_id=map_session_id,
             )
         except Exception:
             saved_search_id = None
@@ -205,6 +209,7 @@ async def get_node_papers(
 )
 async def generate_map(request: KeywordMapRequest, db: AsyncSession = Depends(get_db)):
     """연구분야 텍스트 → 4축 키워드 트리 JSON 생성"""
+    map_session_id = str(_uuid.uuid4())
     tree = await generate_keyword_map(request.research_field)
 
     if request.user_id:
@@ -243,6 +248,7 @@ async def generate_map(request: KeywordMapRequest, db: AsyncSession = Depends(ge
         data=KeywordMapGenerateResponse(
             research_field=request.research_field,
             tree=tree,
+            map_session_id=map_session_id,
         ),
         message="keyword map generated",
     )

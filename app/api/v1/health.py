@@ -4,6 +4,7 @@ from sqlalchemy import text
 
 from app.core.database import AsyncSessionLocal
 from app.core.neo4j_client import get_neo4j_driver
+from app.core.redis import get_redis
 from app.core.redis_client import get_redis_client
 from app.core.response import success_response
 from app.core.settings import settings
@@ -89,3 +90,13 @@ async def reset_llm_cost():
     """LLM 누적 비용 초기화 — API 키 교체 시 호출"""
     await reset_cost()
     return success_response(data={"reset": True}, message="LLM 누적 비용 초기화 완료")
+
+
+@router.post("/health/recent-searches/reset")
+async def reset_recent_searches():
+    """전체 유저 최근 탐색 이력 초기화 — 탐색 이력 구조 변경 배포 시 호출"""
+    r = get_redis(7)
+    keys = r.keys("recent_searches:*")
+    if keys:
+        r.delete(*keys)
+    return success_response(data={"deleted_keys": len(keys)}, message=f"최근 탐색 이력 {len(keys)}건 초기화 완료")

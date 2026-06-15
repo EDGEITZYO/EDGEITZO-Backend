@@ -149,10 +149,12 @@ async def verify_code(
 )
 async def register(
     body: RegisterRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis_client),
 ):
     result = await register_service(db, redis, body.email, body.password)
+    _set_auth_cookies(response, result["access_token"], result["refresh_token"])
     return success_response(data=TokenResponse(**result), message="회원가입이 완료되었습니다")
 
 
@@ -173,9 +175,11 @@ async def register(
 )
 async def login(
     body: LoginRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     result = await login_service(db, body.email, body.password)
+    _set_auth_cookies(response, result["access_token"], result["refresh_token"])
     return success_response(data=TokenResponse(**result), message="로그인 성공")
 
 
