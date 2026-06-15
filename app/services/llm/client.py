@@ -21,12 +21,6 @@ _PRICING: dict[str, dict[str, float]] = {
     "claude-haiku-4-5": {"input": 1.0, "output": 5.0},
 }
 
-_BUDGET_MICRO_USD = int(settings.llm_budget_total_usd * 1_000_000)
-
-
-class LLMBudgetExceededError(Exception):
-    """누적 비용이 한도에 도달했을 때 발생 — API 호출 자체를 차단"""
-
 
 @dataclass
 class LLMResponse:
@@ -73,18 +67,11 @@ async def chat(
     max_tokens: int = 1000,
     use_cache: bool = True,
 ) -> LLMResponse:
-    """LLM 호출 — 비용 한도 체크 → 캐시 조회 → API 호출 → 비용 누적 → 캐시 저장"""
+    """LLM 호출 — 캐시 조회 → API 호출 → 비용 누적 → 캐시 저장"""
     r = get_redis(_DB)
     cache_key = _cache_key(model, messages, temperature, max_tokens)
 
-    # 1. 비용 한도 체크 (하드 차단)
-    current = int(r.get(_COST_KEY_TOTAL) or 0)
-    if current >= _BUDGET_MICRO_USD:
-        raise LLMBudgetExceededError(
-            f"누적 비용 한도 초과: ${current / 1_000_000:.4f} / ${settings.llm_budget_total_usd}"
-        )
-
-    # 2. 캐시 조회
+    # 1. 캐시 조회
     if use_cache:
         hit = r.get(cache_key)
         if hit:
@@ -124,5 +111,5 @@ async def get_total_cost() -> float:
 
 
 async def get_remaining_budget() -> float:
-    """잔여 예산 조회 (USD)"""
-    return settings.llm_budget_total_usd - await get_total_cost()
+    """누적 비용 조회 (USD) — 한도 없음"""
+    return await get_total_cost()
