@@ -7,6 +7,7 @@ from app.core.neo4j_client import get_neo4j_driver
 from app.core.redis_client import get_redis_client
 from app.core.response import success_response
 from app.core.settings import settings
+from app.services.llm.client import get_remaining_budget, get_total_cost, reset_cost
 
 router = APIRouter()
 
@@ -68,3 +69,23 @@ async def health_check():
         },
         message="health check completed",
     )
+
+
+@router.get("/health/llm-cost")
+async def llm_cost():
+    """LLM 누적 비용 및 잔여 예산 조회"""
+    return success_response(
+        data={
+            "total_cost_usd": await get_total_cost(),
+            "remaining_budget_usd": await get_remaining_budget(),
+            "budget_limit_usd": settings.llm_budget_total_usd,
+        },
+        message="LLM 비용 조회 완료",
+    )
+
+
+@router.post("/health/llm-cost/reset")
+async def reset_llm_cost():
+    """LLM 누적 비용 초기화 — API 키 교체 시 호출"""
+    await reset_cost()
+    return success_response(data={"reset": True}, message="LLM 누적 비용 초기화 완료")
