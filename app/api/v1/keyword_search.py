@@ -49,6 +49,8 @@ class KeywordPaperRequest(BaseModel):
     page: int = Field(1, description="페이지 번호 (1부터 시작)")
     size: int = Field(30, description="페이지당 결과 수")
     user_id: Optional[str] = Field(None, description="검색 이력 저장용 유저 ID (선택). 제공 시 첫 페이지 반환 시 이력 저장")
+    map_session_id: Optional[str] = Field(None, description="키워드맵 생성 시 발급된 세션 ID. 제공 시 동일 세션 이력에 경로 누적")
+    research_field: Optional[str] = Field(None, description="최상위 연구 분야 (탐색 이력 제목용)")
 
 
 @router.get(
@@ -183,17 +185,20 @@ async def search_papers_by_keyword(
     all_cards = apply_paper_type_postfilter(all_cards, request.paper_type)
     paged, total = paginate(all_cards, request.page, request.size)
 
+    saved_search_id = None
     if request.user_id and request.page == 1:
         try:
+            saved_search_id = request.map_session_id or str(_uuid.uuid4())
             save_search_history(
                 user_id=request.user_id,
                 search_type="keyword",
-                title=request.keyword,
-                search_id=str(_uuid.uuid4()),
+                title=request.research_field or request.keyword,
+                search_id=saved_search_id,
                 keyword_path=[request.keyword],
+                map_session_id=request.map_session_id,
             )
         except Exception:
-            pass
+            saved_search_id = None
 
     cards = paged
     return success_response(
@@ -203,6 +208,7 @@ async def search_papers_by_keyword(
             total=total,
             page=request.page,
             size=request.size,
+            search_id=saved_search_id,
         ),
         message="keyword papers found",
     )
