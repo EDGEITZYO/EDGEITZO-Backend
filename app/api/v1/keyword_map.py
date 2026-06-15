@@ -265,23 +265,20 @@ class ExpandNodeResponse(BaseModel):
     "/keyword-map/node/{node_id}/expand",
     response_model=ApiResponse[ExpandNodeResponse],
     summary="키워드 노드 하위 키워드 LLM 생성",
-    description="""선택된 노드(node_id)의 하위 키워드 2~3개를 LLM으로 생성. axis, research_field, depth 정보 필수. node_id 공백은 `%20` 또는 `+` 모두 허용.
+    description="""선택된 노드(node_id)에서 4축(핵심기술·연구대상·상위분야·응용분야) 각 1개씩 총 4개의 하위 키워드를 LLM으로 생성. research_field, depth 정보 필수. node_id 공백은 `%20` 또는 `+` 모두 허용.
 
 **응답 `data.new_children` 구조**
 ```json
 [
-  {
-    "id": "CRISPR-Cas9",
-    "ko": "CRISPR-Cas9",
-    "en": "CRISPR-Cas9",
-    "depth": 3,
-    "edge_type": "핵심기술"
-  }
+  {"id": "CRISPR-Cas9", "ko": "CRISPR-Cas9", "en": "CRISPR-Cas9", "depth": 3, "edge_type": "핵심기술"},
+  {"id": "유전체 데이터", "ko": "유전체 데이터", "en": "Genomic Data", "depth": 3, "edge_type": "연구대상"},
+  {"id": "분자생물학", "ko": "분자생물학", "en": "Molecular Biology", "depth": 3, "edge_type": "상위분야"},
+  {"id": "유전자 치료", "ko": "유전자 치료", "en": "Gene Therapy", "depth": 3, "edge_type": "응용분야"}
 ]
 ```
 - `id`: ko 값과 동일 (ko 없으면 en). `/node/{node_id}/papers` 호출 시 그대로 사용 가능
 - `depth`: 부모 노드 depth + 1
-- `edge_type`: 요청 바디의 `axis` 값과 동일
+- `edge_type`: 4축 중 해당 노드가 속하는 축
 """,
 )
 async def expand_node(
