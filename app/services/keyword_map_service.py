@@ -33,8 +33,8 @@ KEYWORD_MAP_SYSTEM_PROMPT = """당신은 학술 연구 분야의 키워드 구�
 ## 계층 규칙
 
 - 각 축은 2depth 구성: 루트 → 1st 레벨 → 2nd 레벨
-- 1st 레벨: 축당 2~4개 노드 (중요도 순)
-- 2nd 레벨: 각 1st 레벨 노드 아래 2~3개 노드
+- 1st 레벨: 축당 정확히 1개 노드 (가장 대표적인 키워드)
+- 2nd 레벨: 1st 레벨 노드 아래 2~3개 노드
 - 동일 개념이 여러 축에 겹치면 가장 대표적인 축에만 배치
 
 ## 출력 품질 기준
@@ -42,7 +42,7 @@ KEYWORD_MAP_SYSTEM_PROMPT = """당신은 학술 연구 분야의 키워드 구�
 - 실제 학술 논문 검색어로 사용 가능한 용어
 - 지나치게 포괄적인 단어 금지 ("기술", "방법", "연구" 단독 사용 금지)
 - ko/en 모두 포함
-- 전체 노드 수: 15~30개 범위
+- 전체 노드 수: 4개 1st 레벨 + 각 2~3개 2nd 레벨 = 12~16개
 
 ## 엣지 케이스 처리
 
@@ -61,23 +61,24 @@ JSON만 반환. 설명, 마크다운 코드블록 없이.
   "axes": {
     "core_technology": [
       {
-        "ko": "1st 레벨 노드명", "en": "Node Name", "depth": 1,
+        "ko": "1st 레벨 노드명 (축당 1개)", "en": "Node Name", "depth": 1,
         "children": [
           {"ko": "2nd 레벨 노드명", "en": "Node Name", "depth": 2},
           {"ko": "2nd 레벨 노드명", "en": "Node Name", "depth": 2}
         ]
       }
     ],
-    "research_target": [],
-    "parent_domain": [],
-    "application_domain": []
+    "research_target": [{"ko": "1개만", "en": "Node Name", "depth": 1, "children": [...]}],
+    "parent_domain": [{"ko": "1개만", "en": "Node Name", "depth": 1, "children": [...]}],
+    "application_domain": [{"ko": "1개만", "en": "Node Name", "depth": 1, "children": [...]}]
   }
 }"""
 
 KEYWORD_MAP_USER_TEMPLATE = (
     '연구 분야: "{field}"\n\n'
     "위 연구 분야를 4축(핵심기술 / 연구대상 / 상위분야 / 응용분야)으로 분해하여 "
-    "계층형 키워드 트리를 JSON 형식으로 생성하라."
+    "계층형 키워드 트리를 JSON 형식으로 생성하라. "
+    "각 축의 1st 레벨 노드는 반드시 1개씩만 포함해야 한다."
 )
 
 
