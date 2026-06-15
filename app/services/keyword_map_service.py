@@ -101,18 +101,27 @@ async def generate_keyword_map(research_field: str) -> dict:
 
 
 _EXPAND_SYSTEM = """당신은 학술 키워드 구조 전문가입니다.
-주어진 부모 키워드 아래에 2~3개의 하위 키워드를 생성합니다.
+주어진 부모 키워드에서 4개의 축 각각으로 하위 키워드를 1개씩 총 4개 생성합니다.
+
+## 4축 정의
+1. 핵심기술 (Core Technology): 해당 키워드에서 파생되는 핵심 방법론·알고리즘·기술 요소
+2. 연구대상 (Research Target): 해당 키워드가 적용되거나 분석하는 대상 데이터·시스템·현상
+3. 상위분야 (Parent Domain): 해당 키워드가 속하는 상위 학문 분야 또는 연구 계보
+4. 응용분야 (Application Domain): 해당 키워드 기술이 실제로 적용되는 산업·서비스·도메인
 
 규칙:
 - 실제 학술 검색어로 사용 가능한 구체적 용어
 - 부모 키워드보다 더 구체적·세분화된 개념
 - ko/en 모두 포함
+- 각 축마다 정확히 1개씩, 총 4개 반환
 - JSON만 반환 (코드블록 없이)
 
 출력 형식:
 [
-  {"ko": "하위 키워드명", "en": "Sub-keyword Name"},
-  {"ko": "하위 키워드명", "en": "Sub-keyword Name"}
+  {"ko": "하위 키워드명", "en": "Sub-keyword Name", "axis": "핵심기술"},
+  {"ko": "하위 키워드명", "en": "Sub-keyword Name", "axis": "연구대상"},
+  {"ko": "하위 키워드명", "en": "Sub-keyword Name", "axis": "상위분야"},
+  {"ko": "하위 키워드명", "en": "Sub-keyword Name", "axis": "응용분야"}
 ]"""
 
 
@@ -164,13 +173,12 @@ async def expand_keyword_node(
     research_field: str,
     depth: int,
 ) -> list[dict]:
-    """부모 키워드 노드 아래 하위 키워드 2~3개 생성 (LLM 호출)."""
+    """부모 키워드 노드 아래 4축 각 1개씩 총 4개 하위 키워드 생성 (LLM 호출)."""
     user_prompt = (
         f"연구분야: {research_field}\n"
-        f"축: {axis}\n"
         f"부모 키워드: {parent_label} ({parent_label_en})\n"
         f"현재 depth: {depth} → 하위 노드 depth: {depth + 1}\n\n"
-        f"위 부모 키워드의 하위 학술 키워드 2~3개를 JSON 배열로 생성하라."
+        f"위 부모 키워드에서 핵심기술·연구대상·상위분야·응용분야 각 축으로 하위 학술 키워드를 1개씩 총 4개 JSON 배열로 생성하라."
     )
     resp = await chat(
         messages=[
@@ -188,7 +196,7 @@ async def expand_keyword_node(
             "ko": c.get("ko", ""),
             "en": c.get("en", ""),
             "depth": depth + 1,
-            "edge_type": axis,
+            "edge_type": c.get("axis", axis),
         }
         for c in children_raw
     ]
