@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from redis import Redis
@@ -16,10 +16,7 @@ from app.models.user import User
 from app.schemas.auth import (
     EmailCheckRequest,
     LoginRequest,
-    LogoutRequest,
     ProfileCreateRequest,
-    RefreshTokenRequest,
-    RefreshTokenResponse,
     RegisterRequest,
     SendCodeRequest,
     StartResponse,
@@ -37,6 +34,33 @@ from app.services.auth_service import (
     send_code_service,
     verify_code_service,
 )
+
+_ACCESS_MAX_AGE = 60 * settings.jwt_access_expire_minutes
+_REFRESH_MAX_AGE = 60 * 60 * 24 * settings.jwt_refresh_expire_days
+
+
+_IS_LOCAL = settings.app_env == "local"
+_SECURE_COOKIE = not _IS_LOCAL
+_SAMESITE = "lax" if _IS_LOCAL else "none"
+
+
+def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=_SECURE_COOKIE,
+        samesite=_SAMESITE,
+        max_age=_ACCESS_MAX_AGE,
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=_SECURE_COOKIE,
+        samesite=_SAMESITE,
+        max_age=_REFRESH_MAX_AGE,
+    )
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -165,7 +189,7 @@ async def login(
         "2. 카카오 사용자 정보 조회\n"
         "3. 신규 유저 → `/profile` 리디렉션 (프로필 생성 페이지)\n"
         "4. 기존 유저 (프로필 설정 완료) → `/main` 리디렉션\n"
-        "5. 리디렉션 URL에 access_token, refresh_token 쿼리 파라미터 포함"
+        "5. access_token, refresh_token을 HttpOnly 쿠키로 설정 후 리디렉션"
     ),
     responses={
         302: {"description": "신규 유저 → /profile, 기존 유저 → /main 으로 리디렉션"},
@@ -178,9 +202,9 @@ async def kakao_callback(
 ):
     access_token, refresh_token, is_new_user = await oauth_callback_service(db, "kakao", code)
     path = "/profile" if is_new_user else "/main"
-    return RedirectResponse(
-        url=f"{settings.frontend_url}{path}?access_token={access_token}&refresh_token={refresh_token}"
-    )
+    response = RedirectResponse(url=f"{settings.frontend_url}{path}")
+    _set_auth_cookies(response, access_token, refresh_token)
+    return response
 
 
 @router.get(
@@ -193,7 +217,7 @@ async def kakao_callback(
         "2. 구글 사용자 정보 조회\n"
         "3. 신규 유저 → `/profile` 리디렉션 (프로필 생성 페이지)\n"
         "4. 기존 유저 (프로필 설정 완료) → `/main` 리디렉션\n"
-        "5. 리디렉션 URL에 access_token, refresh_token 쿼리 파라미터 포함"
+        "5. access_token, refresh_token을 HttpOnly 쿠키로 설정 후 리디렉션"
     ),
     responses={
         302: {"description": "신규 유저 → /profile, 기존 유저 → /main 으로 리디렉션"},
@@ -206,9 +230,9 @@ async def google_callback(
 ):
     access_token, refresh_token, is_new_user = await oauth_callback_service(db, "google", code)
     path = "/profile" if is_new_user else "/main"
-    return RedirectResponse(
-        url=f"{settings.frontend_url}{path}?access_token={access_token}&refresh_token={refresh_token}"
-    )
+    response = RedirectResponse(url=f"{settings.frontend_url}{path}")
+    _set_auth_cookies(response, access_token, refresh_token)
+    return response
 
 
 @router.post(
@@ -237,10 +261,9 @@ async def create_profile(
 
 @router.post(
     "/refresh",
-    response_model=RefreshTokenResponse,
     summary="토큰 갱신 (Rotation)",
     description=(
-        "Refresh 토큰으로 새 Access + Refresh 토큰을 발급합니다.\n\n"
+        "Refresh 토큰 쿠키로 새 Access + Refresh 토큰을 발급합니다.\n\n"
         "- 이전 Refresh 토큰은 즉시 블랙리스트에 등록됩니다 (Rotation)\n"
         "- 탈취된 Refresh 토큰으로 재사용 시 401 반환"
     ),
@@ -249,9 +272,13 @@ async def create_profile(
         401: {"description": "유효하지 않거나 이미 사용된 refresh 토큰"},
     },
 )
-async def refresh(body: RefreshTokenRequest):
-    result = await refresh_tokens(body.refresh_token)
-    return RefreshTokenResponse(**result)
+async def refresh(request: Request, response: Response):
+    refresh_token = request.cookies.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="refresh 토큰이 없습니다")
+    result = await refresh_tokens(refresh_token)
+    _set_auth_cookies(response, result["access_token"], result["refresh_token"])
+    return success_response(message="토큰이 갱신되었습니다")
 
 
 @router.post(
@@ -269,11 +296,18 @@ async def refresh(body: RefreshTokenRequest):
     },
 )
 async def logout_endpoint(
-    body: LogoutRequest,
+    request: Request,
+    response: Response,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     current_user: User = Depends(get_current_user),
 ):
-    await logout(credentials.credentials, body.refresh_token)
+    access_token = (credentials.credentials if credentials else None) or request.cookies.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="인증이 필요합니다")
+    refresh_token = request.cookies.get("refresh_token")
+    await logout(access_token, refresh_token)
+    response.delete_cookie("access_token", httponly=True, secure=_SECURE_COOKIE, samesite=_SAMESITE)
+    response.delete_cookie("refresh_token", httponly=True, secure=_SECURE_COOKIE, samesite=_SAMESITE)
     return success_response(message="로그아웃되었습니다")
 
 
@@ -288,12 +322,14 @@ async def logout_endpoint(
     ),
 )
 async def start(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ):
-    if not credentials:
+    token = request.cookies.get("access_token") or (credentials.credentials if credentials else None)
+    if not token:
         return StartResponse(authenticated=False, next_route="/login")
 
-    payload = decode_token(credentials.credentials)
+    payload = decode_token(token)
     if not payload or payload.get("type") != "access":
         return StartResponse(authenticated=False, next_route="/login")
 

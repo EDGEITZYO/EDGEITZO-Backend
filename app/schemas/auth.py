@@ -56,20 +56,6 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
-class RefreshTokenRequest(BaseModel):
-    refresh_token: str
-
-
-class RefreshTokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-
-
-class LogoutRequest(BaseModel):
-    refresh_token: Optional[str] = None
-
-
 class StartResponse(BaseModel):
     authenticated: bool
     next_route: str
