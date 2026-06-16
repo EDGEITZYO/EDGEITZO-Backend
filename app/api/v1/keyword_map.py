@@ -205,6 +205,7 @@ async def get_node_papers(
 - `axes.research_target`: 연구대상 노드 배열
 - `axes.parent_domain`: 상위분야 노드 배열
 - `axes.application_domain`: 응용분야 노드 배열
+- 각 노드: `{ko, en, depth, definition, children}`. `definition`은 키워드 설명 (1~2문장)
 """,
 )
 async def generate_map(request: KeywordMapRequest, db: AsyncSession = Depends(get_db)):
@@ -276,15 +277,16 @@ class ExpandNodeResponse(BaseModel):
 **응답 `data.new_children` 구조**
 ```json
 [
-  {"id": "CRISPR-Cas9", "ko": "CRISPR-Cas9", "en": "CRISPR-Cas9", "depth": 3, "edge_type": "핵심기술"},
-  {"id": "유전체 데이터", "ko": "유전체 데이터", "en": "Genomic Data", "depth": 3, "edge_type": "연구대상"},
-  {"id": "분자생물학", "ko": "분자생물학", "en": "Molecular Biology", "depth": 3, "edge_type": "상위분야"},
-  {"id": "유전자 치료", "ko": "유전자 치료", "en": "Gene Therapy", "depth": 3, "edge_type": "응용분야"}
+  {"id": "CRISPR-Cas9", "ko": "CRISPR-Cas9", "en": "CRISPR-Cas9", "depth": 3, "edge_type": "핵심기술", "definition": "..."},
+  {"id": "유전체 데이터", "ko": "유전체 데이터", "en": "Genomic Data", "depth": 3, "edge_type": "연구대상", "definition": "..."},
+  {"id": "분자생물학", "ko": "분자생물학", "en": "Molecular Biology", "depth": 3, "edge_type": "상위분야", "definition": "..."},
+  {"id": "유전자 치료", "ko": "유전자 치료", "en": "Gene Therapy", "depth": 3, "edge_type": "응용분야", "definition": "..."}
 ]
 ```
 - `id`: ko 값과 동일 (ko 없으면 en). `/node/{node_id}/papers` 호출 시 그대로 사용 가능
 - `depth`: 부모 노드 depth + 1
 - `edge_type`: 4축 중 해당 노드가 속하는 축
+- `definition`: 키워드 설명 (1~2문장). 없으면 null
 """,
 )
 async def expand_node(
