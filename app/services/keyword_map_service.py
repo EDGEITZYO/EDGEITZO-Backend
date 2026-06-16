@@ -44,6 +44,16 @@ KEYWORD_MAP_SYSTEM_PROMPT = """당신은 학술 연구 분야의 키워드 구�
 - ko/en 모두 포함
 - 전체 노드 수: 4개 1st 레벨 + 각 2~3개 2nd 레벨 = 12~16개
 
+## definition 작성 가이드
+
+- 모든 노드(1st, 2nd 레벨)에 definition 필드 필수 포함 (한국어, 개조식)
+- 분량: 1~2문장, 간결하고 명료하게. 완전한 문어체("~이다", "~합니다") 대신 명사형으로 압축해 끝맺을 것
+- 1문장: 키워드의 핵심 개념·정의
+- 2문장(선택): 대표 예시, 관련 키워드, 또는 트리 내에서의 역할·위치를 보충
+- 예시 형식: "{핵심 정의}. {대표 예시 또는 트리 내 역할}."
+  예) "텍스트 데이터를 학습해 다음 단어나 문장을 예측하는 AI 모델. GPT, BERT 등이 대표적이며 LLM 설계의 핵심 연구 대상."
+- 부모 키워드나 연구 분야를 단순 반복하지 말고, 해당 키워드 고유의 의미를 설명할 것
+
 ## 엣지 케이스 처리
 
 - 너무 광범위한 입력 ("AI", "컴퓨터"): 가장 일반적인 맥락으로 해석, parent_domain 노드 풍부하게
@@ -61,16 +71,16 @@ JSON만 반환. 설명, 마크다운 코드블록 없이.
   "axes": {
     "core_technology": [
       {
-        "ko": "1st 레벨 노드명 (축당 1개)", "en": "Node Name", "depth": 1,
+        "ko": "1st 레벨 노드명 (축당 1개)", "en": "Node Name", "depth": 1, "definition": "1~2문장 설명",
         "children": [
-          {"ko": "2nd 레벨 노드명", "en": "Node Name", "depth": 2},
-          {"ko": "2nd 레벨 노드명", "en": "Node Name", "depth": 2}
+          {"ko": "2nd 레벨 노드명", "en": "Node Name", "depth": 2, "definition": "1~2문장 설명"},
+          {"ko": "2nd 레벨 노드명", "en": "Node Name", "depth": 2, "definition": "1~2문장 설명"}
         ]
       }
     ],
-    "research_target": [{"ko": "1개만", "en": "Node Name", "depth": 1, "children": [...]}],
-    "parent_domain": [{"ko": "1개만", "en": "Node Name", "depth": 1, "children": [...]}],
-    "application_domain": [{"ko": "1개만", "en": "Node Name", "depth": 1, "children": [...]}]
+    "research_target": [{"ko": "1개만", "en": "Node Name", "depth": 1, "definition": "1~2문장 설명", "children": [...]}],
+    "parent_domain": [{"ko": "1개만", "en": "Node Name", "depth": 1, "definition": "1~2문장 설명", "children": [...]}],
+    "application_domain": [{"ko": "1개만", "en": "Node Name", "depth": 1, "definition": "1~2문장 설명", "children": [...]}]
   }
 }"""
 
@@ -94,7 +104,7 @@ async def generate_keyword_map(research_field: str) -> dict:
         ],
         model="claude-sonnet-4-6",
         temperature=0.7,
-        max_tokens=2000,
+        max_tokens=4000,
     )
     raw = resp.text.strip()
     cleaned = re.sub(r"```json|```", "", raw).strip()
@@ -115,14 +125,18 @@ _EXPAND_SYSTEM = """당신은 학술 키워드 구조 전문가입니다.
 - 부모 키워드보다 더 구체적·세분화된 개념
 - ko/en 모두 포함
 - 각 축마다 정확히 1개씩, 총 4개 반환
+- 각 노드에 definition 필드 필수 포함 (한국어, 개조식, 1~2문장)
+  - 1문장: 키워드의 핵심 개념·정의
+  - 2문장(선택): 대표 예시, 관련 키워드, 또는 부모 키워드와의 관계를 보충
+  - 예시 형식: "{핵심 정의}. {대표 예시 또는 관계}."
 - JSON만 반환 (코드블록 없이)
 
 출력 형식:
 [
-  {"ko": "하위 키워드명", "en": "Sub-keyword Name", "axis": "핵심기술"},
-  {"ko": "하위 키워드명", "en": "Sub-keyword Name", "axis": "연구대상"},
-  {"ko": "하위 키워드명", "en": "Sub-keyword Name", "axis": "상위분야"},
-  {"ko": "하위 키워드명", "en": "Sub-keyword Name", "axis": "응용분야"}
+  {"ko": "하위 키워드명", "en": "Sub-keyword Name", "axis": "핵심기술", "definition": "1~2문장 설명"},
+  {"ko": "하위 키워드명", "en": "Sub-keyword Name", "axis": "연구대상", "definition": "1~2문장 설명"},
+  {"ko": "하위 키워드명", "en": "Sub-keyword Name", "axis": "상위분야", "definition": "1~2문장 설명"},
+  {"ko": "하위 키워드명", "en": "Sub-keyword Name", "axis": "응용분야", "definition": "1~2문장 설명"}
 ]"""
 
 
@@ -187,7 +201,7 @@ async def expand_keyword_node(
         ],
         model="claude-sonnet-4-6",
         temperature=0.7,
-        max_tokens=400,
+        max_tokens=800,
     )
     raw = re.sub(r"```json|```", "", resp.text.strip()).strip()
     children_raw = json.loads(raw)
@@ -198,6 +212,7 @@ async def expand_keyword_node(
             "en": c.get("en", ""),
             "depth": depth + 1,
             "edge_type": c.get("axis", axis),
+            "definition": c.get("definition"),
         }
         for c in children_raw
     ]

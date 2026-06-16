@@ -50,6 +50,15 @@ class Settings(BaseSettings):
 
     frontend_url: str = "http://localhost:3000"
 
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        return [
+            self.frontend_url,
+            "http://localhost:5173",
+            "http://localhost:5173/",
+            "https://edgeitzo-frontend-git-dev-minju3212s-projects.vercel.app",
+        ]
+
     # Celery — Redis DB 1(broker), DB 2(result) 사용. DB 0은 auth 캐시용으로 예약.
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"

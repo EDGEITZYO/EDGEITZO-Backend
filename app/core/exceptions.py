@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette import status
 
+from app.core.settings import settings
 from app.schemas.common import ApiErrorResponse, ErrorDetail
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,16 @@ def unhandled_exception_handler(request: Request, exc: Exception):
         errors=[],
     )
 
-    return JSONResponse(
+    json_response = JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=response.model_dump(),
     )
+
+    # Exception 핸들러는 ServerErrorMiddleware(CORSMiddleware보다 바깥쪽)에서 처리되어
+    # CORSMiddleware를 거치지 않으므로, CORS 헤더를 직접 붙여줘야 브라우저가 응답을 막지 않음
+    origin = request.headers.get("origin")
+    if origin in settings.cors_allowed_origins:
+        json_response.headers["Access-Control-Allow-Origin"] = origin
+        json_response.headers["Access-Control-Allow-Credentials"] = "true"
+
+    return json_response
