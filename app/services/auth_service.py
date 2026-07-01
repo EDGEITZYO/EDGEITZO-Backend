@@ -168,6 +168,7 @@ async def _fetch_kakao_user(code: str) -> dict[str, str]:
     return {
         "provider_id": str(data["id"]),
         "email": account.get("email", ""),
+        "name": account.get("profile", {}).get("nickname", ""),
     }
 
 
@@ -196,6 +197,7 @@ async def _fetch_google_user(code: str) -> dict[str, str]:
     return {
         "provider_id": data["id"],
         "email": data.get("email", ""),
+        "name": data.get("name", ""),
     }
 
 
@@ -219,7 +221,7 @@ async def oauth_callback_service(
         user = await get_user_by_email(db, email)
 
     if not user:
-        user = await create_user(db, email=email, provider=provider, provider_id=provider_id)
+        user = await create_user(db, email=email, provider=provider, provider_id=provider_id, name=info.get("name") or None)
     elif not user.provider_id:
         user = await update_user(db, user, provider=provider, provider_id=provider_id)
 
