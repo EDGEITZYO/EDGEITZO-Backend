@@ -342,3 +342,16 @@ async def start(
         next_route="/main",
         user_id=payload.get("sub"),
     )
+
+
+@router.get(
+    "/me",
+    summary="현재 로그인 유저 이름 조회",
+    description="소셜 로그인 가입 시 이름 표시를 위한 조회 엔드포인트 (토큰 인증 필수)",
+    responses={
+        200: {"description": "조회 성공"},
+        401: {"description": "JWT 토큰 없음 또는 만료"},
+    },
+)
+async def get_me(current_user: User = Depends(get_current_user)):
+    return success_response(data={"name": current_user.name or ""})
