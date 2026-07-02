@@ -1,4 +1,5 @@
 # Python 3.11 이상 필요
+--extra-index-url https://download.pytorch.org/whl/cpu
 fastapi
 uvicorn[standard]
 redis
@@ -8,6 +9,7 @@ pydantic-settings
 httpx
 xmltodict
 chromadb
+torch==2.12.1+cpu
 sentence-transformers
 sqlalchemy[asyncio]
 asyncpg
