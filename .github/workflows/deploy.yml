@@ -19,6 +19,18 @@ jobs:
           script: |
             cd ~/EDGEITZO-Backend
             git pull origin main
-            docker-compose ps -a
-            docker-compose down --remove-orphans
-            docker-compose up -d --build
+
+            # 1. 교체 전 현재 이미지를 backup 태그로 고정 (build가 latest를 덮어쓰기 전에)
+            docker tag edgeitzo-backend-app:latest edgeitzo-backend-app:backup || true
+
+            # 2. 새 이미지 빌드 (실패 시 여기서 중단, 기존 컨테이너는 계속 서비스 중)
+            docker-compose build || { echo "빌드 실패, 배포 중단"; exit 1; }
+
+            # 3. DB 마이그레이션 (컨테이너 교체 전에 스키마 먼저 반영, -T로 비대화형 처리, 실패 시 중단)
+            docker-compose run --rm -T app alembic upgrade head || { echo "마이그레이션 실패, 배포 중단"; exit 1; }
+
+            # 4. 컨테이너 교체 (이미지 바뀐 서비스만 재생성, DB/redis는 안 건드림)
+            docker-compose up -d --remove-orphans
+
+            # 5. 정상 확인 후 안 쓰는 이미지 정리 (backup은 태그 있어서 대상 제외됨)
+            docker image prune -f
