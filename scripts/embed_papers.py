@@ -50,6 +50,7 @@ def _build_text(paper: dict) -> str:
     return f"passage: {' '.join(parts)}"
 
 # ChromaDB 저장용 8개 필드 정제 (None → "", list → ";".join())
+# Pubyear는 where절 $gte/$lte 숫자 비교를 위해 int로 저장 (다른 필드는 문자열 유지)
 def _build_metadata(paper: dict) -> dict:
     def _str(val) -> str:
         if val is None:
@@ -58,16 +59,27 @@ def _build_metadata(paper: dict) -> dict:
             return ";".join(str(v) for v in val)
         return str(val)
 
-    return {
+    def _int_or_none(val):
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return None
+
+    metadata = {
         "CN":          _str(paper.get("CN")),
         "Title":       _str(paper.get("Title")),
         "DBCode":      _str(paper.get("DBCode")),
-        "Pubyear":     _str(paper.get("Pubyear")),
         "Author":      _str(paper.get("Author")),
         "JournalName": _str(paper.get("JournalName")),
         "DOI":         _str(paper.get("DOI")),
         "ISSN":        _str(paper.get("ISSN")),
     }
+
+    pubyear = _int_or_none(paper.get("Pubyear"))
+    if pubyear is not None:
+        metadata["Pubyear"] = pubyear
+
+    return metadata
 
 # 리스트를 size 단위로 잘라 순서대로 yield하는 제너레이터
 def _batches(lst: list, size: int):
