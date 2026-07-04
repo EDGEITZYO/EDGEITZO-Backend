@@ -60,6 +60,7 @@ class SearchState(TypedDict):
     ai_summary: Optional[str]
     summary_failed: bool  # 부분 실패 표시용
     fallback: Optional[str]  # "clarify" | "no_result" | "topic_change" | None
+    is_broad_result: bool  # settings.search_broad_result_threshold 기준 판정 (임계값 미정 동안 항상 False)
     messages: List[Dict[str, Any]]
 
 
@@ -70,3 +71,20 @@ def empty_filters() -> FilterState:
         citation_min=None,
         keywords=[],
     )
+
+
+def _apply_filter_update(filters: FilterState, updates: Dict[str, Any]) -> FilterState:
+    """pub_year_start/paper_type/citation_min 중 None이 아닌 값만 반영한 새 filters 반환."""
+    new_filters = dict(filters)
+    for key in ("pub_year_start", "paper_type", "citation_min"):
+        if updates.get(key) is not None:
+            new_filters[key] = updates[key]
+    return FilterState(**new_filters)
+
+
+def _apply_keyword_addition(filters: FilterState, keyword: str) -> FilterState:
+    """중복 아니면 filters['keywords']에 추가한 새 filters 반환."""
+    existing = list(filters.get("keywords") or [])
+    if keyword not in existing:
+        existing.append(keyword)
+    return FilterState(**{**filters, "keywords": existing})

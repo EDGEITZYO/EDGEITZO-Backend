@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -87,6 +89,9 @@ class Settings(BaseSettings):
     # 좁히기 칩 — 분포 편차 계산
     chip_bin_count: int = 3
     chip_evenness_threshold: float = 0.7
+
+    # 자유입력 광범위 질문 판정 (값 미정 — None인 동안 is_broad_result 항상 False)
+    search_broad_result_threshold: Optional[int] = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

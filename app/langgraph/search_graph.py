@@ -17,6 +17,8 @@ from app.langgraph.search_state import (
     NarrowChip,
     RefinementStep,
     SearchState,
+    _apply_filter_update,
+    _apply_keyword_addition,
     empty_filters,
 )
 from app.services.chroma_search_service import get_chroma_search_service
@@ -161,9 +163,7 @@ JSON만 반환:
 
     if intent == "좁히기":
         filter_vals = params.get("filter") or {}
-        for key in ("pub_year_start", "paper_type", "citation_min"):
-            if filter_vals.get(key) is not None:
-                filters[key] = filter_vals[key]
+        filters = dict(_apply_filter_update(filters, filter_vals))
         history.append(RefinementStep(
             step_type="narrow", applied_filter=filter_vals, added_keyword=None,
             result_count=0,
@@ -171,11 +171,8 @@ JSON만 반환:
         ))
     elif intent == "확장":
         new_keywords = [c["ko"] for c in (params.get("keywords") or [])]
-        existing = list(filters.get("keywords") or [])
         for kw in new_keywords:
-            if kw not in existing:
-                existing.append(kw)
-        filters["keywords"] = existing
+            filters = dict(_apply_keyword_addition(filters, kw))
         history.append(RefinementStep(
             step_type="expand", applied_filter=None,
             added_keyword=", ".join(new_keywords) or None,
@@ -372,6 +369,9 @@ async def node_response_builder(state: SearchState) -> SearchState:
     expand_chips = await _build_expand_chips(filters.get("keywords") or [])
     ai_summary, summary_failed = await _build_summary(result_items, state.get("user_query", ""))
 
+    threshold = settings.search_broad_result_threshold
+    is_broad_result = threshold is not None and total_count >= threshold
+
     return {
         **state,
         "result_items": result_items,
@@ -380,6 +380,7 @@ async def node_response_builder(state: SearchState) -> SearchState:
         "expand_chips": expand_chips,
         "ai_summary": ai_summary,
         "summary_failed": summary_failed,
+        "is_broad_result": is_broad_result,
         "history": history,
     }
 
@@ -401,7 +402,10 @@ def node_router(state: SearchState) -> SearchState:
 # ── 그래프 조립: 조건부 엔트리포인트 ──────────────────────────────────────────
 
 def _entry_router(state: SearchState) -> str:
-    """세션에 filters.keywords/history가 이미 있으면 자유입력 경로, 없으면 최초 검색."""
+    """_skip_classification(칩 클릭) 최우선 확인 → 세션에 filters.keywords/history가
+    이미 있으면 자유입력 경로, 없으면 최초 검색."""
+    if state.get("_skip_classification"):
+        return "response_builder"
     filters = state.get("filters") or {}
     history = state.get("history") or []
     if filters.get("keywords") or history:
@@ -419,7 +423,11 @@ def build_graph():
 
     workflow.set_conditional_entry_point(
         _entry_router,
-        {"intent_extractor": "intent_extractor", "free_input_classifier": "free_input_classifier"},
+        {
+            "intent_extractor": "intent_extractor",
+            "free_input_classifier": "free_input_classifier",
+            "response_builder": "response_builder",
+        },
     )
     workflow.add_edge("intent_extractor", "keyword_extractor")
     workflow.add_edge("keyword_extractor", "response_builder")
