@@ -34,20 +34,19 @@ _RRF_K = 60  # RRF 상수 — 값이 클수록 하위 랭크 페널티 완화
 def _build_where_clause(
     pub_year_start: Optional[int] = None,
     paper_type: Optional[str] = None,
+    citation_min: Optional[int] = None,
 ) -> Optional[dict]:
-    """Chroma where절 조립 — 연도/논문유형 pre-filter.
+    """Chroma where절 조립 — 연도/논문유형/인용수 pre-filter.
 
-    paper_type은 현재 $eq(단일값)만 지원. 다중 유형 배제 조건(예: 학위논문 제외)이
-    필요해지면 $in으로 확장 예정 — 지금은 미구현 (4단계 칩 생성 로직에서 실제
-    필요 여부 확인 후 확장).
-
-    citation_min은 ChromaDB 메타데이터에 아직 없어 이번 단계에서는 제외 (2단계에서 합류 예정).
+    paper_type은 현재 $eq(단일값)만 지원. 다중 유형 배제 조건(예: 학위논문 제외)이 필요해지면 $in으로 확장 예정 — 지금은 미구현 (4단계 칩 생성 로직에서 실제 필요 여부 확인 후 확장).
     """
     conditions = []
     if pub_year_start:
         conditions.append({"Pubyear": {"$gte": pub_year_start}})
     if paper_type:
         conditions.append({"DBCode": {"$eq": paper_type}})
+    if citation_min is not None:
+        conditions.append({"citation_count": {"$gte": citation_min}})
     if not conditions:
         return None
     if len(conditions) == 1:
@@ -182,11 +181,11 @@ class ChromaSearchService:
         pub_year_start: Optional[int] = None,
         scope: Optional[str] = None,
         paper_type: Optional[str] = None,
-        citation_min: Optional[int] = None,  # TODO(2단계): citation_count 필드 적재 후 where절 합류
+        citation_min: Optional[int] = None,
     ) -> list[PaperSearchItem]:
         self._init()
 
-        where_clause = _build_where_clause(pub_year_start, paper_type)
+        where_clause = _build_where_clause(pub_year_start, paper_type, citation_min)
 
         # RRF 융합 품질을 위한 후보 확장
         candidate_n = min(n_results * 4, self._collection.count())
