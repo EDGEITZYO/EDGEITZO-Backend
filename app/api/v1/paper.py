@@ -85,7 +85,7 @@ async def get_paper_detail(
     )
 
     if paper.pubdate:
-        published_at = paper.pubdate
+        published_at = str(paper.pubdate).replace('.', '-')
     elif paper.pubyear:
         published_at = f"{paper.pubyear}-01-01"
     else:
