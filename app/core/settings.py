@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     sse_chunk_size: int = 2
     sse_chunk_delay_seconds: float = 0.04
 
+    # 좁히기 칩 — 분포 편차 계산
+    chip_bin_count: int = 3
+    chip_evenness_threshold: float = 0.7
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

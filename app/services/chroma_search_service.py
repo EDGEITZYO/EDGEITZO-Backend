@@ -244,6 +244,20 @@ class ChromaSearchService:
     async def get_items_by_ids(self, ids: list[str]) -> list[PaperSearchItem]:
         return await asyncio.to_thread(self._sync_get_by_ids, ids)
 
+    def _sync_get_citation_counts(self, ids: list[str]) -> dict[str, Optional[int]]:
+        self._init()
+        if not ids:
+            return {}
+        meta = self._collection.get(ids=ids, include=["metadatas"])
+        return {
+            doc_id: m.get("citation_count")
+            for doc_id, m in zip(meta["ids"], meta["metadatas"])
+        }
+
+    async def get_citation_counts(self, ids: list[str]) -> dict[str, Optional[int]]:
+        """ids에 대한 citation_count만 가볍게 조회 (필드 없으면 None). PostgreSQL 왕복 없음."""
+        return await asyncio.to_thread(self._sync_get_citation_counts, ids)
+
 
 _service: Optional[ChromaSearchService] = None
 
