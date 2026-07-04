@@ -69,12 +69,23 @@ def _safe_str(val: Any, max_len: int) -> str | None:
 
 
 def _fmt_pubdate(val: Any) -> str | None:
-    """'20250601' → '2025.06.01'. 형식 불일치 시 None."""
+    """'20250601' → '2025.06.01' (일자까지). '202506' → '2025.06.01'
+    (일자 정보 없음 — published_at 조립 시 다른 소비처들이 전부
+    str(pubdate).replace('.', '-')로 그대로 ISO8601 취급하므로, 일자를
+    비워두면 '2025-06'처럼 반쪽 날짜가 되어 규격이 깨진다. 이미 이 프로젝트가
+    pubyear-only 폴백에 쓰는 '{year}-01-01' 원칙과 동일하게 01일을 채운다).
+    '2025'(연도만)는 pubyear로 이미 별도 저장되므로 pubdate는 None 유지.
+
+    DIKO(학위논문)는 원본 자체에 Pubdate가 없는 게 정상 — 여기서 None이 나오는 건
+    파싱 문제가 아니라 구조적 결측이다(citation_count 미적재와 동일 성격).
+    """
     if not val:
         return None
     s = str(val).strip()
     if len(s) == 8 and s.isdigit():
         return f"{s[:4]}.{s[4:6]}.{s[6:8]}"
+    if len(s) == 6 and s.isdigit():
+        return f"{s[:4]}.{s[4:6]}.01"
     return None
 
 
