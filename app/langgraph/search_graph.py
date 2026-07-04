@@ -2,66 +2,36 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
-from typing import Any, Dict
+import math
+from collections import Counter
+from datetime import datetime, timezone
+from typing import List, Optional
 
+from kiwipiepy import Kiwi
 from langgraph.graph import END, StateGraph
 
+from app.constants.purpose_keywords import CITATION_KEYWORDS, RECENCY_KEYWORDS
 from app.core.settings import settings
 from app.langgraph.search_state import (
+    ExpandChip,
+    NarrowChip,
+    RefinementStep,
     SearchState,
-    SlotState,
-    build_search_preview,
-    calc_completeness,
-    empty_slots,
+    _apply_filter_update,
+    _apply_keyword_addition,
+    empty_filters,
 )
+from app.services.chroma_search_service import get_chroma_search_service
 from app.services.llm.client import chat
 
 logger = logging.getLogger(__name__)
 
 _MODEL = settings.llm_default_model
+_kiwi = Kiwi()  # 모듈 로드 시 1회 초기화 (싱글턴)
 
-SLOT_QUESTIONS: Dict[str, Dict[str, Any]] = {
-    "research_purpose": {
-        "context": "목적에 따라 추천 결과가 달라져요.",
-        "question": "찾으시는 논문을 어떤 용도로 활용하실 계획인가요?",
-        "options": [
-            {"label": "연구 주제 탐색 (아직 방향을 잡는 단계)", "value": "연구주제탐색"},
-            {"label": "논문 작성 참고 (선행연구로 인용할 논문)", "value": "논문작성참고"},
-            {"label": "랩미팅/발표 준비 (최근 주요 연구 위주)", "value": "랩미팅발표"},
-            {"label": "최신 트렌드 파악 (리뷰/메타분석 위주)", "value": "최신트렌드"},
-        ],
-        "allow_multiple": False,
-    },
-    "paper_scope": {
-        "context": "범위에 따라 검색하는 논문 종류가 달라져요.",
-        "question": "어떤 범위의 논문을 탐색할까요?",
-        "options": [
-            {"label": "KCI (국내 등재 학술지)", "value": "KCI"},
-            {"label": "SCI/SSCI/A&HCI (국제 등재 학술지)", "value": "SCI"},
-            {"label": "둘 다 포함", "value": "ALL"},
-            {"label": "상관없음", "value": "ANY"},
-        ],
-        "allow_multiple": False,
-    },
-    "pub_year_range": {
-        "context": "최신 연구만 필요하시면 범위를 좁혀드릴게요.",
-        "question": "논문의 발행 시기 범위도 설정하시겠어요?",
-        "options": [
-            {"label": f"최근 3년 ({datetime.now().year - 3}~현재)", "value": "3Y"},
-            {"label": f"최근 5년 ({datetime.now().year - 5}~현재)", "value": "5Y"},
-            {"label": f"최근 10년 ({datetime.now().year - 10}~현재)", "value": "10Y"},
-            {"label": "전체", "value": "YEAR_ALL"},
-            {"label": "건너뛰기", "value": "SKIP"},
-        ],
-        "allow_multiple": False,
-    },
-}
+_KEYWORD_SYSTEM = """학술 키워드 추출기. 사용자 입력에서 연구 키워드를 추출해 JSON만 반환. 절대 설명하지 말 것. JSON 외 텍스트 금지."""
 
-_INTENT_SYSTEM = """슬롯 추출기. 사용자 입력과 현재 슬롯 상태를 보고 JSON만 반환.
-절대 설명하지 말 것. JSON 외 텍스트 금지."""
-
-_KEYWORD_SYSTEM = """학술 키워드 추출기. 사용자 입력에서 연구 키워드를 추출해 JSON만 반환.
+_FREE_INPUT_SYSTEM = """검색 정교화 의도 분류기. 사용자 입력을 보고 JSON만 반환.
 절대 설명하지 말 것. JSON 외 텍스트 금지."""
 
 
@@ -76,7 +46,6 @@ async def _llm_json(system: str, user: str, max_tokens: int = 500) -> dict:
             max_tokens=max_tokens,
         )
         text = resp.text.strip()
-        # JSON 블록 안에 감싸진 경우 처리
         if "```" in text:
             text = text.split("```")[1]
             if text.startswith("json"):
@@ -87,113 +56,33 @@ async def _llm_json(system: str, user: str, max_tokens: int = 500) -> dict:
         return {}
 
 
+# ── node_intent_extractor: 최초 검색 전용, 정규식(형태소) 목적분류, LLM 없음 ──────
+
+def _classify_research_purpose(user_query: str) -> str:
+    """kiwipiepy로 명사(NNG/NNP) 추출 후 RECENCY/CITATION 키워드셋과 교집합 비교.
+    동시 매칭 시 recency 우선. 매칭 없으면 중립."""
+    tokens = _kiwi.tokenize(user_query)
+    nouns = {t.form for t in tokens if t.tag in ("NNG", "NNP")}
+    if nouns & set(RECENCY_KEYWORDS):
+        return "recency"
+    if nouns & set(CITATION_KEYWORDS):
+        return "citation"
+    return "neutral"
+
+
 async def node_intent_extractor(state: SearchState) -> SearchState:
-    slots = state.get("slots") or empty_slots()
-    messages = state.get("messages") or []
-    user_message = messages[-1]["content"] if messages else state.get("user_query", "")
+    """최초 검색 전용 — LLM 미사용, keyword_extractor로 무조건 진행."""
+    user_query = state.get("user_query", "")
+    purpose_class = _classify_research_purpose(user_query)
+    return {**state, "research_purpose_class": purpose_class}
 
-    prompt = f"""현재 슬롯 상태:
-{json.dumps(slots, ensure_ascii=False)}
 
-사용자 입력:
-"{user_message}"
-
-위 입력에서 아래 슬롯에 해당하는 값을 추출하라.
-
-슬롯 정의:
-- research_purpose:
-    "연구주제탐색" (방향 탐색 중, 주제를 아직 못 정함)
-  | "논문작성참고" (논문 작성 중, 선행연구·인용 논문 필요)
-  | "랩미팅발표" (랩미팅·발표 준비, 최근 주요 연구 파악)
-  | "최신트렌드" (분야 동향·트렌드 파악, 리뷰·메타분석 위주)
-  | "기타"
-- paper_scope:
-    "KCI" (국내 학술지, KCI 등재, 한국 논문)
-  | "SCI" (국제 학술지, SCI·SSCI·AHCI, 해외 논문)
-  | "ALL" (둘 다 포함, 국내외 모두, 제한 없음)
-  | "ANY" (상관없음, 아무거나)
-- pub_year_range:
-    "3Y" (최근 3년, {datetime.now().year - 3}년 이후)
-  | "5Y" (최근 5년, {datetime.now().year - 5}년 이후)
-  | "10Y" (최근 10년, {datetime.now().year - 10}년 이후)
-  | "YEAR_ALL" (전체, 연도 제한 없음, 오래된 논문도 포함)
-  | "SKIP" (건너뛰기, 모르겠음, 연도 상관없음)
-- advanced_filter: 구체화도와 무관한 추가 조건 문자열 (예: "한국 저자만")
-- topic_change: 주제 변경 의도인지 (true/false)
-- off_topic: 논문 탐색과 무관한 입력인지 (true/false)
-
-## 추출 규칙 (매우 중요)
-
-- 사용자 입력에 슬롯 값이 **명시적으로 언급되거나 명확히 추론 가능한 단어**가 있을 때만 추출한다.
-  예: "최근 3년 논문" → pub_year_range="3Y". "졸업논문 쓰려고" → research_purpose="논문작성참고".
-- 단순히 "논문 찾아줘", "~관련 논문 좀 찾아봐줄 수 있어?" 같은 **주제만 담긴 문장**에는
-  목적·범위·연도에 대한 어떤 단서도 없다. 이런 경우 해당 슬롯은 절대 채우지 말고 반드시 null로 반환한다.
-- "연구주제탐색"과 "ANY"는 사용자가 "딱히 정한 건 없어요", "아무거나 상관없어요"처럼
-  **명시적으로 이렇게 말했을 때만** 쓰는 값이다. 단서가 없다는 이유로 기본값처럼 채우지 않는다.
-- 추측·유추로 슬롯을 채우는 것은 금지. 확신이 없으면 null.
-
-이미 채워진 슬롯에 다른 값이 들어오면 conflict_slot에 기록.
-
-JSON만 반환:
-{{
-  "extracted": {{
-    "research_purpose": null,
-    "paper_scope": null,
-    "pub_year_range": null
-  }},
-  "advanced_filter": null,
-  "topic_change": false,
-  "off_topic": false,
-  "conflict_slot": null,
-  "conflict_new_value": null
-}}"""
-
-    result = await _llm_json(_INTENT_SYSTEM, prompt)
-    extracted = result.get("extracted", {})
-
-    new_slots = dict(slots)
-    code_conflict_slot: str | None = None
-    code_conflict_value: str | None = None
-    for key in ("research_purpose", "paper_scope", "pub_year_range"):
-        val = extracted.get(key)
-        existing = new_slots.get(key)
-        if val and existing and existing != val:
-            # LLM 응답 무관하게 코드 레벨에서 충돌 기록
-            code_conflict_slot = key
-            code_conflict_value = val
-        elif val and not existing:
-            new_slots[key] = val
-
-    adv_filter = result.get("advanced_filter")
-    adv_filters = dict(state.get("advanced_filters") or {})
-    if adv_filter:
-        adv_filters["extra"] = adv_filter
-
-    # 코드 레벨 충돌이 감지됐으면 LLM 결과를 덮어씀
-    if code_conflict_slot:
-        result = {
-            **result,
-            "conflict_slot": code_conflict_slot,
-            "conflict_new_value": code_conflict_value,
-        }
-
-    return {
-        **state,
-        "slots": new_slots,
-        "advanced_filters": adv_filters,
-        "_intent_result": result,
-    }
-
+# ── node_keyword_extractor: 최초 검색 경로 전용, 기존 프롬프트 그대로 ──────────
 
 async def node_keyword_extractor(state: SearchState) -> SearchState:
-    keyword_mode = state.get("keyword_mode")
-    # edit/add 모드는 선택지를 더 많이 제시하기 위해 후보를 최대 5개까지 추출
-    max_count = 5 if keyword_mode in ("edit", "add") else 3
-
+    """최초 검색 경로 전용. 프롬프트(불용어 제거→명사구 추출→학술 키워드 변환→상위 3개)는
+    기존 그대로 — 신규 작성 금지 원칙 반영."""
     user_query = state.get("user_query", "")
-    messages = state.get("messages") or []
-    if messages:
-        user_query = messages[-1]["content"]
 
     prompt = f"""사용자 입력: "{user_query}"
 
@@ -206,295 +95,343 @@ async def node_keyword_extractor(state: SearchState) -> SearchState:
 [3단계] 학술 키워드 변환
 추출된 개념을 학술 논문 검색에 쓰이는 용어로 변환. 한글명 + 영문명 + 한 줄 설명.
 
-[4단계] 신뢰도 기준 상위 {max_count}개 선정
+[4단계] 신뢰도 기준 상위 3개 선정
 기준: 원본 입력과의 의미 일치도, 학술 검색어로서의 구체성.
-{max_count}개 미만이면 찾은 것만 반환.
+3개 미만이면 찾은 것만 반환.
 
 JSON만 반환:
 {{
   "keywords": [
     {{"ko": "키워드1", "en": "Keyword1", "desc": "설명"}},
     {{"ko": "키워드2", "en": "Keyword2", "desc": "설명"}}
-  ],
-  "extraction_count": 2
+  ]
 }}"""
 
     result = await _llm_json(_KEYWORD_SYSTEM, prompt, max_tokens=600)
-    candidates = result.get("keywords", [])[:max_count]
+    candidates = result.get("keywords", [])[:3]
 
-    new_slots = dict(state.get("slots") or empty_slots())
+    filters = dict(state.get("filters") or empty_filters())
+    filters["keywords"] = [c["ko"] for c in candidates]
 
-    if keyword_mode == "add":
-        # add 모드: 이미 선택된 키워드와 중복 제거 — 슬롯은 사용자가 선택 후 확정
-        existing = list(new_slots.get("keywords") or [])
-        candidates = [c for c in candidates if c["ko"] not in existing]
+    return {**state, "filters": filters}
 
-    elif keyword_mode == "edit":
-        # edit 모드: 슬롯 자동 설정 안 함 — 사용자가 후보를 보고 직접 선택
-        pass
 
-    else:
-        # 일반 모드: 슬롯에 자동 설정 후 1회 확인
-        if candidates:
-            new_slots["keywords"] = [c["ko"] for c in candidates]
+# ── node_free_input_classifier: 자유입력 전용, 통합 프롬프트(의도분류+확장키워드) ──
+
+async def node_free_input_classifier(state: SearchState) -> SearchState:
+    """2턴 이상(자유입력) 전용. 의도분류+확장시 키워드추출을 LLM 1회로 통합."""
+    messages = state.get("messages") or []
+    user_message = messages[-1]["content"] if messages else ""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    prompt = f"""오늘은 {today}입니다.
+
+사용자 입력: "{user_message}"
+
+[의도 분류]
+- "좁히기": 기존 결과 범위를 줄이는 조건 요청 (연도/논문유형/인용수 관련)
+- "확장": 기존 주제에 인접한 새 키워드를 추가로 찾아달라는 요청
+- "무관": 논문 탐색과 관계없는 발화
+- "주제변경": 완전히 다른 주제로 바꾸려는 요청
+
+[intent="좁히기"일 때] params.filter에 아래 중 해당하는 필드만 채운다 (언급 안 된 필드는 null):
+- pub_year_start: 정수 연도. "최근 3년"처럼 상대 표현이면 오늘 날짜 기준으로 직접 계산해 절대 연도로 반환
+- paper_type: "JAKO"(국내 학술지) | "DIKO"(학위논문) | "JAFO"(해외 학술지) | "CFKO"(학술대회) 중 하나, 언급 없으면 null
+- citation_min: 정수. "인용 많은"처럼 모호하면 null (숫자 임의 추정 금지)
+
+[intent="확장"일 때] params.keywords에 아래 4단계를 거쳐 키워드를 채운다 (기존 keyword_extractor와 동일 지침):
+[1단계] 불용어 제거 — "찾아줘", "알려줘", "연구한", "논문을", "좀", "관련" 등 제거
+[2단계] 핵심 명사구 추출
+[3단계] 학술 키워드 변환 — 한글명 + 영문명 + 한 줄 설명
+[4단계] 신뢰도 기준 상위 3개 선정
+
+JSON만 반환:
+{{
+  "intent": "좁히기" | "확장" | "무관" | "주제변경",
+  "params": {{
+    "filter": {{"pub_year_start": null, "paper_type": null, "citation_min": null}},
+    "keywords": [{{"ko": "...", "en": "...", "desc": "..."}}]
+  }}
+}}"""
+
+    result = await _llm_json(_FREE_INPUT_SYSTEM, prompt, max_tokens=600)
+    intent = result.get("intent", "무관")
+    params = result.get("params") or {}
+
+    filters = dict(state.get("filters") or empty_filters())
+    history = list(state.get("history") or [])
+
+    if intent == "좁히기":
+        filter_vals = params.get("filter") or {}
+        filters = dict(_apply_filter_update(filters, filter_vals))
+        history.append(RefinementStep(
+            step_type="narrow", applied_filter=filter_vals, added_keyword=None,
+            result_count=0,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        ))
+    elif intent == "확장":
+        new_keywords = [c["ko"] for c in (params.get("keywords") or [])]
+        for kw in new_keywords:
+            filters = dict(_apply_keyword_addition(filters, kw))
+        history.append(RefinementStep(
+            step_type="expand", applied_filter=None,
+            added_keyword=", ".join(new_keywords) or None,
+            result_count=0,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        ))
 
     return {
         **state,
-        "slots": new_slots,
-        "keyword_candidates": candidates,
+        "filters": filters,
+        "history": history,
+        "_free_input_intent": intent,
     }
 
 
-def node_response_builder(state: SearchState) -> SearchState:
-    slots = state.get("slots") or empty_slots()
-    completeness = calc_completeness(slots)
-    intent_result = state.get("_intent_result") or {}
-    candidates = state.get("keyword_candidates") or []
-    keyword_mode = state.get("keyword_mode")
+# ── node_response_builder: 검색 실행 + 요약 + 칩 생성 ─────────────────────────
 
-    def _preview():
-        return build_search_preview(slots, state.get("user_query", ""))
+def _quantile_bin_index(value: float, edges: list[float]) -> int:
+    for i, e in enumerate(edges):
+        if value < e:
+            return i
+    return len(edges)
 
-    # 슬롯 추출 성공 여부 확인 메시지 조각
-    confirm_parts = []
-    for key, label in [("research_purpose", "연구 목적"), ("paper_scope", "논문 범위"), ("pub_year_range", "발행 연도")]:
-        if intent_result.get("extracted", {}).get(key) and slots.get(key):
-            confirm_parts.append(f"{label}은 '{slots[key]}'로 설정됐어요.")
 
-    # off_topic
-    if intent_result.get("off_topic"):
-        msg = "논문 탐색은 언제든 이어서 도와드릴게요. 다시 탐색 조건으로 돌아갈까요?"
-        options = [
-            {"label": "네, 탐색 계속할게요", "value": "continue"},
-            {"label": "처음부터 다시할게요", "value": "restart"},
-        ]
-        return {**state, "ai_message": msg, "options": options, "allow_multiple": False,
-                "search_preview": _preview()}
+def _entropy_score(counts: list[int]) -> tuple[float, int]:
+    """반환: (정규화 엔트로피, 유효 구간 수 k_eff)"""
+    total = sum(counts)
+    nonzero = [c for c in counts if c > 0]
+    k_eff = len(nonzero)
+    if k_eff <= 1 or total == 0:
+        return 0.0, k_eff
+    entropy = -sum((c / total) * math.log2(c / total) for c in nonzero)
+    return entropy / math.log2(k_eff), k_eff
 
-    # conflict
-    if intent_result.get("conflict_slot"):
-        slot = intent_result["conflict_slot"]
-        old_val = slots.get(slot)
-        new_val = intent_result.get("conflict_new_value")
-        msg = f"'{old_val}'에서 '{new_val}'(으)로 바꾸시는 거 맞나요?"
-        options = [
-            {"label": "네, 바꿀게요", "value": f"confirm_change:{slot}:{new_val}"},
-            {"label": "둘 다 포함", "value": f"merge:{slot}"},
-            {"label": "기존 유지", "value": "keep"},
-        ]
-        return {**state, "ai_message": msg, "options": options, "allow_multiple": False,
-                "search_preview": _preview()}
 
-    # topic_change
-    if intent_result.get("topic_change"):
-        msg = "혹시 새로운 주제로 바꾸시는 건가요?"
-        options = [
-            {"label": "현재 주제로 계속 탐색", "value": "keep_topic"},
-            {"label": "새 주제로 처음부터 검색", "value": "new_topic"},
-        ]
-        return {**state, "ai_message": msg, "options": options, "allow_multiple": False,
-                "search_preview": _preview()}
+def _numeric_quantile_bins(values: list[float], bin_count: int) -> tuple[list[int], list[float]]:
+    """등빈도 분위수로 bin_count개 구간 배정. 값이 몰려있으면 중복 경계 제거로 구간 수 자동 축소."""
+    sorted_vals = sorted(values)
+    n = len(sorted_vals)
+    edges = []
+    for i in range(1, bin_count):
+        idx = min(int(n * i / bin_count), n - 1)
+        edges.append(sorted_vals[idx])
+    edges = sorted(set(edges))
+    bin_indices = [_quantile_bin_index(v, edges) for v in values]
+    return bin_indices, edges
 
-    # ── 키워드 edit 모드: 후보 최대 5개를 개별 선택지로 제시 ─────────────
-    if keyword_mode == "edit":
-        if not candidates:
-            msg = "수정할 키워드 후보가 없어요. 검색어를 다시 입력해주세요."
-            return {**state, "ai_message": msg, "options": [], "allow_multiple": False,
-                    "search_preview": _preview()}
-        existing_label = " / ".join(f"#{k}" for k in (slots.get("keywords") or []))
-        prefix = f"현재: {existing_label}\n" if existing_label else ""
-        opts = [{"label": f"#{c['ko']} — {c['desc']}", "value": f"select_kw:{c['ko']}"}
-                for c in candidates]
-        msg = f"{prefix}사용할 키워드를 선택해주세요. (복수 선택 가능)"
-        return {**state, "ai_message": msg, "options": opts, "allow_multiple": True,
-                "search_preview": _preview()}
 
-    # ── 키워드 add 모드: 추가 후보 제시 ─────────────────────────────────
-    if keyword_mode == "add":
-        existing_label = " / ".join(f"#{k}" for k in (slots.get("keywords") or []))
-        if not candidates:
-            msg = (f"현재 키워드: {existing_label}\n"
-                   "추가할 키워드 후보를 찾지 못했어요. 직접 입력해주세요.")
-            return {**state, "ai_message": msg, "options": [], "allow_multiple": False,
-                    "search_preview": _preview()}
-        opts = [{"label": f"#{c['ko']} — {c['desc']}", "value": f"select_kw:{c['ko']}"}
-                for c in candidates]
-        msg = f"현재 키워드: {existing_label}\n추가할 키워드를 선택하세요. (복수 선택 가능)"
-        return {**state, "ai_message": msg, "options": opts, "allow_multiple": True,
-                "search_preview": _preview()}
+def _build_narrow_chips(
+    result_items: list[dict],
+    citation_lookup: dict[str, Optional[int]],
+) -> List[NarrowChip]:
+    bin_count = settings.chip_bin_count
+    threshold = settings.chip_evenness_threshold
+    candidates: list[tuple[float, NarrowChip]] = []
 
-    # keywords 슬롯은 "묶음 30%": 1개 이상이면 개수 무관하게 슬롯 충족(30%).
-    # cnt 2/1 분기의 "추가 권유"는 점수 게이트가 아니라 검색 품질 향상 제안 —
-    # 슬롯은 이미 충족됐고, 더 넣으면 정확도가 올라간다는 안내
-    # cnt >= 3 / 2 / 1 / 0(모호) 네 경우로 분기하며, 각 return 시
-    # keyword_candidates=[] 로 초기화해 다음 턴 재표시를 방지
-    if candidates is not None and not slots.get("keywords"):
-        cnt = len(candidates)
-        kw_labels = " / ".join(f"#{c['ko']}" for c in candidates)
+    years = [it["year"] for it in result_items if it.get("year") is not None]
+    if years:
+        bin_indices, edges = _numeric_quantile_bins(years, bin_count)
+        counts = [0] * (len(edges) + 1)
+        for b in bin_indices:
+            counts[b] += 1
+        score, k_eff = _entropy_score(counts)
+        if k_eff > 1 and score >= threshold:
+            top_bin_lower = edges[-1] if edges else min(years)
+            candidates.append((score, NarrowChip(
+                chip_id="narrow_year", chip_type="year", label="",
+                value={"pub_year_start": int(top_bin_lower)},
+            )))
 
-        if cnt >= 3:
-            msg = f"입력하신 내용에서 핵심 키워드 {cnt}개를 뽑아봤어요.\n{kw_labels}\n이걸로 검색하면 될까요?"
-            opts = [
-                {"label": "이대로 검색", "value": "confirm_keywords"},
-                {"label": "수정하기", "value": "edit_keywords"},
-                {"label": "더 추가하기", "value": "add_keywords"},
-            ]
-            return {**state, "ai_message": msg, "options": opts, "allow_multiple": True,
-                    "keyword_candidates": [], "search_preview": _preview()}
+    citations = [v for v in citation_lookup.values() if v is not None]
+    if citations:
+        bin_indices, edges = _numeric_quantile_bins(citations, bin_count)
+        counts = [0] * (len(edges) + 1)
+        for b in bin_indices:
+            counts[b] += 1
+        score, k_eff = _entropy_score(counts)
+        if k_eff > 1 and score >= threshold:
+            top_bin_lower = edges[-1] if edges else min(citations)
+            candidates.append((score, NarrowChip(
+                chip_id="narrow_citation", chip_type="citation", label="",
+                value={"citation_min": int(top_bin_lower)},
+            )))
 
-        elif cnt == 2:
-            msg = f"핵심 키워드 {cnt}개를 찾았어요. {kw_labels}\n1개 더 추가하시거나, 이대로 진행할까요?"
-            opts = [
-                {"label": "이대로 진행", "value": "confirm_keywords"},
-                {"label": "키워드 추가", "value": "add_keywords"},
-            ]
-            return {**state, "ai_message": msg, "options": opts, "allow_multiple": False,
-                    "keyword_candidates": [], "search_preview": _preview()}
+    types = [it["db_code"] for it in result_items if it.get("db_code")]
+    if types:
+        type_counts = Counter(types)
+        score, k_eff = _entropy_score(list(type_counts.values()))
+        if k_eff > 1 and score >= threshold:
+            most_common_type = type_counts.most_common(1)[0][0]
+            candidates.append((score, NarrowChip(
+                chip_id="narrow_paper_type", chip_type="paper_type", label="",
+                value={"paper_type": most_common_type},
+            )))
 
-        elif cnt == 1:
-            msg = (f"키워드 1개(#{candidates[0]['ko']})를 찾았어요.\n"
-                   "추가 키워드를 넣으면 검색 정확도가 올라가요.")
-            opts = [
-                {"label": "이대로 진행", "value": "confirm_keywords"},
-                {"label": "키워드 추가", "value": "add_keywords"},
-            ]
-            return {**state, "ai_message": msg, "options": opts, "allow_multiple": False,
-                    "keyword_candidates": [], "search_preview": _preview()}
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return [chip for _, chip in candidates[:3]]
 
-        else:  # cnt == 0: 모호 입력
-            msg = ("핵심 키워드를 찾지 못했어요. 연구 주제를 조금 더 구체적으로 알려주시겠어요?\n"
-                   "예: 특정 분야, 기술, 현상 등을 포함해서 입력해보세요.")
-            opts = [
-                {"label": "분야를 좁혀볼게요", "value": "narrow_field"},
-                {"label": "처음부터 다시 입력", "value": "restart"},
-            ]
-            return {**state, "ai_message": msg, "options": opts, "allow_multiple": False,
-                    "keyword_candidates": [], "search_preview": _preview()}
 
-    # completeness >= 100
-    if completeness >= 100:
-        msg = "충분한 조건이 모였어요! 논문 탐색을 시작할게요."
-        options = [{"label": "논문 탐색 시작하기", "value": "start_search"}]
-        return {**state, "ai_message": msg, "options": options, "allow_multiple": False,
-                "search_ready": True,
-                "search_preview": build_search_preview(slots, state.get("user_query", ""))}
+async def _build_expand_chips(keywords: list[str]) -> List[ExpandChip]:
+    """매칭 키워드별 find_related_keywords 호출 후 합산(sum) 병합, 상위 3개."""
+    from app.core.neo4j_client import get_neo4j_driver
+    from app.repositories.graph_repository import GraphRepository
 
-    # 다음 빈 슬롯 질문
-    priority = ["research_purpose", "paper_scope", "keywords", "pub_year_range"]
-    next_slot = next((s for s in priority if not slots.get(s)), None)
+    if not keywords:
+        return []
 
-    if next_slot and next_slot in SLOT_QUESTIONS:
-        q = SLOT_QUESTIONS[next_slot]
-        prefix = " ".join(confirm_parts) + " " if confirm_parts else ""
-        msg = f"{prefix}{q['context']}\n{q['question']}"
-        return {**state, "ai_message": msg.strip(), "options": q["options"],
-                "allow_multiple": q["allow_multiple"],
-                "search_preview": build_search_preview(slots, state.get("user_query", ""))}
+    driver = get_neo4j_driver()
+    merged: dict[str, dict] = {}
+    try:
+        repo = GraphRepository(driver)
+        for kw in keywords:
+            center = repo.find_keyword(kw)
+            if not center:
+                continue
+            related = repo.find_related_keywords(center["key"], limit=10, min_paper_count=1)
+            for item in related:
+                node = item["node"]
+                key = node["key"]
+                count = item["edge"].get("paper_count", 0)
+                if key in merged:
+                    merged[key]["count"] += count
+                else:
+                    merged[key] = {"name": node.get("name", key), "count": count}
+    finally:
+        driver.close()
 
-    # 90%+: 조건이 충분해 강조 권유 (프론트는 search_stage="emphasized"로 버튼 강조)
-    if completeness >= 90:
-        msg = "조건이 충분해요! 지금 바로 탐색해볼까요?"
-        options = [{"label": "논문 탐색 시작하기", "value": "start_search"}]
-        return {**state, "ai_message": msg, "options": options, "allow_multiple": False,
-                "search_ready": True,
-                "search_preview": _preview()}
+    top3 = sorted(merged.values(), key=lambda x: x["count"], reverse=True)[:3]
+    return [
+        ExpandChip(
+            chip_id=f"expand_{i}",
+            chip_type="expand",
+            keyword=item["name"],
+            label="",
+            co_occurrence_count=item["count"],
+        )
+        for i, item in enumerate(top3)
+    ]
 
-    # 80–89%: 탐색 가능 (프론트는 search_stage="ready"로 버튼 활성)
-    if completeness >= 80:
-        msg = "탐색 준비가 됐어요! 논문을 찾아볼까요?"
-        options = [{"label": "논문 탐색 시작하기", "value": "start_search"}]
-        return {**state, "ai_message": msg, "options": options, "allow_multiple": False,
-                "search_ready": True,
-                "search_preview": _preview()}
 
-    # 80% 미만 + 강제 시작 요청
-    if completeness < 80:
-        msg = ("아직 필수 정보가 부족해서 검색 정확도가 낮을 수 있어요. 그래도 진행하시겠어요?\n"
-               "('연구 목적'만 알려주시면 정확도가 훨씬 올라가요)")
-        options = [
-            {"label": "연구 목적 알려주기", "value": "tell_purpose"},
-            {"label": "지금 상태로 탐색", "value": "force_start"},
-        ]
-        return {**state, "ai_message": msg, "options": options, "allow_multiple": False,
-                "search_preview": build_search_preview(slots, state.get("user_query", ""))}
+async def _build_summary(result_items: list[dict], user_query: str) -> tuple[Optional[str], bool]:
+    if not result_items:
+        return None, False
+    try:
+        titles = "\n".join(f"- {it['title']}" for it in result_items[:10])
+        resp = await chat(
+            messages=[{"role": "user", "content":
+                f"다음은 '{user_query}' 검색 결과 논문 제목 목록이다:\n{titles}\n\n"
+                f"이 결과들을 2~3문장으로 요약하라."}],
+            model=_MODEL, temperature=0.3, max_tokens=300,
+        )
+        return resp.text.strip(), False
+    except Exception as e:
+        logger.warning("검색 결과 요약 실패: %s", e)
+        return None, True
 
-    # 기본: 다음 빈 슬롯
-    msg = "탐색 조건을 조금 더 구체화해볼게요."
-    return {**state, "ai_message": msg, "options": [], "allow_multiple": False,
-            "search_preview": build_search_preview(slots, state.get("user_query", ""))}
 
+async def node_response_builder(state: SearchState) -> SearchState:
+    intent = state.get("_free_input_intent")
+
+    if intent == "무관":
+        return {**state, "ai_summary": None, "fallback": "off_topic"}
+    if intent == "주제변경":
+        return {**state, "ai_summary": None, "fallback": "topic_change"}
+
+    filters = state.get("filters") or empty_filters()
+    svc = get_chroma_search_service()
+    items = await svc.search(
+        query=" ".join(filters.get("keywords") or []),
+        n_results=20,
+        pub_year_start=filters.get("pub_year_start"),
+        paper_type=filters.get("paper_type"),
+        citation_min=filters.get("citation_min"),
+    )
+    result_items = [it.model_dump() for it in items]
+
+    # citation_count는 칩 계산 전용 lookup으로만 사용 — result_items에는 병합 안 함
+    # (6단계 enrich_items_with_credibility 완성 전까지 반쪽 배지 노출 방지)
+    ids = [it["paper_id"] for it in result_items]
+    citation_lookup = await svc.get_citation_counts(ids)
+
+    total_count = len(result_items)
+
+    history = list(state.get("history") or [])
+    if history:
+        history[-1] = {**history[-1], "result_count": total_count}
+    else:
+        history.append(RefinementStep(
+            step_type="search", applied_filter=None, added_keyword=None,
+            result_count=total_count, timestamp=datetime.now(timezone.utc).isoformat(),
+        ))
+
+    narrow_chips = _build_narrow_chips(result_items, citation_lookup) if total_count > 4 else []
+    expand_chips = await _build_expand_chips(filters.get("keywords") or [])
+    ai_summary, summary_failed = await _build_summary(result_items, state.get("user_query", ""))
+
+    threshold = settings.search_broad_result_threshold
+    is_broad_result = threshold is not None and total_count >= threshold
+
+    return {
+        **state,
+        "result_items": result_items,
+        "total_count": total_count,
+        "narrow_chips": narrow_chips,
+        "expand_chips": expand_chips,
+        "ai_summary": ai_summary,
+        "summary_failed": summary_failed,
+        "is_broad_result": is_broad_result,
+        "history": history,
+    }
+
+
+# ── node_router: 폴백 판정만 ──────────────────────────────────────────────
 
 def node_router(state: SearchState) -> SearchState:
-    slots = state.get("slots") or empty_slots()
-    force_start = any(
-        m.get("content") in ("force_start", "start_search")
-        for m in (state.get("messages") or [])
-        if m.get("role") == "user"
-    )
+    filters = state.get("filters") or empty_filters()
+    total_count = state.get("total_count", 0)
 
-    completeness = calc_completeness(slots)
-    search_ready = state.get("search_ready", False) or force_start or completeness >= 80
+    if not filters.get("keywords"):
+        return {**state, "fallback": "clarify"}
+    if total_count == 0:
+        return {**state, "fallback": "no_result"}
 
-    if search_ready and slots.get("keywords"):
-        final_params = _build_search_params(state)
-        return {**state, "search_ready": True, "final_search_params": final_params}
-
-    return {**state, "search_ready": False}
+    return {**state, "fallback": state.get("fallback")}
 
 
-def _build_search_params(state: SearchState):
-    from app.langgraph.search_state import SearchParams
-    slots = state.get("slots") or empty_slots()
-    _y = datetime.now().year
-    year_map = {"3Y": _y - 3, "5Y": _y - 5, "10Y": _y - 10}
-    pub_year_start = year_map.get(slots.get("pub_year_range") or "", None)
-    return SearchParams(
-        keywords=slots.get("keywords") or [],
-        scope=slots.get("paper_scope") or "ANY",
-        pub_year_start=pub_year_start,
-        research_purpose=slots.get("research_purpose") or "연구주제탐색",
-        trust_level=None,
-        advanced_filters=state.get("advanced_filters") or {},
-    )
+# ── 그래프 조립: 조건부 엔트리포인트 ──────────────────────────────────────────
 
-
-def _should_extract_keywords(state: SearchState) -> str:
-    slots = state.get("slots") or empty_slots()
-    intent = state.get("_intent_result") or {}
-    keyword_mode = state.get("keyword_mode")
-
-    if intent.get("off_topic") or intent.get("topic_change"):
+def _entry_router(state: SearchState) -> str:
+    """_skip_classification(칩 클릭) 최우선 확인 → 세션에 filters.keywords/history가
+    이미 있으면 자유입력 경로, 없으면 최초 검색."""
+    if state.get("_skip_classification"):
         return "response_builder"
-
-    # add 모드: 추가 후보를 얻기 위해 항상 재추출
-    if keyword_mode == "add":
-        return "keyword_extractor"
-
-    # edit 모드: 기존 후보가 없을 때만 재추출, 있으면 그대로 제시
-    if keyword_mode == "edit":
-        return "keyword_extractor" if not state.get("keyword_candidates") else "response_builder"
-
-    # 일반 모드: 키워드 슬롯이 비어있을 때만 추출
-    if not slots.get("keywords"):
-        return "keyword_extractor"
-
-    return "response_builder"
+    filters = state.get("filters") or {}
+    history = state.get("history") or []
+    if filters.get("keywords") or history:
+        return "free_input_classifier"
+    return "intent_extractor"
 
 
 def build_graph():
     workflow = StateGraph(SearchState)
     workflow.add_node("intent_extractor", node_intent_extractor)
     workflow.add_node("keyword_extractor", node_keyword_extractor)
+    workflow.add_node("free_input_classifier", node_free_input_classifier)
     workflow.add_node("response_builder", node_response_builder)
     workflow.add_node("router", node_router)
 
-    workflow.set_entry_point("intent_extractor")
-    workflow.add_conditional_edges(
-        "intent_extractor",
-        _should_extract_keywords,
-        {"keyword_extractor": "keyword_extractor", "response_builder": "response_builder"},
+    workflow.set_conditional_entry_point(
+        _entry_router,
+        {
+            "intent_extractor": "intent_extractor",
+            "free_input_classifier": "free_input_classifier",
+            "response_builder": "response_builder",
+        },
     )
+    workflow.add_edge("intent_extractor", "keyword_extractor")
     workflow.add_edge("keyword_extractor", "response_builder")
+    workflow.add_edge("free_input_classifier", "response_builder")
     workflow.add_edge("response_builder", "router")
     workflow.add_edge("router", END)
 
