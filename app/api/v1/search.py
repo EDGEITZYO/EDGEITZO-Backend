@@ -67,22 +67,76 @@ async def search_papers(
 class ChatRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="세션 ID. 첫 턴은 null, 이후 응답의 session_id 재사용")
     message: str = Field("", description="자유입력 텍스트. 첫 턴은 검색 주제, 이후 턴은 좁히기/확장/자유질문. 칩 클릭 시 빈 문자열 가능")
-    chip_id: Optional[str] = Field(None, description="칩 클릭 시 응답의 narrow_chips/expand_chips[].chip_id 전달")
-    chip_type: Optional[str] = Field(None, description="'year'|'paper_type'|'citation'|'expand' — chip_id와 함께 전달")
+    chip_id: Optional[str] = Field(
+        None,
+        description="칩 클릭 시 전달. 직전 응답의 narrow_chips[].chip_id 또는 expand_chips[].chip_id 값을 그대로 넣으면 됨 (직접 조립 금지 — 응답에서 받은 값만 유효).",
+    )
+    chip_type: Optional[Literal["year", "paper_type", "citation", "expand"]] = Field(
+        None,
+        description=(
+            "chip_id와 함께 전달. "
+            "'year'=발행연도 이하로 좁히기, "
+            "'paper_type'=논문유형(JAKO/DIKO/JAFO/CFKO)으로 좁히기, "
+            "'citation'=인용수 이상으로 좁히기, "
+            "'expand'=연관 키워드 추가로 확장. "
+            "year/paper_type/citation은 narrow_chips 응답에서, expand는 expand_chips 응답에서 옴."
+        ),
+    )
+
+
+class FilterStateSchema(BaseModel):
+    pub_year_start: Optional[int] = Field(None, description="이 연도 이상만 포함 (예: 2021 → 2021년 이후). 미설정 시 null")
+    paper_type: Optional[str] = Field(None, description="DBCode 원본값. 'JAKO'(국내 학술지) | 'DIKO'(학위논문) | 'JAFO'(해외 학술지) | 'CFKO'(학술대회). 미설정 시 null")
+    citation_min: Optional[int] = Field(None, description="이 인용수 이상만 포함. 미설정 시 null")
+    keywords: List[str] = Field(default_factory=list, description="누적된 검색/확장 키워드 목록")
+
+
+class RefinementStepSchema(BaseModel):
+    step_type: Literal["search", "narrow", "expand"] = Field(description="'search'=최초 검색 | 'narrow'=좁히기(연도/논문유형/인용수) | 'expand'=확장(키워드 추가)")
+    applied_filter: Optional[Dict[str, Any]] = Field(None, description="narrow 스텝에서 적용된 필터 값 (예: {'pub_year_start': 2021}). search/expand 스텝은 null")
+    added_keyword: Optional[str] = Field(None, description="expand 스텝에서 추가된 키워드. search/narrow 스텝은 null")
+    result_count: int = Field(description="이 스텝 적용 직후의 total_count")
+    timestamp: str = Field(description="ISO8601 타임스탬프")
+
+
+class NarrowChipSchema(BaseModel):
+    chip_id: str = Field(description="칩 클릭 요청 시 ChatRequest.chip_id에 그대로 전달할 값")
+    chip_type: Literal["year", "paper_type", "citation"] = Field(description="'year'=연도 좁히기 | 'paper_type'=논문유형 좁히기 | 'citation'=인용수 좁히기")
+    label: str = Field(description="사용자 노출용 칩 라벨 문구")
+    value: Dict[str, Any] = Field(description="클릭 시 filters에 반영될 값 (예: {'pub_year_start': 2021})")
+
+
+class ExpandChipSchema(BaseModel):
+    chip_id: str = Field(description="칩 클릭 요청 시 ChatRequest.chip_id에 그대로 전달할 값")
+    chip_type: Literal["expand"] = Field(description="항상 'expand' 고정")
+    keyword: str = Field(description="클릭 시 filters.keywords에 추가될 연관 키워드")
+    label: str = Field(description="사용자 노출용 칩 라벨 문구")
+    co_occurrence_count: int = Field(description="현재 검색 결과 상위 논문들과의 키워드 동시출현 빈도 (Neo4j 기준)")
 
 
 class ChatResponse(BaseModel):
     session_id: str = Field(description="세션 ID. 다음 턴 요청 시 재사용")
-    filters: Dict[str, Any] = Field(description="현재 누적된 필터. pub_year_start/paper_type/citation_min/keywords")
-    sort_order: str = Field(description="정렬 기준. 'relevance' | 'year_desc' | 'citation_desc' 등")
-    history: List[Dict[str, Any]] = Field(description="탐색 경로 (step_type/applied_filter/added_keyword/result_count/timestamp)")
-    result_items: List[Dict[str, Any]] = Field(description="검색 결과 논문 목록")
+    filters: FilterStateSchema = Field(description="현재까지 누적된 검색 조건")
+    sort_order: str = Field(
+        description="정렬 기준. 현재 대화형 API(이 엔드포인트)에서는 항상 'relevance' 고정이며 바꾸는 경로가 없음 — 필드는 응답 스키마상 존재하나 실질적으로 상수.",
+    )
+    history: List[RefinementStepSchema] = Field(description="지금까지의 탐색 경로 (검색→좁히기→확장 등 순서대로)")
+    result_items: List[Dict[str, Any]] = Field(description="검색 결과 논문 목록 (PaperSearchItem 목록)")
     total_count: int = Field(description="전체 결과 수")
-    narrow_chips: List[Dict[str, Any]] = Field(description="좁히기 칩. 결과 4편 이하면 빈 배열")
-    expand_chips: List[Dict[str, Any]] = Field(description="확장 칩")
-    ai_summary: Optional[str] = Field(None, description="LLM 결과 요약. 요약 생성 실패 시 null")
-    summary_failed: bool = Field(description="true면 검색은 성공했으나 요약 생성만 실패 (전체 실패 아님)")
-    fallback: Optional[str] = Field(None, description="'clarify'|'no_result'|'topic_change'|'off_topic'|null")
+    narrow_chips: List[NarrowChipSchema] = Field(description="좁히기 칩 (연도/논문유형/인용수 중 최대 3개). total_count가 4 이하면 항상 빈 배열")
+    expand_chips: List[ExpandChipSchema] = Field(description="확장 칩 (연관 키워드 최대 3개). 매칭되는 연관 키워드가 없으면 빈 배열")
+    ai_summary: Optional[str] = Field(None, description="LLM이 생성한 검색 결과 요약. 요약 생성 실패 시 null (이 경우 summary_failed=true)")
+    summary_failed: bool = Field(description="true면 검색 자체는 성공했고 result_items도 정상 채워져 있으나, 요약(ai_summary) 생성만 실패한 상태 (전체 실패 아님)")
+    fallback: Optional[str] = Field(
+        None,
+        description=(
+            "정상 검색 결과가 아닌 특수 상황 표시. null이면 정상 결과. "
+            "'clarify'=검색 키워드가 비어있어 명확화 필요, "
+            "'no_result'=조건에 맞는 결과가 0건, "
+            "'off_topic'=검색과 무관한 질문으로 판단되어 검색 재실행 안 함(직전 result_items/filters 그대로 유지), "
+            "'topic_change'=완전히 다른 주제로 전환하려는 의도로 판단됨."
+        ),
+    )
     is_broad_result: bool = Field(description="광범위 질문 판정. 임계값(search_broad_result_threshold) 미설정 시 항상 false")
 
 
