@@ -21,8 +21,13 @@ from app.langgraph.search_state import (
     _apply_keyword_addition,
     empty_filters,
 )
+from app.core.database import AsyncSessionLocal
+from app.repositories.paper_repository import get_paper_cards_batch
+from app.schemas.search import CredibilityInfo
 from app.services.chroma_search_service import get_chroma_search_service
+from app.services.credibility_service import enrich_items_with_credibility
 from app.services.llm.client import chat
+from app.services.search_service import _apply_scoring, _sort_items
 
 logger = logging.getLogger(__name__)
 
@@ -347,13 +352,27 @@ async def node_response_builder(state: SearchState) -> SearchState:
         paper_type=filters.get("paper_type"),
         citation_min=filters.get("citation_min"),
     )
-    result_items = [it.model_dump() for it in items]
 
-    # citation_count는 칩 계산 전용 lookup으로만 사용 — result_items에는 병합 안 함
-    # (6단계 enrich_items_with_credibility 완성 전까지 반쪽 배지 노출 방지)
-    ids = [it["paper_id"] for it in result_items]
+    # 칩 엔트로피 계산 전용 lookup — Chroma 메타데이터 578건 기준 그대로 유지
+    # (PostgreSQL citation_count는 미매칭 69건도 0으로 채워져 있어 엔트로피 계산에 부적합 — 별도 이슈로만 기록)
+    ids = [it.paper_id for it in items]
     citation_lookup = await svc.get_citation_counts(ids)
 
+    # 카드에 노출할 배지는 PostgreSQL enrichment로 별도 채움 (citation_count/kci/sci/SJR 등)
+    async with AsyncSessionLocal() as db:
+        try:
+            db_extra = await get_paper_cards_batch(db, ids)
+            for it in items:
+                extra = db_extra.get(it.paper_id) or {}
+                it.credibility = CredibilityInfo(badge="unknown", citation_count=extra.get("citation_count"))
+            items = await enrich_items_with_credibility(items, db)
+        except Exception as e:
+            logger.warning("검색 결과 신뢰도 enrichment 실패, 배지 없이 진행: %s", e)
+
+    items = _apply_scoring(items, research_purpose_class=state.get("research_purpose_class") or "neutral")
+    items = _sort_items(items)
+
+    result_items = [it.model_dump() for it in items]
     total_count = len(result_items)
 
     history = list(state.get("history") or [])

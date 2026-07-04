@@ -75,9 +75,10 @@ async def expand_query_for_embedding(query: str) -> str:
         return query
 
 
-def _apply_scoring(items: list[PaperSearchItem], research_purpose: str = "") -> list[PaperSearchItem]:
-    purpose_prefers_recent = research_purpose in ("랩미팅발표", "최신트렌드")
-    purpose_prefers_citation = research_purpose in ("논문작성참고", "연구주제탐색")
+def _apply_scoring(items: list[PaperSearchItem], research_purpose_class: str = "neutral") -> list[PaperSearchItem]:
+    """research_purpose_class: node_intent_extractor의 정규식 분류 결과. 'recency'|'citation'|'neutral'"""
+    purpose_prefers_recent = research_purpose_class == "recency"
+    purpose_prefers_citation = research_purpose_class == "citation"
 
     for item in items:
         base = item.score  # ChromaDB RRF 점수 기반
@@ -194,7 +195,7 @@ async def execute_search(
         except Exception:
             pass
 
-    items = _apply_scoring(items, research_purpose=research_purpose)
+    items = _apply_scoring(items, research_purpose_class=research_purpose)
     items = _sort_items(items)
 
     # DB에서 degree 조회 → paper_type 세분화
