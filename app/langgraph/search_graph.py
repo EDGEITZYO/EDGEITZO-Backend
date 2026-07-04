@@ -5,7 +5,7 @@ import logging
 import math
 from collections import Counter
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from kiwipiepy import Kiwi
 from langgraph.graph import END, StateGraph
@@ -277,6 +277,28 @@ def _build_narrow_chips(
     return [chip for _, chip in candidates[:3]]
 
 
+def _top_result_keywords(
+    result_items: list[dict],
+    top_n_papers: int = 10,
+    top_k_keywords: int = 5,
+) -> list[str]:
+    """확장 칩 조회용 키워드 소스 — filters.keywords(사용자 검색어, LLM 파라프레이즈)가 아니라
+    실제 검색 결과 상위 논문들의 원본 keywords 필드에서 뽑는다. Neo4j Keyword 노드는
+    논문 메타데이터 원본 키워드로 구성돼 있어 사용자 검색어와 어휘가 달라 매칭이 거의 안 됨
+    (실측 확인됨) — 결과 논문의 실제 키워드를 쓰면 매칭된다.
+    빈도 동점 시 더 상위(관련도 높은) 논문에 먼저 등장한 키워드 우선 (결정론적)."""
+    subset = result_items[:top_n_papers]
+    freq: Dict[str, int] = {}
+    first_index: Dict[str, int] = {}
+    for idx, item in enumerate(subset):
+        for kw in item.get("keywords") or []:
+            freq[kw] = freq.get(kw, 0) + 1
+            if kw not in first_index:
+                first_index[kw] = idx
+    ranked = sorted(freq.keys(), key=lambda kw: (-freq[kw], first_index[kw]))
+    return ranked[:top_k_keywords]
+
+
 async def _build_expand_chips(keywords: list[str]) -> List[ExpandChip]:
     """매칭 키워드별 find_related_keywords 호출 후 합산(sum) 병합, 상위 3개."""
     from app.core.neo4j_client import get_neo4j_driver
@@ -385,7 +407,7 @@ async def node_response_builder(state: SearchState) -> SearchState:
         ))
 
     narrow_chips = _build_narrow_chips(result_items, citation_lookup) if total_count > 4 else []
-    expand_chips = await _build_expand_chips(filters.get("keywords") or [])
+    expand_chips = await _build_expand_chips(_top_result_keywords(result_items))
     ai_summary, summary_failed = await _build_summary(result_items, state.get("user_query", ""))
 
     threshold = settings.search_broad_result_threshold
