@@ -25,6 +25,7 @@ python-multipart
 aiosmtplib
 email-validator
 konlpy
+kiwipiepy
 rank-bm25
 eval_type_backport
 langgraph

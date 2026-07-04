@@ -5,87 +5,86 @@ from typing import Any, Dict, List, Optional
 from typing_extensions import TypedDict
 
 
-class SlotState(TypedDict):
-    initial_query: bool
-    research_purpose: Optional[str]
-    paper_scope: Optional[str]
-    keywords: Optional[List[str]]
-    pub_year_range: Optional[str]
-
-
 class KeywordCandidate(TypedDict):
+    """node_keyword_extractor 내부 처리 전용 — SearchState(세션 영속)에는 저장 안 함."""
     ko: str
     en: str
     desc: str
 
 
-class SearchPreview(TypedDict):
-    topic: Optional[str]
-    purpose: Optional[str]
-    scope: Optional[str]
-    pub_year: Optional[str]
-    keywords: List[str]
-    completeness_pct: int
-
-
-class SearchParams(TypedDict):
-    keywords: List[str]
-    scope: str
+class FilterState(TypedDict):
+    """연도/논문유형/인용수 3축 고정 + 누적 키워드"""
     pub_year_start: Optional[int]
-    research_purpose: str
-    trust_level: Optional[str]
-    advanced_filters: Dict[str, Any]
+    paper_type: Optional[str]  # DBCode 원본값 (JAKO/DIKO/JAFO/CFKO)
+    citation_min: Optional[int]
+    keywords: List[str]
+
+
+class RefinementStep(TypedDict):
+    """탐색 경로(history) 한 스텝"""
+    step_type: str  # "search" | "narrow" | "expand"
+    applied_filter: Optional[Dict[str, Any]]
+    added_keyword: Optional[str]
+    result_count: int
+    timestamp: str
+
+
+class NarrowChip(TypedDict):
+    chip_id: str
+    chip_type: str  # "year" | "paper_type" | "citation" — 3축 고정
+    label: str  # 문구 템플릿 미정, 자리만
+    value: Dict[str, Any]
+
+
+class ExpandChip(TypedDict):
+    chip_id: str
+    chip_type: str  # "expand"
+    keyword: str
+    label: str
+    co_occurrence_count: int
 
 
 class SearchState(TypedDict):
     user_query: str
     session_id: str
     user_id: str
-    slots: SlotState
-    keyword_candidates: Optional[List[KeywordCandidate]]
-    advanced_filters: Dict[str, Any]
+    sort_order: str  # "relevance" | "year_desc" | "citation_desc" 등, 유지되는 값
+    research_purpose_class: Optional[str]  # "recency" | "citation" | "neutral" (정규식 분류 결과)
+    filters: FilterState  # 누적 조건
+    history: List[RefinementStep]  # 탐색 경로
+    result_items: List[Dict[str, Any]]  # 최신 검색 결과 캐시
+    total_count: int
+    type_distribution: Dict[str, int]
+    narrow_chips: List[NarrowChip]
+    expand_chips: List[ExpandChip]
+    ai_summary: Optional[str]
+    summary_failed: bool  # 부분 실패 표시용
+    fallback: Optional[str]  # "clarify" | "no_result" | "topic_change" | None
+    is_broad_result: bool  # settings.search_broad_result_threshold 기준 판정 (임계값 미정 동안 항상 False)
     messages: List[Dict[str, Any]]
-    search_preview: SearchPreview
-    final_search_params: Optional[SearchParams]
-    search_ready: bool
-    keyword_mode: Optional[str]  # "edit" | "add" | None — GAP-8 키워드 수정/추가 모드
-    # 응답 빌더 출력 (그래프 내부 전달용)
-    ai_message: str
-    options: List[Dict[str, Any]]
-    allow_multiple: bool
 
 
-def calc_completeness(slots: SlotState) -> int:
-    pct = 0
-    if slots.get("initial_query"):
-        pct += 10
-    if slots.get("research_purpose"):
-        pct += 25
-    if slots.get("paper_scope"):
-        pct += 25
-    if slots.get("keywords"):
-        pct += 30
-    if slots.get("pub_year_range") and slots["pub_year_range"] != "SKIP":
-        pct += 10
-    return pct
-
-
-def empty_slots() -> SlotState:
-    return SlotState(
-        initial_query=False,
-        research_purpose=None,
-        paper_scope=None,
-        keywords=None,
-        pub_year_range=None,
+def empty_filters() -> FilterState:
+    return FilterState(
+        pub_year_start=None,
+        paper_type=None,
+        citation_min=None,
+        keywords=[],
     )
 
 
-def build_search_preview(slots: SlotState, user_query: str) -> SearchPreview:
-    return SearchPreview(
-        topic=user_query or None,
-        purpose=slots.get("research_purpose"),
-        scope=slots.get("paper_scope"),
-        pub_year=slots.get("pub_year_range"),
-        keywords=slots.get("keywords") or [],
-        completeness_pct=calc_completeness(slots),
-    )
+def _apply_filter_update(filters: FilterState, updates: Dict[str, Any]) -> FilterState:
+    """pub_year_start/paper_type/citation_min 중 None이 아닌 값만 반영한 새 filters 반환."""
+    new_filters = dict(filters)
+    for key in ("pub_year_start", "paper_type", "citation_min"):
+        if updates.get(key) is not None:
+            new_filters[key] = updates[key]
+    return FilterState(**new_filters)
+
+
+def _apply_keyword_addition(filters: FilterState, keyword: str) -> FilterState:
+    """중복 아니면 filters['keywords']에 추가한 새 filters 반환."""
+    existing = list(filters.get("keywords") or [])
+    if keyword not in existing:
+        existing.append(keyword)
+    return FilterState(**{**filters, "keywords": existing})
