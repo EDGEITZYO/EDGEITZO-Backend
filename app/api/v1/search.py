@@ -97,6 +97,7 @@ def _load_state(session_id: str) -> Optional[SearchState]:
 def _save_state(session_id: str, state: SearchState) -> None:
     persisted = dict(state)
     persisted.pop("_skip_classification", None)  # 휘발성 신호 — 절대 영속화하지 않음
+    persisted.pop("_free_input_intent", None)  # 휘발성 신호 — 절대 영속화하지 않음
     r = get_redis(_REDIS_DB)
     r.set(f"search_state:{session_id}", json.dumps(persisted, ensure_ascii=False), ex=_STATE_TTL)
 

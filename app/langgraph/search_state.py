@@ -62,6 +62,10 @@ class SearchState(TypedDict):
     fallback: Optional[str]  # "clarify" | "no_result" | "topic_change" | None
     is_broad_result: bool  # settings.search_broad_result_threshold 기준 판정 (임계값 미정 동안 항상 False)
     messages: List[Dict[str, Any]]
+    _free_input_intent: Optional[str]  # free_input_classifier→response_builder 전달용 임시 신호.
+    # LangGraph는 노드 간 엣지 전달 시 StateGraph(SearchState)에 선언된 채널만 유지하므로
+    # (수신 함수의 파라미터 타입힌트와 무관), 스키마에 없으면 값이 전달 도중 사라진다.
+    # 세션에 영속화하면 안 되므로 _save_state()에서 저장 직전 반드시 pop한다.
 
 
 def empty_filters() -> FilterState:
