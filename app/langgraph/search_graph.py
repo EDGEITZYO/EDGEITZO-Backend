@@ -401,9 +401,14 @@ def node_router(state: SearchState) -> SearchState:
 
 # ── 그래프 조립: 조건부 엔트리포인트 ──────────────────────────────────────────
 
-def _entry_router(state: SearchState) -> str:
+def _entry_router(state: dict) -> str:
     """_skip_classification(칩 클릭) 최우선 확인 → 세션에 filters.keywords/history가
-    이미 있으면 자유입력 경로, 없으면 최초 검색."""
+    이미 있으면 자유입력 경로, 없으면 최초 검색.
+
+    파라미터 타입을 SearchState가 아닌 dict로 둔다 — LangGraph가 조건부 엔트리포인트
+    라우팅 함수의 파라미터 타입 힌트를 보고 그 스키마에 선언된 키만 남기고 나머지를
+    걸러낸 뒤 호출하는 것으로 확인됨. state: SearchState로 선언하면 SearchState에
+    없는 임시 키(_skip_classification)가 라우팅 함수 도달 전에 사라진다."""
     if state.get("_skip_classification"):
         return "response_builder"
     filters = state.get("filters") or {}
