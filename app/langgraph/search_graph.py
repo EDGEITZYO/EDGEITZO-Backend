@@ -27,12 +27,19 @@ from app.schemas.search import CredibilityInfo
 from app.services.chroma_search_service import get_chroma_search_service
 from app.services.credibility_service import enrich_items_with_credibility
 from app.services.llm.client import chat
-from app.services.search_service import _apply_scoring, _sort_items
+from app.services.search_service import _sort_items
 
 logger = logging.getLogger(__name__)
 
 _MODEL = settings.llm_default_model
 _kiwi = Kiwi()  # 모듈 로드 시 1회 초기화 (싱글턴)
+
+_PAPER_TYPE_LABEL = {
+    "JAKO": "국내 학술지",
+    "DIKO": "학위논문",
+    "JAFO": "해외 학술지",
+    "CFKO": "학술대회",
+}
 
 _KEYWORD_SYSTEM = """학술 키워드 추출기. 사용자 입력에서 연구 키워드를 추출해 JSON만 반환. 절대 설명하지 말 것. JSON 외 텍스트 금지."""
 
@@ -243,9 +250,10 @@ def _build_narrow_chips(
         score, k_eff = _entropy_score(counts)
         if k_eff > 1 and score >= threshold:
             top_bin_lower = edges[-1] if edges else min(years)
+            year_value = int(top_bin_lower)
             candidates.append((score, NarrowChip(
-                chip_id="narrow_year", chip_type="year", label="",
-                value={"pub_year_start": int(top_bin_lower)},
+                chip_id="narrow_year", chip_type="year", label=f"{year_value}년 이후 논문만 보기",
+                value={"pub_year_start": year_value},
             )))
 
     citations = [v for v in citation_lookup.values() if v is not None]
@@ -257,9 +265,10 @@ def _build_narrow_chips(
         score, k_eff = _entropy_score(counts)
         if k_eff > 1 and score >= threshold:
             top_bin_lower = edges[-1] if edges else min(citations)
+            citation_value = int(top_bin_lower)
             candidates.append((score, NarrowChip(
-                chip_id="narrow_citation", chip_type="citation", label="",
-                value={"citation_min": int(top_bin_lower)},
+                chip_id="narrow_citation", chip_type="citation", label=f"인용수 {citation_value}회 이상만 보기",
+                value={"citation_min": citation_value},
             )))
 
     types = [it["db_code"] for it in result_items if it.get("db_code")]
@@ -268,8 +277,9 @@ def _build_narrow_chips(
         score, k_eff = _entropy_score(list(type_counts.values()))
         if k_eff > 1 and score >= threshold:
             most_common_type = type_counts.most_common(1)[0][0]
+            type_label = _PAPER_TYPE_LABEL.get(most_common_type, most_common_type)
             candidates.append((score, NarrowChip(
-                chip_id="narrow_paper_type", chip_type="paper_type", label="",
+                chip_id="narrow_paper_type", chip_type="paper_type", label=f"{type_label} 논문만 보기",
                 value={"paper_type": most_common_type},
             )))
 
@@ -333,7 +343,7 @@ async def _build_expand_chips(keywords: list[str]) -> List[ExpandChip]:
             chip_id=f"expand_{i}",
             chip_type="expand",
             keyword=item["name"],
-            label="",
+            label=f"'{item['name']}' 키워드로 확장하기",
             co_occurrence_count=item["count"],
         )
         for i, item in enumerate(top3)
@@ -391,7 +401,7 @@ async def node_response_builder(state: SearchState) -> SearchState:
         except Exception as e:
             logger.warning("검색 결과 신뢰도 enrichment 실패, 배지 없이 진행: %s", e)
 
-    items = _apply_scoring(items, research_purpose_class=state.get("research_purpose_class") or "neutral")
+    # items = _apply_scoring(items, research_purpose_class=state.get("research_purpose_class") or "neutral")  # 관련도순 정렬 원칙에 따라 비활성화
     items = _sort_items(items)
 
     result_items = [it.model_dump() for it in items]

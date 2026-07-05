@@ -17,24 +17,25 @@ from app.services.credibility_service import enrich_items_with_credibility, pape
 
 logger = logging.getLogger(__name__)
 
-# 연도 점수 가중치
-_SCORE_RECENT_HIGH = 0.25      # 최신 선호 목적, 2024년 이상
-_SCORE_RECENT_MID = 0.15       # 최신 선호 목적, 2022~2023년
-_SCORE_RECENT_LOW = 0.05       # 최신 선호 목적, 2020~2021년
-_SCORE_YEAR_HIGH = 0.2         # 일반 목적, 2024년 이상
-_SCORE_YEAR_MID = 0.1          # 일반 목적, 2021~2023년
-
-# 인용수 점수 가중치
-_SCORE_CITATION_MAX = 0.2      # 인용수 보너스 상한
-_SCORE_CITATION_DIVISOR = 1000 # 인용수 보너스 분모
-
-# 신뢰도 배지 가중치
-_SCORE_BADGE_HIGH = 0.2
-_SCORE_BADGE_MEDIUM = 0.1
-
-# 키워드 수 가중치
-_SCORE_KEYWORD_PER = 0.03
-_SCORE_KEYWORD_MAX = 0.15
+# ── 아래 가중치 상수는 관련도순 정렬에서 제외하기로 하고 비활성화 (백업용으로 주석 보존) ──
+# # 연도 점수 가중치
+# _SCORE_RECENT_HIGH = 0.25      # 최신 선호 목적, 2024년 이상
+# _SCORE_RECENT_MID = 0.15       # 최신 선호 목적, 2022~2023년
+# _SCORE_RECENT_LOW = 0.05       # 최신 선호 목적, 2020~2021년
+# _SCORE_YEAR_HIGH = 0.2         # 일반 목적, 2024년 이상
+# _SCORE_YEAR_MID = 0.1          # 일반 목적, 2021~2023년
+#
+# # 인용수 점수 가중치
+# _SCORE_CITATION_MAX = 0.2      # 인용수 보너스 상한
+# _SCORE_CITATION_DIVISOR = 1000 # 인용수 보너스 분모
+#
+# # 신뢰도 배지 가중치
+# _SCORE_BADGE_HIGH = 0.2
+# _SCORE_BADGE_MEDIUM = 0.1
+#
+# # 키워드 수 가중치
+# _SCORE_KEYWORD_PER = 0.03
+# _SCORE_KEYWORD_MAX = 0.15
 
 
 def _resolve_scope_badge(credibility) -> str | None:
@@ -75,41 +76,42 @@ async def expand_query_for_embedding(query: str) -> str:
         return query
 
 
-def _apply_scoring(items: list[PaperSearchItem], research_purpose_class: str = "neutral") -> list[PaperSearchItem]:
-    """research_purpose_class: node_intent_extractor의 정규식 분류 결과. 'recency'|'citation'|'neutral'"""
-    purpose_prefers_recent = research_purpose_class == "recency"
-    purpose_prefers_citation = research_purpose_class == "citation"
-
-    for item in items:
-        base = item.score  # ChromaDB RRF 점수 기반
-
-        if item.year:
-            if purpose_prefers_recent:
-                if item.year >= 2024:
-                    base += _SCORE_RECENT_HIGH
-                elif item.year >= 2022:
-                    base += _SCORE_RECENT_MID
-                elif item.year >= 2020:
-                    base += _SCORE_RECENT_LOW
-            else:
-                if item.year >= 2024:
-                    base += _SCORE_YEAR_HIGH
-                elif item.year >= 2021:
-                    base += _SCORE_YEAR_MID
-
-        if purpose_prefers_citation and item.credibility.citation_count:
-            citation_bonus = min(item.credibility.citation_count / _SCORE_CITATION_DIVISOR, _SCORE_CITATION_MAX)
-            base += citation_bonus
-
-        if item.credibility.badge == "high":
-            base += _SCORE_BADGE_HIGH
-        elif item.credibility.badge == "medium":
-            base += _SCORE_BADGE_MEDIUM
-
-        base += min(len(item.keywords) * _SCORE_KEYWORD_PER, _SCORE_KEYWORD_MAX)
-        item.score = round(base, 4)
-
-    return items
+# ── 관련도순 정렬 원칙 위반(최신/인용수/배지/키워드로 순위 왜곡)으로 비활성화. 백업용으로 주석 보존 ──
+# def _apply_scoring(items: list[PaperSearchItem], research_purpose_class: str = "neutral") -> list[PaperSearchItem]:
+#     """research_purpose_class: node_intent_extractor의 정규식 분류 결과. 'recency'|'citation'|'neutral'"""
+#     purpose_prefers_recent = research_purpose_class == "recency"
+#     purpose_prefers_citation = research_purpose_class == "citation"
+#
+#     for item in items:
+#         base = item.score  # ChromaDB RRF 점수 기반
+#
+#         if item.year:
+#             if purpose_prefers_recent:
+#                 if item.year >= 2024:
+#                     base += _SCORE_RECENT_HIGH
+#                 elif item.year >= 2022:
+#                     base += _SCORE_RECENT_MID
+#                 elif item.year >= 2020:
+#                     base += _SCORE_RECENT_LOW
+#             else:
+#                 if item.year >= 2024:
+#                     base += _SCORE_YEAR_HIGH
+#                 elif item.year >= 2021:
+#                     base += _SCORE_YEAR_MID
+#
+#         if purpose_prefers_citation and item.credibility.citation_count:
+#             citation_bonus = min(item.credibility.citation_count / _SCORE_CITATION_DIVISOR, _SCORE_CITATION_MAX)
+#             base += citation_bonus
+#
+#         if item.credibility.badge == "high":
+#             base += _SCORE_BADGE_HIGH
+#         elif item.credibility.badge == "medium":
+#             base += _SCORE_BADGE_MEDIUM
+#
+#         base += min(len(item.keywords) * _SCORE_KEYWORD_PER, _SCORE_KEYWORD_MAX)
+#         item.score = round(base, 4)
+#
+#     return items
 
 
 def _sort_items(items: list[PaperSearchItem]) -> list[PaperSearchItem]:
@@ -149,11 +151,11 @@ async def search_papers_service(
         except Exception:
             pass
 
-    items = _apply_scoring(items)
+    # items = _apply_scoring(items)  # 관련도순 정렬 원칙에 따라 비활성화 — 순수 RRF 점수(item.score)로만 정렬
     items = _sort_items(items)
 
     return SearchPapersResponse(
-        search_id="search_combined_001",
+        search_id=str(uuid.uuid4()),
         items=items[: request.size],
     )
 
@@ -195,7 +197,7 @@ async def execute_search(
         except Exception:
             pass
 
-    items = _apply_scoring(items, research_purpose_class=research_purpose)
+    # items = _apply_scoring(items, research_purpose_class=research_purpose)  # 관련도순 정렬 원칙에 따라 비활성화
     items = _sort_items(items)
 
     # DB에서 degree 조회 → paper_type 세분화

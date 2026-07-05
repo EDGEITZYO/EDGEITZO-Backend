@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ from app.langgraph.search_state import (
     empty_filters,
 )
 from app.schemas.common import ApiErrorResponse, ApiResponse
-from app.schemas.search import SearchPapersRequest, SearchPapersResponse
+from app.schemas.search import PaperSearchItem, SearchPapersRequest, SearchPapersResponse
 from app.services.search_service import search_papers_service
 
 router = APIRouter()
@@ -103,7 +104,15 @@ class NarrowChipSchema(BaseModel):
     chip_id: str = Field(description="칩 클릭 요청 시 ChatRequest.chip_id에 그대로 전달할 값")
     chip_type: Literal["year", "paper_type", "citation"] = Field(description="'year'=연도 좁히기 | 'paper_type'=논문유형 좁히기 | 'citation'=인용수 좁히기")
     label: str = Field(description="사용자 노출용 칩 라벨 문구")
-    value: Dict[str, Any] = Field(description="클릭 시 filters에 반영될 값 (예: {'pub_year_start': 2021})")
+    value: Dict[str, Any] = Field(
+        description=(
+            "클릭 시 filters에 반영될 값. "
+            "chip_type='year' → {'pub_year_start': int}, "
+            "chip_type='citation' → {'citation_min': int}, "
+            "chip_type='paper_type' → {'paper_type': str} (DBCode 원본값. "
+            "'JAKO'=국내 학술지 | 'DIKO'=학위논문 | 'JAFO'=해외 학술지 | 'CFKO'=학술대회)"
+        )
+    )
 
 
 class ExpandChipSchema(BaseModel):
@@ -121,7 +130,7 @@ class ChatResponse(BaseModel):
         description="정렬 기준. 현재 대화형 API(이 엔드포인트)에서는 항상 'relevance' 고정이며 바꾸는 경로가 없음 — 필드는 응답 스키마상 존재하나 실질적으로 상수.",
     )
     history: List[RefinementStepSchema] = Field(description="지금까지의 탐색 경로 (검색→좁히기→확장 등 순서대로)")
-    result_items: List[Dict[str, Any]] = Field(description="검색 결과 논문 목록 (PaperSearchItem 목록)")
+    result_items: List[PaperSearchItem] = Field(description="검색 결과 논문 목록. score(관련도) 내림차순 정렬")
     total_count: int = Field(description="전체 결과 수")
     narrow_chips: List[NarrowChipSchema] = Field(description="좁히기 칩 (연도/논문유형/인용수 중 최대 3개). total_count가 4 이하면 항상 빈 배열")
     expand_chips: List[ExpandChipSchema] = Field(description="확장 칩 (연관 키워드 최대 3개). 매칭되는 연관 키워드가 없으면 빈 배열")
@@ -198,19 +207,21 @@ def _apply_chip_action(state: SearchState, chip_id: str, chip_type: str) -> Sear
     history = list(state.get("history") or [])
     step_type = _CHIP_TYPE_TO_STEP_TYPE.get(chip_type, "narrow")
 
+    timestamp = datetime.now(timezone.utc).isoformat()
+
     if chip_type == "expand":
         keyword = chip.get("keyword")
         filters = dict(_apply_keyword_addition(filters, keyword))
         history.append({
             "step_type": step_type, "applied_filter": None, "added_keyword": keyword,
-            "result_count": 0, "timestamp": "",
+            "result_count": 0, "timestamp": timestamp,
         })
     else:
         value = chip.get("value") or {}
         filters = dict(_apply_filter_update(filters, value))
         history.append({
             "step_type": step_type, "applied_filter": value, "added_keyword": None,
-            "result_count": 0, "timestamp": "",
+            "result_count": 0, "timestamp": timestamp,
         })
 
     return {**state, "filters": filters, "history": history, "_skip_classification": True}

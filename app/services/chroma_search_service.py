@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Optional
 
 import chromadb
+import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 
@@ -79,7 +81,24 @@ def _tokenize(text: str) -> list[str]:
     return text.lower().split()
 
 
-def _to_search_item(paper: dict, score: float) -> PaperSearchItem:
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _split_sentences(text: str) -> list[str]:
+    return [s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip()]
+
+
+def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+    denom = np.linalg.norm(a) * np.linalg.norm(b)
+    return float(np.dot(a, b) / denom) if denom else 0.0
+
+
+def _to_search_item(
+    paper: dict,
+    score: float,
+    similarity_score: float = 0.0,
+    matched_snippet: Optional[str] = None,
+) -> PaperSearchItem:
     authors_raw = paper.get("Author") or []
     if isinstance(authors_raw, str):
         authors_raw = [a.strip() for a in authors_raw.split(";") if a.strip()]
@@ -111,6 +130,8 @@ def _to_search_item(paper: dict, score: float) -> PaperSearchItem:
         source="local_chroma",
         credibility=CredibilityInfo(badge="unknown"),
         score=round(score, 4),
+        similarity_score=round(similarity_score, 4),
+        matched_snippet=matched_snippet,
     )
 
 
@@ -155,9 +176,11 @@ class ChromaSearchService:
         self._collection = chroma_client.get_collection(_COLLECTION_NAME)
         self._ready = True
 
-    def _semantic_search(self, query: str, n: int, where: Optional[dict] = None) -> list[tuple[str, float]]:
+    def _encode_query(self, query: str) -> list[float]:
         # BGE-m3-ko 권장: 쿼리 임베딩 시 "query: " prefix
-        query_vec = self._model.encode(f"query: {query}", convert_to_numpy=True).tolist()
+        return self._model.encode(f"query: {query}", convert_to_numpy=True).tolist()
+
+    def _semantic_search(self, query_vec: list[float], n: int, where: Optional[dict] = None) -> list[tuple[str, float]]:
         results = self._collection.query(
             query_embeddings=[query_vec],
             n_results=min(n, self._collection.count()),
@@ -167,6 +190,28 @@ class ChromaSearchService:
             (doc_id, max(0.0, 1.0 - dist))
             for doc_id, dist in zip(results["ids"][0], results["distances"][0])
         ]
+
+    def _similarity_for_id(self, doc_id: str, query_vec: list[float]) -> float:
+        """semantic_results 후보에 없던 문서(BM25 단독 매칭)용 — 저장된 임베딩을 가져와 직접 코사인 계산."""
+        data = self._collection.get(ids=[doc_id], include=["embeddings"])
+        embeddings = data.get("embeddings")
+        if embeddings is None or len(embeddings) == 0:
+            return 0.0
+        return max(0.0, _cosine(np.array(embeddings[0]), np.array(query_vec)))
+
+    def _find_best_snippet(self, abstract: Optional[str], query_vec: list[float]) -> Optional[str]:
+        """초록을 문장 단위로 쪼개 검색어 임베딩과 가장 유사한 문장 1개를 반환 — 추천 근거 표시용."""
+        if not abstract:
+            return None
+        sentences = _split_sentences(abstract)
+        if not sentences:
+            return None
+        if len(sentences) == 1:
+            return sentences[0]
+        sentence_vecs = self._model.encode(sentences, convert_to_numpy=True)
+        query_arr = np.array(query_vec)
+        sims = [_cosine(vec, query_arr) for vec in sentence_vecs]
+        return sentences[int(np.argmax(sims))]
 
     def _bm25_search(self, query: str, n: int) -> list[tuple[str, float]]:
         tokens = _tokenize(query)
@@ -187,10 +232,13 @@ class ChromaSearchService:
 
         where_clause = _build_where_clause(pub_year_start, paper_type, citation_min)
 
+        query_vec = self._encode_query(query)
+
         # RRF 융합 품질을 위한 후보 확장
         candidate_n = min(n_results * 4, self._collection.count())
-        semantic_results = self._semantic_search(query, candidate_n, where=where_clause)
+        semantic_results = self._semantic_search(query_vec, candidate_n, where=where_clause)
         bm25_results = self._bm25_search(query, candidate_n)
+        semantic_score_map = dict(semantic_results)
 
         if where_clause:
             # BM25는 ChromaDB where절 대상이 아니므로, 동일 필터 기준 ID 집합을 별도 조회해 교집합만 남김
@@ -215,7 +263,14 @@ class ChromaSearchService:
                     continue
                 elif scope == "SCI" and db_code not in ("SCIE", "SSCI", "AHCI"):
                     continue
-            items.append(_to_search_item(paper, rrf_score))
+
+            similarity_score = semantic_score_map.get(doc_id)
+            if similarity_score is None:
+                similarity_score = self._similarity_for_id(doc_id, query_vec)
+            abstract = paper.get("Abstract_original") or paper.get("Abstract")
+            matched_snippet = self._find_best_snippet(abstract, query_vec)
+
+            items.append(_to_search_item(paper, rrf_score, similarity_score=similarity_score, matched_snippet=matched_snippet))
         return items
 
     async def search(

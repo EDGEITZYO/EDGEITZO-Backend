@@ -90,8 +90,8 @@ class Settings(BaseSettings):
     chip_bin_count: int = 3
     chip_evenness_threshold: float = 0.7
 
-    # 자유입력 광범위 질문 판정 (값 미정 — None인 동안 is_broad_result 항상 False)
-    search_broad_result_threshold: Optional[int] = None
+    # 자유입력 광범위 질문 판정 — 결과 10건 이상이면 광범위한 검색으로 판정
+    search_broad_result_threshold: Optional[int] = 10
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

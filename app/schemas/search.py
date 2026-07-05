@@ -22,45 +22,56 @@ class SearchPapersRequest(BaseModel):
 
 
 class PaperAuthor(BaseModel):
-    name: str
-    affiliation: Optional[str] = None
+    name: str = Field(description="저자명")
+    affiliation: Optional[str] = Field(None, description="소속 기관. 정보 없으면 null")
 
 
 class CredibilityInfo(BaseModel):
-    badge: Literal["high", "medium", "low", "unknown"] = "unknown"
-    citation_count: Optional[int] = None
-    citation_badge: Optional[str] = None
-    impact_factor: Optional[float] = None
-    impact_factor_badge: Optional[str] = None
-    kci_registered: Optional[bool] = None
-    kci_badge: Optional[str] = None
-    sci_indexed: Optional[bool] = None
-    sci_badge: Optional[str] = None
-    sjr_quartile: Optional[str] = None
-    sjr_score: Optional[float] = None
-    h_index: Optional[int] = None
-    summary: Optional[str] = None
+    badge: Literal["high", "medium", "low", "unknown"] = Field(
+        "unknown", description="종합 신뢰도 등급. 인용수·SJR 사분위·SCI/KCI 등재 여부를 종합 판정"
+    )
+    citation_count: Optional[int] = Field(None, description="인용 횟수. 정보 없으면 null")
+    citation_badge: Optional[str] = Field(None, description="인용수 배지 문구. 예: 'Citations 42'. citation_count 없으면 null")
+    impact_factor: Optional[float] = Field(None, description="저널 Impact Factor. 정보 없으면 null")
+    impact_factor_badge: Optional[str] = Field(None, description="IF 배지 문구. 예: 'IF 3.5'. impact_factor 없으면 null")
+    kci_registered: Optional[bool] = Field(None, description="KCI 등재 여부. 알 수 없으면 null")
+    kci_badge: Optional[str] = Field(None, description="KCI 등재 배지 문구. 'KCI O' | 'KCI X' | 'KCI unknown'")
+    sci_indexed: Optional[bool] = Field(None, description="SCI 계열(SCIE/SSCI/AHCI) 등재 여부. 알 수 없으면 null")
+    sci_badge: Optional[str] = Field(None, description="SCI 계열 등재 배지 문구. 'SCI O' | 'SCI X' | 'SCI unknown'")
+    sjr_quartile: Optional[str] = Field(None, description="SJR(Scimago Journal Rank) 사분위. 'Q1'~'Q4'. 정보 없으면 null")
+    sjr_score: Optional[float] = Field(None, description="SJR 점수. 정보 없으면 null")
+    h_index: Optional[int] = Field(None, description="저널 h-index. 정보 없으면 null")
+    summary: Optional[str] = Field(None, description="신뢰도 판정 근거 요약(영문, 내부 로직 설명용). 예: 'citation_count=42 / SJR Q1'")
 
 
 class PaperSearchItem(BaseModel):
-    paper_id: str
-    title: str
-    authors: list[PaperAuthor] = Field(default_factory=list)
-    year: Optional[int] = None
-    abstract: Optional[str] = None
-    keywords: list[str] = Field(default_factory=list)
-    journal_name: Optional[str] = None
-    issn: Optional[str] = None
-    doi: Optional[str] = None
-    db_code: Optional[str] = None
-    source: str
-    credibility: CredibilityInfo
-    score: float
+    paper_id: str = Field(description="논문 고유 ID (ScienceON CN)")
+    title: str = Field(description="논문 제목")
+    authors: list[PaperAuthor] = Field(default_factory=list, description="저자 목록")
+    year: Optional[int] = Field(None, description="발행 연도. 정보 없으면 null")
+    abstract: Optional[str] = Field(None, description="초록 원문. 정보 없으면 null")
+    keywords: list[str] = Field(default_factory=list, description="논문 원본 키워드 목록")
+    journal_name: Optional[str] = Field(None, description="학술지명. 학위논문 등은 null")
+    issn: Optional[str] = Field(None, description="ISSN. 정보 없으면 null")
+    doi: Optional[str] = Field(None, description="DOI. 정보 없으면 null")
+    db_code: Optional[str] = Field(
+        None, description="ScienceON DB 코드. 'JAKO'=국내 학술지 | 'DIKO'=학위논문 | 'JAFO'=해외 학술지 | 'CFKO'=학술대회"
+    )
+    source: str = Field(description="검색 소스. 현재 항상 'local_chroma'")
+    credibility: CredibilityInfo = Field(description="신뢰도 배지/지표 정보")
+    score: float = Field(description="정렬에 쓰이는 관련도 점수. 시맨틱+키워드(BM25) 검색 융합(RRF) 점수 기준 — 값 자체의 절대적 의미보다 상대적 순위 비교용")
+    similarity_score: float = Field(
+        description="검색어와 논문(제목+초록 임베딩) 간 코사인 유사도. 0~1. 이 논문이 추천된 핵심 근거"
+    )
+    matched_snippet: Optional[str] = Field(
+        None,
+        description="초록 문장 중 검색어와 가장 의미적으로 유사한 문장 1개. 추천 근거로 UI에 하이라이트 노출용. 초록이 없으면 null",
+    )
 
 
 class SearchPapersResponse(BaseModel):
-    search_id: str
-    items: list[PaperSearchItem]
+    search_id: str = Field(description="검색 요청 식별자 (UUID). 요청마다 새로 발급됨")
+    items: list[PaperSearchItem] = Field(description="검색 결과 논문 목록. score(관련도) 내림차순 정렬")
 
 
 class SearchParamsDoc(BaseModel):
