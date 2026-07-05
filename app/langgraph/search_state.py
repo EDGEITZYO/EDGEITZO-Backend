@@ -32,7 +32,7 @@ class RefinementStep(TypedDict):
 class NarrowChip(TypedDict):
     chip_id: str
     chip_type: str  # "year" | "paper_type" | "citation" — 3축 고정
-    label: str  # 문구 템플릿 미정, 자리만
+    label: str  # 사용자 노출용 문구. 템플릿은 search_graph.py의 _build_narrow_chips 참고
     value: Dict[str, Any]
 
 
