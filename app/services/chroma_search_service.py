@@ -191,27 +191,48 @@ class ChromaSearchService:
             for doc_id, dist in zip(results["ids"][0], results["distances"][0])
         ]
 
-    def _similarity_for_id(self, doc_id: str, query_vec: list[float]) -> float:
-        """semantic_results 후보에 없던 문서(BM25 단독 매칭)용 — 저장된 임베딩을 가져와 직접 코사인 계산."""
-        data = self._collection.get(ids=[doc_id], include=["embeddings"])
-        embeddings = data.get("embeddings")
-        if embeddings is None or len(embeddings) == 0:
-            return 0.0
-        return max(0.0, _cosine(np.array(embeddings[0]), np.array(query_vec)))
-
-    def _find_best_snippet(self, abstract: Optional[str], query_vec: list[float]) -> Optional[str]:
-        """초록을 문장 단위로 쪼개 검색어 임베딩과 가장 유사한 문장 1개를 반환 — 추천 근거 표시용."""
-        if not abstract:
-            return None
-        sentences = _split_sentences(abstract)
-        if not sentences:
-            return None
-        if len(sentences) == 1:
-            return sentences[0]
-        sentence_vecs = self._model.encode(sentences, convert_to_numpy=True)
+    def _batch_similarity_for_ids(self, ids: list[str], query_vec: list[float]) -> dict[str, float]:
+        """semantic_results 후보에 없던 문서(BM25 단독 매칭)용 — 저장된 임베딩을 한 번에 조회해 코사인 계산."""
+        if not ids:
+            return {}
+        data = self._collection.get(ids=ids, include=["embeddings"])
         query_arr = np.array(query_vec)
-        sims = [_cosine(vec, query_arr) for vec in sentence_vecs]
-        return sentences[int(np.argmax(sims))]
+        return {
+            doc_id: max(0.0, _cosine(np.array(emb), query_arr))
+            for doc_id, emb in zip(data["ids"], data["embeddings"])
+        }
+
+    def _batch_best_snippets(
+        self, abstracts: dict[str, Optional[str]], query_vec: list[float]
+    ) -> dict[str, Optional[str]]:
+        """doc_id→초록 맵을 받아 모든 문장을 한 번에 배치 인코딩 후, 문서별로 검색어와 가장 유사한 문장 1개씩 반환.
+        건마다 encode()를 호출하면 결과 개수만큼 순차 인코딩이 돌아 응답이 느려지므로(504 원인) 반드시 배치로 처리."""
+        doc_sentences: dict[str, list[str]] = {}
+        flat_sentences: list[str] = []
+        owners: list[str] = []
+
+        for doc_id, abstract in abstracts.items():
+            sentences = _split_sentences(abstract) if abstract else []
+            doc_sentences[doc_id] = sentences
+            flat_sentences.extend(sentences)
+            owners.extend([doc_id] * len(sentences))
+
+        if not flat_sentences:
+            return {doc_id: None for doc_id in abstracts}
+
+        sentence_vecs = self._model.encode(flat_sentences, convert_to_numpy=True)
+        query_arr = np.array(query_vec)
+
+        best: dict[str, tuple[float, str]] = {}
+        for doc_id, vec, sentence in zip(owners, sentence_vecs, flat_sentences):
+            sim = _cosine(vec, query_arr)
+            if doc_id not in best or sim > best[doc_id][0]:
+                best[doc_id] = (sim, sentence)
+
+        return {
+            doc_id: (sentences[0] if len(sentences) == 1 else best.get(doc_id, (0.0, None))[1])
+            for doc_id, sentences in doc_sentences.items()
+        }
 
     def _bm25_search(self, query: str, n: int) -> list[tuple[str, float]]:
         tokens = _tokenize(query)
@@ -247,9 +268,10 @@ class ChromaSearchService:
 
         combined = _rrf_combine(semantic_results, bm25_results)
 
-        items = []
+        # 1차 패스: 최종 후보(n_results개)만 확정 — similarity_score/snippet은 아직 계산 안 함
+        selected: list[tuple[str, dict, float]] = []
         for doc_id, rrf_score in combined:
-            if len(items) >= n_results:
+            if len(selected) >= n_results:
                 break
             paper = self._paper_index.get(doc_id)
             if not paper:
@@ -263,14 +285,24 @@ class ChromaSearchService:
                     continue
                 elif scope == "SCI" and db_code not in ("SCIE", "SSCI", "AHCI"):
                     continue
+            selected.append((doc_id, paper, rrf_score))
 
-            similarity_score = semantic_score_map.get(doc_id)
-            if similarity_score is None:
-                similarity_score = self._similarity_for_id(doc_id, query_vec)
-            abstract = paper.get("Abstract_original") or paper.get("Abstract")
-            matched_snippet = self._find_best_snippet(abstract, query_vec)
+        # 2차 패스: 확정된 후보에 대해서만 similarity_score/matched_snippet을 배치로 한 번에 계산
+        # (건마다 개별 encode()/get() 호출 시 n_results만큼 순차 호출이 생겨 응답 지연·타임아웃 유발됨)
+        missing_ids = [doc_id for doc_id, _, _ in selected if doc_id not in semantic_score_map]
+        fallback_scores = self._batch_similarity_for_ids(missing_ids, query_vec)
+        abstracts = {
+            doc_id: (paper.get("Abstract_original") or paper.get("Abstract"))
+            for doc_id, paper, _ in selected
+        }
+        snippets = self._batch_best_snippets(abstracts, query_vec)
 
-            items.append(_to_search_item(paper, rrf_score, similarity_score=similarity_score, matched_snippet=matched_snippet))
+        items = []
+        for doc_id, paper, rrf_score in selected:
+            similarity_score = semantic_score_map.get(doc_id, fallback_scores.get(doc_id, 0.0))
+            items.append(_to_search_item(
+                paper, rrf_score, similarity_score=similarity_score, matched_snippet=snippets.get(doc_id)
+            ))
         return items
 
     async def search(
