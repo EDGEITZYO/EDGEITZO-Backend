@@ -1,0 +1,101 @@
+@startuml search_sequence
+!include common_style.iuml
+
+title 기능 처리도 (시퀀스 다이어그램) — 검색 기능\n(POST /search/chat, app/langgraph/search_graph.py)
+
+participant "Client\n(Frontend)" as Client
+
+box "API 계층" #F7F9FC
+participant "Search API\n(FastAPI Router)" as API
+end box
+
+box "세션/캐시" #F7F9FC
+participant "Redis\n(session DB, TTL 1h)" as Redis
+end box
+
+participant "LangGraph\n검색 오케스트레이터" as Graph
+
+box "데이터/AI 계층 — Vector → Graph → LLM 순차 호출" #F2F5FA
+participant "ChromaDB\n(Vector DB)" as Chroma
+participant "PostgreSQL\n(RDB)" as PG
+participant "Neo4j\n(Graph DB)" as Neo4j
+participant "Claude\n(Cloud LLM)" as LLM
+end box
+
+note over LLM
+  모든 LLM 호출 공통 처리 (app/services/llm/client.py::chat)
+  ① 누적 비용 한도 체크(하드 차단)
+  ② Redis 캐시 조회(models+messages+params 해시 키)
+  ③ 캐시 미스 시 Anthropic API 호출
+  ④ 비용 누적 + 응답 캐싱(TTL 24h)
+end note
+
+Client -> API : POST /search/chat\n{session_id, message, chip_id?, chip_type?}
+activate API
+
+API -> Redis : GET search_state:{session_id}
+activate Redis
+Redis --> API : 세션 상태 JSON (신규면 null)
+deactivate Redis
+
+API -> Graph : graph.ainvoke(state)
+activate Graph
+
+alt 칩 클릭 (chip_id + chip_type 전달)
+  Graph -> Graph : _apply_chip_action\nLLM 미호출 — 코드 레벨로 filters/history 즉시 갱신
+else 최초 검색 (신규 세션, filters.keywords 없음)
+  Graph -> Graph : node_intent_extractor\nkiwipiepy 형태소 분석 → 명사(NNG/NNP) 추출\n→ RECENCY/CITATION 키워드셋 교집합 판정 (LLM 미사용)
+  Graph -> LLM : node_keyword_extractor 프롬프트\n[불용어 제거 → 명사구 추출 → 학술 키워드 변환 → 상위 3개 선정]
+  activate LLM
+  LLM --> Graph : {keywords:[{ko, en, desc}]}
+  deactivate LLM
+else 자유입력 정교화 (2턴 이상, filters/history 존재)
+  Graph -> LLM : node_free_input_classifier 프롬프트\n[의도분류(좁히기/확장/무관/주제변경) + 확장키워드 추출 1회 통합 호출]
+  activate LLM
+  LLM --> Graph : {intent, params:{filter, keywords}}
+  deactivate LLM
+  Graph -> Graph : intent="좁히기" → _apply_filter_update(연도/유형/인용수)\nintent="확장" → _apply_keyword_addition(키워드 누적)
+end
+
+== node_response_builder : 검색 실행 + 랭킹 + 칩 생성 ==
+
+Graph -> Chroma : search(query=filters.keywords,\npub_year_start, paper_type, citation_min)
+activate Chroma
+Chroma -> Chroma : BGE-m3-ko 쿼리 임베딩 → 코사인 유사도 검색 (semantic)
+Chroma -> Chroma : BM25Okapi 키워드 빈도 검색 (lexical)
+Chroma -> Chroma : RRF(Reciprocal Rank Fusion, k=60)로 두 랭킹 융합·재정렬
+Chroma --> Graph : PaperSearchItem[] 상위 20건\n(similarity_score, matched_snippet 포함)
+deactivate Chroma
+
+Graph -> PG : get_paper_cards_batch(paper_ids)\nIN 쿼리 1회
+activate PG
+PG --> Graph : citation_count / kci_registered / sci_indexed / SJR 등
+deactivate PG
+Graph -> Graph : calculate_credibility → 신뢰도 배지(high/medium/low) 산정\n_sort_items → 관련도(score) 내림차순 정렬
+
+Graph -> Neo4j : find_keyword(top_result_keywords)\n[키워드 정규화 매칭: key 정확값 OR normalized_name OR toLower(name)]
+activate Neo4j
+Neo4j --> Graph : center Keyword 노드 (paper_count 포함)
+Graph -> Neo4j : find_related_keywords(center.key, limit=10)\nRELATED_TO 엣지 순회
+Neo4j --> Graph : 연관 키워드 후보 + 동시출현 paper_count
+deactivate Neo4j
+Graph -> Graph : 키워드별 결과 합산(sum) 병합 → 상위 3개 expand_chips 생성
+Graph -> Graph : _build_narrow_chips\n연도/인용수 등빈도 분위수 구간화 + 엔트로피 스코어링\n(편중 없는 축만 후보 채택, 상위 3개)
+
+Graph -> LLM : _build_summary 프롬프트\n[검색 결과 상위 10건 제목 → 2~3문장 요약 생성]
+activate LLM
+LLM --> Graph : ai_summary 텍스트 (실패 시 summary_failed=true)
+deactivate LLM
+
+Graph -> Graph : node_router → fallback 판정\n(clarify | no_result | None)
+Graph --> API : result_state
+deactivate Graph
+
+API -> Redis : SET search_state:{session_id}\n휘발성 키(_skip_classification 등) 제거 후 TTL 3600s 저장
+activate Redis
+deactivate Redis
+
+API --> Client : ChatResponse\n{result_items, narrow_chips, expand_chips,\nai_summary, fallback, is_broad_result}
+deactivate API
+
+@enduml
