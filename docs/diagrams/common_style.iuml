@@ -1,0 +1,51 @@
+skinparam dpi 150
+skinparam defaultFontName "Apple SD Gothic Neo"
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam maxMessageSize 230
+skinparam BoxPadding 8
+skinparam ParticipantPadding 18
+
+skinparam sequence {
+  ArrowColor #33475B
+  ArrowFontColor #1B2B3A
+  ArrowFontSize 12
+  LifeLineBorderColor #8FA8C7
+  LifeLineBackgroundColor #F5F8FC
+  ParticipantBorderColor #2E4A7A
+  ParticipantBackgroundColor #DCE8FA
+  ParticipantFontColor #1B2B3A
+  ParticipantFontStyle bold
+  ParticipantFontSize 13
+  ActorBorderColor #2E4A7A
+  ActorBackgroundColor #DCE8FA
+  ActivationBorderColor #2E4A7A
+  ActivationBackgroundColor #6E97C9
+  BoxBorderColor #999999
+  BoxFontColor #333333
+  BoxFontStyle bold
+  DividerBackgroundColor #E8ECF2
+  DividerBorderColor #33475B
+  DividerFontColor #1B2B3A
+  DividerFontStyle bold
+  GroupBackgroundColor #EEF2F8
+  GroupBorderColor #33475B
+  GroupFontColor #1B2B3A
+  GroupFontStyle bold
+  GroupHeaderFontColor #FFFFFF
+  GroupHeaderBackgroundColor #5A7CAE
+}
+
+skinparam note {
+  BackgroundColor #FFF9E3
+  BorderColor #C9A227
+  FontSize 12
+}
+
+skinparam title {
+  FontSize 16
+  FontColor #FFFFFF
+  BackgroundColor #2E4A7A
+  BorderThickness 0
+}

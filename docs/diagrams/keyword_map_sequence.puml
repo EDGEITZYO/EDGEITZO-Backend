@@ -1,0 +1,108 @@
+@startuml keyword_map_sequence
+!include common_style.iuml
+
+title 기능 처리도 (시퀀스 다이어그램) — 키워드맵 기능\n(app/api/v1/keyword_map.py, app/services/keyword_map_service.py)
+
+participant "Client\n(Frontend)" as Client
+
+box "API 계층" #F7F9FC
+participant "KeywordMap API\n(FastAPI Router)" as API
+end box
+
+box "세션/캐시" #F7F9FC
+participant "Redis\n(cache/session)" as Redis
+end box
+
+box "데이터/AI 계층 — Graph → Vector → LLM 순차 호출" #F2F5FA
+participant "Neo4j\n(Graph DB)" as Neo4j
+participant "ChromaDB\n(Vector DB)" as Chroma
+participant "PostgreSQL\n(RDB)" as PG
+participant "Claude\n(Cloud LLM)" as LLM
+end box
+
+note over LLM
+  모든 LLM 호출 공통 처리 (app/services/llm/client.py::chat)
+  ① 누적 비용 한도 체크(하드 차단)  ② Redis 캐시 조회
+  ③ 캐시 미스 시 Anthropic API 호출  ④ 비용 누적 + 응답 캐싱(TTL 24h)
+end note
+
+== ① 키워드맵 생성 — GET /keyword-map?topic=&user_id= ==
+
+Client -> API : GET /keyword-map (연구 분야 topic)
+activate API
+API -> Redis : GET keyword_map_tree:{topic}
+activate Redis
+alt 캐시 히트
+  Redis --> API : 캐시된 tree JSON
+  deactivate Redis
+  API --> Client : {topic, root} (message: cached)
+else 캐시 미스
+  deactivate Redis
+  API -> LLM : generate_keyword_map(topic)\n[4축 시스템 프롬프트: 핵심기술/연구대상/상위분야/응용분야\n1st레벨 축당 1개 + 2nd레벨 2~3개, 노드별 definition 포함]
+  activate LLM
+  LLM --> API : raw JSON {root, axes:{core_technology[],\nresearch_target[], parent_domain[], application_domain[]}}
+  deactivate LLM
+  API -> API : transform_tree\n4축 원본 → {root, children(edge_type·depth 포함)} 재귀 변환
+  API -> Redis : SET keyword_map_tree:{topic} (TTL 24h)
+  activate Redis
+  deactivate Redis
+  opt user_id 제공
+    API -> Redis : SET keyword_map:{user_id} (개인 키워드맵 저장)
+    activate Redis
+    deactivate Redis
+  end
+  API --> Client : {topic, root} (message: generated)
+end
+deactivate API
+
+== ② 노드 선택 → 논문 목록 조회 — GET /keyword-map/node/{node_id}/papers ==
+
+Client -> API : GET .../{node_id}/papers\n?year_range&paper_type&kci&sci&sort&page
+activate API
+API -> Neo4j : get_paper_ids_by_keyword(node_id)
+activate Neo4j
+Neo4j -> Neo4j : 키워드 정규화(casefold) 후\nk.name = $keyword OR k.normalized_name = $normalized 매칭\n→ (Paper)-[:HAS_KEYWORD]->(Keyword) 역추적
+Neo4j --> API : Paper CN 목록 (최대 200건)
+deactivate Neo4j
+
+alt Neo4j 조회 결과 있음
+  API -> Chroma : get_items_by_ids(paper_ids)\n유사도 계산 없이 메타데이터 direct fetch
+  activate Chroma
+  Chroma --> API : PaperSearchItem[]
+  deactivate Chroma
+else Neo4j 다운/빈 결과 → 자동 fallback
+  API -> Chroma : search(query=node_id)\n시맨틱 검색으로 대체
+  activate Chroma
+  Chroma --> API : PaperSearchItem[]
+  deactivate Chroma
+end
+
+API -> API : apply_filters(year_range/paper_type/kci/sci)\n→ apply_sort(date|citation)
+API -> PG : build_paper_cards(paper_ids)\nIN 쿼리 1회
+activate PG
+PG --> API : citation_count / kci_registered / sci_indexed / degree
+deactivate PG
+API -> API : apply_paper_type_postfilter\n(degree 기반 2차 필터: 박사/석사학위 세분화) → paginate
+
+opt user_id 제공 & page == 1
+  API -> Redis : save_search_history\nmap_session_id로 세션 단위 탐색 경로(keyword_path) 누적 저장
+  activate Redis
+  deactivate Redis
+end
+
+API --> Client : PaperListResponse\n{papers, total, page, size, search_id}
+deactivate API
+
+== ③ 노드 확장 — POST /keyword-map/node/{node_id}/expand ==
+
+Client -> API : POST .../{node_id}/expand\n{parent_label, parent_label_en, axis, research_field, depth}
+activate API
+API -> LLM : expand_keyword_node 프롬프트\n[부모 키워드 → 4축(핵심기술/연구대상/상위분야/응용분야)\n각 1개씩 총 4개 하위 키워드 생성, definition 포함]
+activate LLM
+LLM --> API : JSON[4] {ko, en, axis, definition}
+deactivate LLM
+API -> API : 노드 변환\nid = ko값(없으면 en), depth = parent.depth+1, edge_type = axis
+API --> Client : ExpandNodeResponse {parent_label, new_children[4]}
+deactivate API
+
+@enduml

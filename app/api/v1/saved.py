@@ -8,9 +8,9 @@ _KST = timezone(timedelta(hours=9))
 from typing import List, Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -428,6 +428,64 @@ async def get_recent_stats(
         ),
         message="ok",
     )
+
+
+@router.delete(
+    "/recent/{paper_id}",
+    response_model=ApiResponse[None],
+    responses={401: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
+    summary="최근 읽은 탭 — 열람 기록 단건 삭제",
+    description=(
+        "특정 논문의 열람 기록을 삭제합니다. **Authorization 헤더에 Bearer 토큰 필요.**\n\n"
+        "해당 논문의 열람 기록이 없으면 404 반환. 소프트 삭제 처리되며, "
+        "이후 같은 논문을 다시 열람하면 새 기록으로 다시 노출됩니다."
+    ),
+)
+async def delete_recent_read(
+    paper_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        update(RecentRead)
+        .where(
+            RecentRead.user_id == current_user.id,
+            RecentRead.paper_id == paper_id,
+            RecentRead.deleted_at.is_(None),
+        )
+        .values(deleted_at=datetime.now(timezone.utc))
+    )
+    if result.rowcount == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="열람 기록이 없습니다")
+    await db.commit()
+    return success_response(message="열람 기록이 삭제되었습니다")
+
+
+@router.delete(
+    "/recent",
+    response_model=ApiResponse[None],
+    responses={401: {"model": ApiErrorResponse}},
+    summary="최근 읽은 탭 — 열람 기록 전체 삭제",
+    description=(
+        "사용자의 전체 열람 기록을 한 번에 삭제합니다 (전체 비우기). "
+        "**Authorization 헤더에 Bearer 토큰 필요.**\n\n"
+        "소프트 삭제 처리되며, 이후 논문을 다시 열람하면 새 기록으로 다시 쌓입니다."
+    ),
+)
+async def delete_all_recent_reads(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await db.execute(
+        update(RecentRead)
+        .where(
+            RecentRead.user_id == current_user.id,
+            RecentRead.deleted_at.is_(None),
+        )
+        .values(deleted_at=datetime.now(timezone.utc))
+    )
+    await db.commit()
+    return success_response(message="전체 열람 기록이 삭제되었습니다")
 
 
 def _parse_date(date_str: str | None) -> date:
