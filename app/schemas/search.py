@@ -19,6 +19,10 @@ class SearchPapersRequest(BaseModel):
     )
     page: int = Field(default=1, ge=1, description="페이지 번호")
     size: int = Field(default=10, ge=1, le=30, description="페이지 크기")
+    sort_order: Literal["relevance", "year_asc", "year_desc", "citation_desc"] = Field(
+        default="relevance",
+        description="정렬 기준. 'relevance': 관련도순(기본값) / 'year_desc': 최신순 / 'year_asc': 오래된순 / 'citation_desc': 인용수 높은순",
+    )
 
 
 class PaperAuthor(BaseModel):

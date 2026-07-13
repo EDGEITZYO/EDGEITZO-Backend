@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import random
 import uuid
+from collections import Counter
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +16,7 @@ from app.schemas.search import (
 from app.repositories.paper_repository import get_paper_cards_batch
 from app.services.chroma_search_service import get_chroma_search_service
 from app.services.credibility_service import enrich_items_with_credibility, paper_type_label, resolve_paper_type
+from app.services.llm.client import chat
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +118,97 @@ def _sort_items(items: list[PaperSearchItem]) -> list[PaperSearchItem]:
     return sorted(items, key=lambda x: x.score, reverse=True)
 
 
+def _apply_sort_order(items: list[PaperSearchItem], sort_order: str) -> list[PaperSearchItem]:
+    """sort_order 기준 재정렬. 'relevance'는 이미 _sort_items()로 정렬된 순서를 그대로 유지."""
+    if sort_order == "year_asc":
+        return sorted(items, key=lambda i: (i.year is None, i.year or 0))
+    if sort_order == "year_desc":
+        return sorted(items, key=lambda i: (i.year is None, -(i.year or 0)))
+    if sort_order == "citation_desc":
+        return sorted(items, key=lambda i: i.credibility.citation_count or 0, reverse=True)
+    return items
+
+
+_SORT_LABELS = {
+    "relevance": "관련도 기준",
+    "year_desc": "최신순",
+    "year_asc": "오래된순",
+    "citation_desc": "인용수 높은순",
+}
+
+_SUMMARY_SYSTEM_PROMPT = """너는 논문 검색 결과를 사용자에게 소개하는 문장을 쓰는 도우미다.
+
+반드시 지켜야 할 규칙:
+1. 1~2문장으로 간결하게 쓴다.
+2. 존댓말을 쓰되 딱딱하지 않게, "~해 드릴게요", "~하시면 좋을 것 같아요" 같은 부드러운 종결어미를 쓴다.
+3. 차분하고 사려깊은 톤을 유지한다.
+4. 아래로 전달되는 "실제 데이터"의 총 건수와 키워드는 문장에 반드시 포함한다.
+5. 전달받지 않은 논문 제목, 저자, 통계, 키워드, 유형 등은 절대로 새로 만들어내지 않는다. 오직 전달받은 사실만 사용한다.
+6. 매번 표현을 다르게 써서 같은 문장이 반복되지 않게 한다.
+7. 결과 목록을 나열하지 말고, 검색을 어떻게 진행했는지에 대한 요약만 전달한다.
+8. 문장 외의 다른 텍스트(따옴표, 설명, 마크다운 등)는 출력하지 않는다."""
+
+_SUMMARY_FALLBACK_TEMPLATES = [
+    "{topic} 관련 논문을 {total}건 정리했어요. {keywords} 키워드를 중심으로 {sort_label}으로 나열해 보여드려요.",
+    "{topic}를 살펴봤어요. {keywords} 키워드로 찾은 {total}건을 {sort_label}으로 정리해 두었어요.",
+    "{topic}에 관해 {total}건을 추려봤어요. {keywords} 키워드를 기준으로 {sort_label} 정렬했어요.",
+]
+
+
+def _build_summary_fallback(topic: str, total: int, keywords: list[str], sort_label: str) -> str:
+    template = random.choice(_SUMMARY_FALLBACK_TEMPLATES)
+    return template.format(
+        topic=topic or "요청하신 주제",
+        total=total,
+        keywords=", ".join(keywords) if keywords else "입력하신",
+        sort_label=sort_label,
+    )
+
+
+async def generate_result_summary(
+    topic: str,
+    total: int,
+    keywords: list[str],
+    type_distribution: dict[str, int],
+    sort_order: str,
+) -> str:
+    """검색 결과 요약 문장 생성. 건수/키워드/유형분포는 코드에서 계산한 사실이며,
+    LLM은 이 사실을 문장으로 풀어쓰는 역할만 한다 (숫자를 직접 세지 않음)."""
+    sort_label = _SORT_LABELS.get(sort_order, "관련도 기준")
+    topic = topic or " ".join(keywords) or "요청하신 주제"
+
+    fact_lines = [
+        f"주제: {topic}",
+        f"총 건수: {total}건",
+        f"키워드: {', '.join(keywords) if keywords else '없음'}",
+        f"정렬 기준: {sort_label}",
+    ]
+    if type_distribution:
+        dist_str = ", ".join(f"{k} {v}건" for k, v in type_distribution.items())
+        fact_lines.append(f"유형 분포: {dist_str}")
+
+    user_prompt = (
+        "실제 데이터:\n" + "\n".join(fact_lines) +
+        "\n\n위 데이터만 사용해 자연스러운 한국어 문장 1~2개를 작성하라."
+    )
+
+    try:
+        resp = await chat(
+            messages=[
+                {"role": "user", "content": f"[System]\n{_SUMMARY_SYSTEM_PROMPT}\n\n[User]\n{user_prompt}"},
+            ],
+            model=settings.llm_default_model,
+            temperature=0.9,
+            max_tokens=150,
+            use_cache=False,
+        )
+        text = resp.text.strip()
+        return text or _build_summary_fallback(topic, total, keywords, sort_label)
+    except Exception as e:
+        logger.warning("검색 결과 요약 생성 실패, 폴백 사용: %s", e)
+        return _build_summary_fallback(topic, total, keywords, sort_label)
+
+
 async def _search_chroma_local(
     query: str,
     size: int,
@@ -150,6 +244,7 @@ async def search_papers_service(
 
     items = _apply_scoring(items)
     items = _sort_items(items)
+    items = _apply_sort_order(items, request.sort_order)
 
     return SearchPapersResponse(
         search_id="search_combined_001",
@@ -166,6 +261,7 @@ async def execute_search(
     filter_kci: bool | None = None,
     filter_sci: bool | None = None,
     sort_order: str = "relevance",
+    topic: str | None = None,
 ) -> dict:
     """SearchParams 기반 실행 검색 — 슬롯 대화 완료 후 호출"""
     keywords = search_params.get("keywords") or []
@@ -221,10 +317,7 @@ async def execute_search(
     if filter_sci is not None:
         items = [i for i in items if i.credibility.sci_indexed is not None and i.credibility.sci_indexed == filter_sci]
 
-    if sort_order == "year_asc":
-        items = sorted(items, key=lambda i: (i.year is None, i.year or 0))
-    elif sort_order == "year_desc":
-        items = sorted(items, key=lambda i: (i.year is None, -(i.year or 0)))
+    items = _apply_sort_order(items, sort_order)
 
     papers = []
     for item in items[:size]:
@@ -245,8 +338,19 @@ async def execute_search(
             "keyword_map_data": None,
         })
 
+    type_distribution = dict(Counter(p["paper_type"] or "기타" for p in papers))
+    summary_message = await generate_result_summary(
+        topic=topic or "",
+        total=len(papers),
+        keywords=keywords,
+        type_distribution=type_distribution,
+        sort_order=sort_order,
+    )
+
     return {
         "papers": papers,
         "total": len(papers),
+        "type_distribution": type_distribution,
+        "summary_message": summary_message,
         "search_id": str(uuid.uuid4()),
     }

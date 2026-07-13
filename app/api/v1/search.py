@@ -63,7 +63,10 @@ _VALID_SLOT_VALUES: dict[str, frozenset] = {
     response_model=ApiResponse[SearchPapersResponse],
     responses={422: {"model": ApiErrorResponse}, 500: {"model": ApiErrorResponse}},
     summary="논문 검색 (단순)",
-    description="query + 필터로 즉시 검색. 슬롯 대화 없이 바로 결과 반환.",
+    description=(
+        "query + 필터로 즉시 검색. 슬롯 대화 없이 바로 결과 반환.\n\n"
+        "- `sort_order` — 정렬 기준. `'relevance'`(관련도순, 기본값) | `'year_desc'`(최신순) | `'year_asc'`(오래된순) | `'citation_desc'`(인용수 높은순)"
+    ),
 )
 async def search_papers(
     request: SearchPapersRequest,
@@ -775,7 +778,7 @@ class ExecuteRequest(BaseModel):
     filter_year: Optional[int] = Field(None, description="발행 연도 필터 (예: 2025, 2024 ...)")
     filter_kci: Optional[bool] = Field(None, description="KCI 등재 여부 필터")
     filter_sci: Optional[bool] = Field(None, description="SCI 등재 여부 필터")
-    sort_order: Literal["relevance", "year_asc", "year_desc"] = Field("relevance", description="정렬 기준. 'relevance': 유사도 / 'year_asc': 발행일 오름차순 / 'year_desc': 발행일 내림차순")
+    sort_order: Literal["relevance", "year_asc", "year_desc", "citation_desc"] = Field("relevance", description="정렬 기준. 'relevance': 관련도순(기본값) / 'year_desc': 최신순 / 'year_asc': 오래된순 / 'citation_desc': 인용수 높은순")
     user_id: Optional[str] = Field(None, description="검색 이력 저장용 유저 ID (선택). 제공 시 Redis에 AI 검색 이력 저장")
 
 
@@ -783,6 +786,8 @@ class ExecuteResponse(BaseModel):
     papers: List[PaperResult] = Field(description="논문 결과 목록")
     total: int = Field(description="전체 결과 수")
     search_id: str = Field(description="검색 고유 ID. 피드백 연동 시 사용")
+    summary_message: str = Field(description="검색 결과 요약 문장. 총 건수·키워드 등 실제 데이터 기반으로 LLM이 매번 다른 표현으로 생성")
+    type_distribution: Dict[str, int] = Field(description="논문 유형별 건수. 예: {'학술 저널': 15, '박사학위 논문': 5}")
 
 
 @router.post(
@@ -802,12 +807,14 @@ class ExecuteResponse(BaseModel):
         "- `filter_year` — 발행 연도 필터 (예: `2025`, `2024` ...)\n"
         "- `filter_kci` — KCI 등재 여부 필터. `true`|`false`|null(전체)\n"
         "- `filter_sci` — SCI 등재 여부 필터. `true`|`false`|null(전체)\n"
-        "- `sort_order` — 정렬 기준. `'relevance'`(유사도순) | `'year_asc'`(오래된순) | `'year_desc'`(최신순)\n"
+        "- `sort_order` — 정렬 기준. `'relevance'`(관련도순, 기본값) | `'year_desc'`(최신순) | `'year_asc'`(오래된순) | `'citation_desc'`(인용수 높은순)\n"
         "- `user_id` — 제공 시 Redis에 AI 검색 이력 저장 (선택)\n\n"
         "**응답 필드**\n"
         "- `papers` — 논문 결과 목록\n"
         "- `total` — 전체 결과 수\n"
-        "- `search_id` — 검색 고유 ID (피드백 `/search/feedback` 연동 시 사용)"
+        "- `search_id` — 검색 고유 ID (피드백 `/search/feedback` 연동 시 사용)\n"
+        "- `summary_message` — 검색 결과 요약 문장 (건수·키워드 등 실제 데이터 기반, 매번 다른 표현)\n"
+        "- `type_distribution` — 논문 유형별 건수"
     ),
 )
 async def execute_search_endpoint(
@@ -815,6 +822,9 @@ async def execute_search_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     sp = request.search_params.model_dump()
+    state = _load_state(request.session_id)
+    user_query = (state or {}).get("user_query", "")
+
     result = await execute_search(
         sp,
         db,
@@ -823,15 +833,14 @@ async def execute_search_endpoint(
         filter_kci=request.filter_kci,
         filter_sci=request.filter_sci,
         sort_order=request.sort_order,
+        topic=user_query,
     )
 
     # 검색 이력 저장 (user_id 제공 시)
     if request.user_id:
         try:
             from app.api.v1.home import save_search_history
-            state = _load_state(request.session_id)
             slots = (state or {}).get("slots", {})
-            user_query = (state or {}).get("user_query", "")
             kws = sp.get("keywords") or []
             save_search_history(
                 user_id=request.user_id,
@@ -849,6 +858,8 @@ async def execute_search_endpoint(
             papers=[PaperResult(**p) for p in result["papers"]],
             total=result["total"],
             search_id=result["search_id"],
+            summary_message=result["summary_message"],
+            type_distribution=result["type_distribution"],
         ),
         message="search executed",
     )
