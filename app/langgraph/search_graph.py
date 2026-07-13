@@ -27,7 +27,7 @@ from app.schemas.search import CredibilityInfo
 from app.services.chroma_search_service import get_chroma_search_service
 from app.services.credibility_service import enrich_items_with_credibility
 from app.services.llm.client import chat
-from app.services.search_service import _sort_items
+from app.services.search_service import _apply_sort_order, _SORT_LABELS, _sort_items
 
 logger = logging.getLogger(__name__)
 
@@ -350,18 +350,58 @@ async def _build_expand_chips(keywords: list[str]) -> List[ExpandChip]:
     ]
 
 
-async def _build_summary(result_items: list[dict], user_query: str) -> tuple[Optional[str], bool]:
-    if not result_items:
+_SUMMARY_SYSTEM_PROMPT = """너는 논문 검색 결과를 사용자에게 소개하는 문장을 쓰는 도우미다.
+
+반드시 지켜야 할 규칙:
+1. 1~2문장으로 간결하게 쓴다.
+2. 존댓말을 쓰되 딱딱하지 않게, "~해 드릴게요", "~하시면 좋을 것 같아요" 같은 부드러운 종결어미를 쓴다.
+3. 차분하고 사려깊은 톤을 유지한다.
+4. 아래로 전달되는 "실제 데이터"의 총 건수와 키워드는 문장에 반드시 포함한다.
+5. 전달받지 않은 논문 제목, 저자, 통계, 키워드, 유형 등은 절대로 새로 만들어내지 않는다. 오직 전달받은 사실만 사용한다.
+6. 매번 표현을 다르게 써서 같은 문장이 반복되지 않게 한다.
+7. 결과 목록을 나열하지 말고, 검색을 어떻게 진행했는지에 대한 요약만 전달한다.
+8. 문장 외의 다른 텍스트(따옴표, 설명, 마크다운 등)는 출력하지 않는다."""
+
+
+async def _build_summary(
+    topic: str,
+    total_count: int,
+    keywords: list[str],
+    type_distribution: dict[str, int],
+    sort_order: str,
+) -> tuple[Optional[str], bool]:
+    """검색 결과 요약 문장 생성. 건수/키워드/유형분포는 코드에서 계산한 사실이며,
+    LLM은 이 사실을 문장으로 풀어쓰는 역할만 한다 (숫자를 직접 세지 않음)."""
+    if total_count == 0:
         return None, False
+
+    sort_label = _SORT_LABELS.get(sort_order, "관련도 기준")
+    topic = topic or " ".join(keywords) or "요청하신 주제"
+
+    fact_lines = [
+        f"주제: {topic}",
+        f"총 건수: {total_count}건",
+        f"키워드: {', '.join(keywords) if keywords else '없음'}",
+        f"정렬 기준: {sort_label}",
+    ]
+    if type_distribution:
+        dist_str = ", ".join(f"{k} {v}건" for k, v in type_distribution.items())
+        fact_lines.append(f"유형 분포: {dist_str}")
+
+    user_prompt = (
+        "실제 데이터:\n" + "\n".join(fact_lines) +
+        "\n\n위 데이터만 사용해 자연스러운 한국어 문장 1~2개를 작성하라."
+    )
+
     try:
-        titles = "\n".join(f"- {it['title']}" for it in result_items[:10])
         resp = await chat(
-            messages=[{"role": "user", "content":
-                f"다음은 '{user_query}' 검색 결과 논문 제목 목록이다:\n{titles}\n\n"
-                f"이 결과들을 2~3문장으로 요약하라."}],
-            model=_MODEL, temperature=0.3, max_tokens=300,
+            messages=[
+                {"role": "user", "content": f"[System]\n{_SUMMARY_SYSTEM_PROMPT}\n\n[User]\n{user_prompt}"},
+            ],
+            model=_MODEL, temperature=0.9, max_tokens=150, use_cache=False,
         )
-        return resp.text.strip(), False
+        text = resp.text.strip()
+        return (text, False) if text else (None, True)
     except Exception as e:
         logger.warning("검색 결과 요약 실패: %s", e)
         return None, True
@@ -403,6 +443,7 @@ async def node_response_builder(state: SearchState) -> SearchState:
 
     # items = _apply_scoring(items, research_purpose_class=state.get("research_purpose_class") or "neutral")  # 관련도순 정렬 원칙에 따라 비활성화
     items = _sort_items(items)
+    items = _apply_sort_order(items, state.get("sort_order") or "relevance")
 
     result_items = [it.model_dump() for it in items]
     total_count = len(result_items)
@@ -418,7 +459,16 @@ async def node_response_builder(state: SearchState) -> SearchState:
 
     narrow_chips = _build_narrow_chips(result_items, citation_lookup) if total_count > 4 else []
     expand_chips = await _build_expand_chips(_top_result_keywords(result_items))
-    ai_summary, summary_failed = await _build_summary(result_items, state.get("user_query", ""))
+    type_distribution = dict(Counter(
+        _PAPER_TYPE_LABEL.get(it["db_code"], "기타") for it in result_items if it.get("db_code")
+    ))
+    ai_summary, summary_failed = await _build_summary(
+        topic=state.get("user_query", ""),
+        total_count=total_count,
+        keywords=filters.get("keywords") or [],
+        type_distribution=type_distribution,
+        sort_order=state.get("sort_order") or "relevance",
+    )
 
     threshold = settings.search_broad_result_threshold
     is_broad_result = threshold is not None and total_count >= threshold
@@ -427,6 +477,7 @@ async def node_response_builder(state: SearchState) -> SearchState:
         **state,
         "result_items": result_items,
         "total_count": total_count,
+        "type_distribution": type_distribution,
         "narrow_chips": narrow_chips,
         "expand_chips": expand_chips,
         "ai_summary": ai_summary,

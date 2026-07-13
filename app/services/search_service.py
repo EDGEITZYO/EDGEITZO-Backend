@@ -118,6 +118,25 @@ def _sort_items(items: list[PaperSearchItem]) -> list[PaperSearchItem]:
     return sorted(items, key=lambda x: x.score, reverse=True)
 
 
+_SORT_LABELS = {
+    "relevance": "관련도 기준",
+    "year_desc": "최신순",
+    "year_asc": "오래된순",
+    "citation_desc": "인용수 높은순",
+}
+
+
+def _apply_sort_order(items: list[PaperSearchItem], sort_order: str) -> list[PaperSearchItem]:
+    """sort_order 기준 재정렬. 'relevance'는 이미 _sort_items()로 정렬된 순서를 그대로 유지."""
+    if sort_order == "year_asc":
+        return sorted(items, key=lambda i: (i.year is None, i.year or 0))
+    if sort_order == "year_desc":
+        return sorted(items, key=lambda i: (i.year is None, -(i.year or 0)))
+    if sort_order == "citation_desc":
+        return sorted(items, key=lambda i: i.credibility.citation_count or 0, reverse=True)
+    return items
+
+
 async def _search_chroma_local(
     query: str,
     size: int,
@@ -153,6 +172,7 @@ async def search_papers_service(
 
     # items = _apply_scoring(items)  # 관련도순 정렬 원칙에 따라 비활성화 — 순수 RRF 점수(item.score)로만 정렬
     items = _sort_items(items)
+    items = _apply_sort_order(items, request.sort_order)
 
     return SearchPapersResponse(
         search_id=str(uuid.uuid4()),
