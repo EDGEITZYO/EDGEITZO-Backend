@@ -83,6 +83,14 @@ class ChatRequest(BaseModel):
             "year/paper_type/citation은 narrow_chips 응답에서, expand는 expand_chips 응답에서 옴."
         ),
     )
+    sort_order: Optional[Literal["relevance", "year_asc", "year_desc", "citation_desc"]] = Field(
+        None,
+        description=(
+            "정렬 기준 변경. 값을 보내면 세션에 반영되어 이후 턴에도 유지됨 (재전달 불필요). "
+            "생략하면 이전 값 유지, 첫 턴에 생략하면 'relevance'. "
+            "'relevance': 관련도순 | 'year_desc': 최신순 | 'year_asc': 오래된순 | 'citation_desc': 인용수 높은순"
+        ),
+    )
 
 
 class FilterStateSchema(BaseModel):
@@ -127,10 +135,13 @@ class ChatResponse(BaseModel):
     session_id: str = Field(description="세션 ID. 다음 턴 요청 시 재사용")
     filters: FilterStateSchema = Field(description="현재까지 누적된 검색 조건")
     sort_order: str = Field(
-        description="정렬 기준. 현재 대화형 API(이 엔드포인트)에서는 항상 'relevance' 고정이며 바꾸는 경로가 없음 — 필드는 응답 스키마상 존재하나 실질적으로 상수.",
+        description=(
+            "정렬 기준. ChatRequest.sort_order로 변경 가능하며 세션에 유지됨. "
+            "'relevance': 관련도순(기본값) | 'year_desc': 최신순 | 'year_asc': 오래된순 | 'citation_desc': 인용수 높은순"
+        ),
     )
     history: List[RefinementStepSchema] = Field(description="지금까지의 탐색 경로 (검색→좁히기→확장 등 순서대로)")
-    result_items: List[PaperSearchItem] = Field(description="검색 결과 논문 목록. score(관련도) 내림차순 정렬")
+    result_items: List[PaperSearchItem] = Field(description="검색 결과 논문 목록. sort_order 기준으로 정렬됨")
     total_count: int = Field(description="전체 결과 수")
     narrow_chips: List[NarrowChipSchema] = Field(description="좁히기 칩 (연도/논문유형/인용수 중 최대 3개). total_count가 4 이하면 항상 빈 배열")
     expand_chips: List[ExpandChipSchema] = Field(description="확장 칩 (연관 키워드 최대 3개). 매칭되는 연관 키워드가 없으면 빈 배열")
@@ -270,6 +281,9 @@ async def chat_search(request: ChatRequest, db: AsyncSession = Depends(get_db)):
         state["messages"] = (state.get("messages") or []) + [{"role": "user", "content": request.message}]
     state["user_query"] = state.get("user_query") or request.message
 
+    if request.sort_order:
+        state["sort_order"] = request.sort_order
+
     if request.chip_id and request.chip_type:
         state = _apply_chip_action(state, request.chip_id, request.chip_type)
 
@@ -313,6 +327,9 @@ async def stream_chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
             if request.message:
                 state["messages"] = (state.get("messages") or []) + [{"role": "user", "content": request.message}]
             state["user_query"] = state.get("user_query") or request.message
+
+            if request.sort_order:
+                state["sort_order"] = request.sort_order
 
             if request.chip_id and request.chip_type:
                 state = _apply_chip_action(state, request.chip_id, request.chip_type)
