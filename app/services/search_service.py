@@ -166,6 +166,14 @@ async def search_papers_service(
 
     if db is not None:
         try:
+            db_extra = await get_paper_cards_batch(db, [i.paper_id for i in items])
+            for item in items:
+                degree = (db_extra.get(item.paper_id) or {}).get("degree")
+                item.paper_type = paper_type_label(resolve_paper_type(item.db_code, degree))
+        except Exception:
+            pass
+
+        try:
             items = await enrich_items_with_credibility(items, db)
         except Exception:
             pass
