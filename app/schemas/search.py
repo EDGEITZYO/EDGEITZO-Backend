@@ -61,6 +61,9 @@ class PaperSearchItem(BaseModel):
     db_code: Optional[str] = Field(
         None, description="ScienceON DB 코드. 'JAKO'=국내 학술지 | 'DIKO'=학위논문 | 'JAFO'=해외 학술지 | 'CFKO'=학술대회"
     )
+    paper_type: Optional[str] = Field(
+        None, description="논문 유형 배지. '학술 저널' | '박사학위 논문' | '석사학위 논문' | '학위논문'(degree 정보 없는 학위논문) | null. UI 배지 표시용 — db_code 대신 이 필드를 사용할 것"
+    )
     source: str = Field(description="검색 소스. 현재 항상 'local_chroma'")
     credibility: CredibilityInfo = Field(description="신뢰도 배지/지표 정보")
     score: float = Field(description="정렬에 쓰이는 관련도 점수. 시맨틱+키워드(BM25) 검색 융합(RRF) 점수 기준 — 값 자체의 절대적 의미보다 상대적 순위 비교용")

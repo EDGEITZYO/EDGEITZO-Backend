@@ -25,7 +25,7 @@ from app.core.database import AsyncSessionLocal
 from app.repositories.paper_repository import get_paper_cards_batch
 from app.schemas.search import CredibilityInfo
 from app.services.chroma_search_service import get_chroma_search_service
-from app.services.credibility_service import enrich_items_with_credibility
+from app.services.credibility_service import enrich_items_with_credibility, paper_type_label, resolve_paper_type
 from app.services.llm.client import chat
 from app.services.search_service import _apply_sort_order, _SORT_LABELS, _sort_items
 
@@ -437,6 +437,7 @@ async def node_response_builder(state: SearchState) -> SearchState:
             for it in items:
                 extra = db_extra.get(it.paper_id) or {}
                 it.credibility = CredibilityInfo(badge="unknown", citation_count=extra.get("citation_count"))
+                it.paper_type = paper_type_label(resolve_paper_type(it.db_code, extra.get("degree")))
             items = await enrich_items_with_credibility(items, db)
         except Exception as e:
             logger.warning("검색 결과 신뢰도 enrichment 실패, 배지 없이 진행: %s", e)
