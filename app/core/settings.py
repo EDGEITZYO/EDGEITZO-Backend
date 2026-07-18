@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     # SSE 스트리밍
     sse_chunk_size: int = 2
     sse_chunk_delay_seconds: float = 0.04
+    sse_heartbeat_seconds: float = 15.0
 
     # 좁히기 칩 — 분포 편차 계산
     chip_bin_count: int = 3
