@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
@@ -310,10 +311,11 @@ async def chat_search(request: ChatRequest, db: AsyncSession = Depends(get_db)):
 **SSE 이벤트 순서**
 1. `search_started` — 검색 시작
 2. `searching` — 검색 진행 중
-3. `papers_found` `{count}` — 발견 논문 건수
-4. `fetching` — 논문 상세/요약 가져오는 중
-5. `token` — `ai_summary` 청크 스트리밍 (서버 chunking)
-6. `done` — 최종 상태 전체 (`ChatResponse`와 동일 필드)
+3. `heartbeat` — 검색(그래프 실행)이 길어질 때 유휴 커넥션 타임아웃 방지용으로 주기적 전송(기본 15초 간격). 클라이언트는 무시해도 됨
+4. `papers_found` `{count}` — 발견 논문 건수
+5. `fetching` — 논문 상세/요약 가져오는 중
+6. `token` — `ai_summary` 청크 스트리밍 (서버 chunking)
+7. `done` — 최종 상태 전체 (`ChatResponse`와 동일 필드)
 
 `error` — 예외/타임아웃 시 `done` 없이 스트림 즉시 종료.
 """,
@@ -338,14 +340,21 @@ async def stream_chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
             yield _sse("searching", {})
 
             graph = get_graph()
-            try:
-                result_state: SearchState = await asyncio.wait_for(
-                    graph.ainvoke(state),
-                    timeout=settings.graph_timeout_seconds,
-                )
-            except asyncio.TimeoutError:
-                yield _sse("error", {"message": "요청 시간이 초과됐어요. 다시 시도해주세요."})
-                return
+            task = asyncio.ensure_future(graph.ainvoke(state))
+            elapsed = 0.0
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=settings.sse_heartbeat_seconds)
+                if task in done:
+                    break
+                elapsed += settings.sse_heartbeat_seconds
+                if elapsed >= settings.graph_timeout_seconds:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+                    yield _sse("error", {"message": "요청 시간이 초과됐어요. 다시 시도해주세요."})
+                    return
+                yield _sse("heartbeat", {})
+            result_state: SearchState = task.result()
 
             _save_state(session_id, result_state)
 
