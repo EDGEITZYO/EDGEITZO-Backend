@@ -60,8 +60,8 @@ services:
   chromadb:
     image: chromadb/chroma:latest
     container_name: edgeitzo-chromadb
-    expose:
-      - "8000"
+    ports:
+      - "8001:8000"
     volumes:
       - chroma_data:/data
     healthcheck:

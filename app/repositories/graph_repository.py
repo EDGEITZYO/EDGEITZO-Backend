@@ -228,6 +228,40 @@ class GraphRepository:
 
         return related_items
 
+    def find_relations_among(
+        self,
+        keys: list[str],
+        *,
+        min_paper_count: int,
+    ) -> list[dict[str, Any]]:
+        query = """
+        MATCH (a:Keyword)-[r:RELATED_TO]-(b:Keyword)
+        WHERE a.key IN $keys AND b.key IN $keys AND a.key < b.key
+          AND r.paper_count >= $min_paper_count
+        RETURN a.key AS source, b.key AS target,
+               r.paper_count AS paper_count, r.lang_pair AS lang_pair
+        ORDER BY r.paper_count DESC
+        """
+
+        with self.driver.session() as session:
+            records = list(
+                session.run(
+                    query,
+                    keys=keys,
+                    min_paper_count=min_paper_count,
+                )
+            )
+
+        return [
+            {
+                "source": record["source"],
+                "target": record["target"],
+                "paper_count": record["paper_count"],
+                "lang_pair": record["lang_pair"],
+            }
+            for record in records
+        ]
+
     def find_papers_by_keyword(
         self,
         keyword_key: str,

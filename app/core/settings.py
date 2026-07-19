@@ -94,6 +94,18 @@ class Settings(BaseSettings):
     # 자유입력 광범위 질문 판정 — 결과 10건 이상이면 광범위한 검색으로 판정
     search_broad_result_threshold: Optional[int] = 10
 
+    # 키워드맵 — 빈도/동시출현 기반 그래프 생성 튜닝값
+    keyword_map_candidate_pool_size: int = 40
+    keyword_map_max_nodes: int = 25
+    keyword_map_initial_node_target: int = 20
+    keyword_map_parent_max: int = 4
+    keyword_map_child_l1_max: int = 6
+    keyword_map_child_l2_max_per_parent: int = 3
+    keyword_map_expand_max: int = 3
+    keyword_map_hub_cross_link_threshold: int = 3
+    keyword_map_cache_ttl_seconds: int = 300
+    keyword_map_definition_llm_max_abstracts: int = 5
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
