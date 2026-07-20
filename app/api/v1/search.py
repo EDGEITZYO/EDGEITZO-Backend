@@ -123,10 +123,12 @@ class FilterStateSchema(BaseModel):
 
 
 class RefinementStepSchema(BaseModel):
+    step_id: str = Field(description="이 스텝의 고유 ID. 프론트에서 '이 턴의 논문 보기' 등 과거 턴 참조용으로 사용")
     step_type: Literal["search", "narrow", "expand"] = Field(description="'search'=최초 검색 | 'narrow'=좁히기(연도/논문유형/인용수) | 'expand'=확장(키워드 추가)")
     applied_filter: Optional[Dict[str, Any]] = Field(None, description="narrow 스텝에서 적용된 필터 값 (예: {'pub_year_start': 2021}). search/expand 스텝은 null")
     added_keyword: Optional[str] = Field(None, description="expand 스텝에서 추가된 키워드. search/narrow 스텝은 null")
     result_count: int = Field(description="이 스텝 적용 직후의 total_count")
+    result_items: List[PaperSearchItem] = Field(description="이 스텝 시점의 검색 결과 스냅샷. result_items(최상위 필드)는 최신 턴 것만 담기지만, 여기엔 이 스텝 고유의 결과가 그대로 남아있어 과거 턴 결과를 재검색 없이 그대로 보여줄 수 있음")
     timestamp: str = Field(description="ISO8601 타임스탬프")
 
 
@@ -247,15 +249,17 @@ def _apply_chip_action(state: SearchState, chip_id: str, chip_type: str) -> Sear
         keyword = chip.get("keyword")
         filters = dict(_apply_keyword_addition(filters, keyword))
         history.append({
+            "step_id": str(uuid.uuid4()),
             "step_type": step_type, "applied_filter": None, "added_keyword": keyword,
-            "result_count": 0, "timestamp": timestamp,
+            "result_count": 0, "result_items": [], "timestamp": timestamp,
         })
     else:
         value = chip.get("value") or {}
         filters = dict(_apply_filter_update(filters, value))
         history.append({
+            "step_id": str(uuid.uuid4()),
             "step_type": step_type, "applied_filter": value, "added_keyword": None,
-            "result_count": 0, "timestamp": timestamp,
+            "result_count": 0, "result_items": [], "timestamp": timestamp,
         })
 
     return {**state, "filters": filters, "history": history, "_skip_classification": True}
@@ -282,10 +286,12 @@ def _apply_direct_filters(state: SearchState, request: ChatRequest) -> SearchSta
     if not request.message:
         history = list(state.get("history") or [])
         history.append({
+            "step_id": str(uuid.uuid4()),
             "step_type": "narrow",
             "applied_filter": applied,
             "added_keyword": None,
             "result_count": 0,
+            "result_items": [],
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         new_state["history"] = history

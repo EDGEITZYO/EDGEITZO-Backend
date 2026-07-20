@@ -200,8 +200,9 @@ JSON만 반환:
         filter_vals = params.get("filter") or {}
         filters = dict(_apply_filter_update(filters, filter_vals))
         history.append(RefinementStep(
+            step_id=str(uuid.uuid4()),
             step_type="narrow", applied_filter=filter_vals, added_keyword=None,
-            result_count=0,
+            result_count=0, result_items=[],
             timestamp=datetime.now(timezone.utc).isoformat(),
         ))
     elif intent == "확장":
@@ -209,9 +210,10 @@ JSON만 반환:
         for kw in new_keywords:
             filters = dict(_apply_keyword_addition(filters, kw))
         history.append(RefinementStep(
+            step_id=str(uuid.uuid4()),
             step_type="expand", applied_filter=None,
             added_keyword=", ".join(new_keywords) or None,
-            result_count=0,
+            result_count=0, result_items=[],
             timestamp=datetime.now(timezone.utc).isoformat(),
         ))
     elif intent == "주제변경":
@@ -222,8 +224,9 @@ JSON만 반환:
         filters = dict(_apply_filter_update(empty_filters(), filter_vals))
         filters["keywords"] = new_keywords
         history.append(RefinementStep(
+            step_id=str(uuid.uuid4()),
             step_type="search", applied_filter=None, added_keyword=None,
-            result_count=0,
+            result_count=0, result_items=[],
             timestamp=datetime.now(timezone.utc).isoformat(),
         ))
 
@@ -503,11 +506,13 @@ async def node_response_builder(state: SearchState) -> SearchState:
 
     history = list(state.get("history") or [])
     if history:
-        history[-1] = {**history[-1], "result_count": total_count}
+        history[-1] = {**history[-1], "result_count": total_count, "result_items": result_items}
     else:
         history.append(RefinementStep(
+            step_id=str(uuid.uuid4()),
             step_type="search", applied_filter=None, added_keyword=None,
-            result_count=total_count, timestamp=datetime.now(timezone.utc).isoformat(),
+            result_count=total_count, result_items=result_items,
+            timestamp=datetime.now(timezone.utc).isoformat(),
         ))
 
     narrow_chips = _build_narrow_chips(result_items, citation_lookup) if total_count > 4 else []

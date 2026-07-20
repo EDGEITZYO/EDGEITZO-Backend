@@ -23,11 +23,15 @@ class FilterState(TypedDict):
 
 
 class RefinementStep(TypedDict):
-    """탐색 경로(history) 한 스텝"""
+    """탐색 경로(history) 한 스텝. result_items는 이 스텝 시점의 검색 결과 스냅샷 —
+    프론트가 이전 턴의 '논문 보기' 버튼을 눌렀을 때 재검색 없이 그대로 보여줄 수 있도록
+    스텝별로 독립 저장한다(SearchState.result_items는 최신 턴 것만 남는 것과 별개)."""
+    step_id: str
     step_type: str  # "search" | "narrow" | "expand"
     applied_filter: Optional[Dict[str, Any]]
     added_keyword: Optional[str]
     result_count: int
+    result_items: List[Dict[str, Any]]
     timestamp: str
 
 
