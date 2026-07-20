@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -241,7 +242,7 @@ def _get_or_build_anchor_subgraph(repo: GraphRepository, anchor: _AnchorInfo) ->
     return result
 
 
-async def get_initial_anchor_map(keyword_text: str) -> KeywordMapGraphResponse:
+def _get_initial_anchor_map_sync(keyword_text: str) -> KeywordMapGraphResponse:
     matches = search_keywords(keyword_text, limit=1)
     if not matches:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"keyword not found: {keyword_text}")
@@ -264,7 +265,12 @@ async def get_initial_anchor_map(keyword_text: str) -> KeywordMapGraphResponse:
     )
 
 
-async def recenter_keyword_map(new_anchor_key: str, existing_node_keys: list[str]) -> KeywordMapGraphResponse:
+async def get_initial_anchor_map(keyword_text: str) -> KeywordMapGraphResponse:
+    """Neo4j 드라이버가 동기(sync)이므로 스레드풀에서 실행해 이벤트 루프 블로킹을 방지 (get_paper_ids_by_keyword와 동일 패턴)."""
+    return await asyncio.to_thread(_get_initial_anchor_map_sync, keyword_text)
+
+
+def _recenter_keyword_map_sync(new_anchor_key: str, existing_node_keys: list[str]) -> KeywordMapGraphResponse:
     driver = get_neo4j_driver()
     try:
         repo = GraphRepository(driver)
@@ -344,7 +350,12 @@ async def recenter_keyword_map(new_anchor_key: str, existing_node_keys: list[str
     )
 
 
-async def expand_node(node_key: str, *, current_tier: int, existing_node_keys: list[str]) -> KeywordMapExpandResponse:
+async def recenter_keyword_map(new_anchor_key: str, existing_node_keys: list[str]) -> KeywordMapGraphResponse:
+    """Neo4j 드라이버가 동기(sync)이므로 스레드풀에서 실행해 이벤트 루프 블로킹을 방지."""
+    return await asyncio.to_thread(_recenter_keyword_map_sync, new_anchor_key, existing_node_keys)
+
+
+def _expand_node_sync(node_key: str, *, current_tier: int, existing_node_keys: list[str]) -> KeywordMapExpandResponse:
     driver = get_neo4j_driver()
     try:
         repo = GraphRepository(driver)
@@ -383,8 +394,14 @@ async def expand_node(node_key: str, *, current_tier: int, existing_node_keys: l
     return KeywordMapExpandResponse(parent_key=node_key, new_nodes=new_nodes, new_edges=new_edges)
 
 
-async def get_keyword_names(node_key: str) -> Optional[tuple[str | None, str | None]]:
-    """상세 패널(정의 조회)에서 node_key -> (name_ko, name_en) 해석용. 없으면 None (404 처리)."""
+async def expand_node(node_key: str, *, current_tier: int, existing_node_keys: list[str]) -> KeywordMapExpandResponse:
+    """Neo4j 드라이버가 동기(sync)이므로 스레드풀에서 실행해 이벤트 루프 블로킹을 방지."""
+    return await asyncio.to_thread(
+        _expand_node_sync, node_key, current_tier=current_tier, existing_node_keys=existing_node_keys
+    )
+
+
+def _get_keyword_names_sync(node_key: str) -> Optional[tuple[str | None, str | None]]:
     driver = get_neo4j_driver()
     try:
         repo = GraphRepository(driver)
@@ -394,6 +411,12 @@ async def get_keyword_names(node_key: str) -> Optional[tuple[str | None, str | N
     if d is None:
         return None
     return _split_name(d)
+
+
+async def get_keyword_names(node_key: str) -> Optional[tuple[str | None, str | None]]:
+    """상세 패널(정의 조회)에서 node_key -> (name_ko, name_en) 해석용. 없으면 None (404 처리).
+    Neo4j 드라이버가 동기(sync)이므로 스레드풀에서 실행해 이벤트 루프 블로킹을 방지."""
+    return await asyncio.to_thread(_get_keyword_names_sync, node_key)
 
 
 async def get_node_papers(
