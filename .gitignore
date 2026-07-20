@@ -57,6 +57,7 @@ logs/
 # Neo4j local data
 data/raw/*.json
 data/parsed/*.json
+data/parsed/*.pkl
 neo4j_data/
 
 # Raw CSV / 대용량 데이터 파일 — 커밋 제외

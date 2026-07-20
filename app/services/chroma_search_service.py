@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import pickle
 import re
 from pathlib import Path
 from typing import Optional
@@ -24,9 +26,14 @@ from sentence_transformers import SentenceTransformer
 from app.core.settings import settings
 from app.schemas.search import CredibilityInfo, PaperAuthor, PaperSearchItem
 
+logger = logging.getLogger(__name__)
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _PREPROCESSED_PATH = _PROJECT_ROOT / "data" / "parsed" / "scienceon_preprocessed.json"
 _FALLBACK_PATH = _PROJECT_ROOT / "data" / "parsed" / "scienceon_keywords_normalized.json"
+# scripts/embed_abstract_sentences.py가 생성하는 문장 단위 임베딩 사전계산 캐시.
+# 없으면 _batch_best_snippets가 그 논문에 한해서만 실시간 인코딩으로 폴백함.
+_SENTENCE_CACHE_PATH = _PROJECT_ROOT / "data" / "parsed" / "abstract_sentence_embeddings.pkl"
 
 _MODEL_NAME = "dragonkue/BGE-m3-ko"
 _COLLECTION_NAME = "papers"
@@ -61,6 +68,21 @@ def _load_papers() -> tuple[dict[str, dict], list[dict]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     papers: list[dict] = data.get("papers", data) if isinstance(data, dict) else data
     return {p["CN"]: p for p in papers if p.get("CN")}, papers
+
+
+def _load_sentence_cache() -> dict[str, tuple[list[str], np.ndarray]]:
+    """scripts/embed_abstract_sentences.py가 만든 사전계산 캐시 로드.
+    없으면 빈 dict 반환 — _batch_best_snippets가 논문별로 실시간 인코딩으로 폴백함
+    (캐시 미실행 상태에서도 서비스 자체는 정상 동작하도록, 다만 느림)."""
+    if not _SENTENCE_CACHE_PATH.exists():
+        logger.warning(
+            "문장 임베딩 캐시(%s) 없음 — matched_snippet이 실시간 인코딩으로 느려질 수 있음. "
+            "scripts/embed_abstract_sentences.py 실행 권장.",
+            _SENTENCE_CACHE_PATH,
+        )
+        return {}
+    with open(_SENTENCE_CACHE_PATH, "rb") as f:
+        return pickle.load(f)
 
 
 def _paper_to_bm25_text(paper: dict) -> str:
@@ -156,6 +178,7 @@ class ChromaSearchService:
         self._paper_index: dict[str, dict] = {}
         self._papers: list[dict] = []
         self._bm25: Optional[BM25Okapi] = None
+        self._sentence_cache: dict[str, tuple[list[str], np.ndarray]] = {}
         self._ready = False
 
     def _init(self) -> None:
@@ -168,6 +191,7 @@ class ChromaSearchService:
         self._bm25 = BM25Okapi(tokenized)
 
         self._model = SentenceTransformer(_MODEL_NAME, device="cpu")
+        self._sentence_cache = _load_sentence_cache()
 
         chroma_client = chromadb.HttpClient(
             host=settings.chroma_host,
@@ -205,29 +229,45 @@ class ChromaSearchService:
     def _batch_best_snippets(
         self, abstracts: dict[str, Optional[str]], query_vec: list[float]
     ) -> dict[str, Optional[str]]:
-        """doc_id→초록 맵을 받아 모든 문장을 한 번에 배치 인코딩 후, 문서별로 검색어와 가장 유사한 문장 1개씩 반환.
-        건마다 encode()를 호출하면 결과 개수만큼 순차 인코딩이 돌아 응답이 느려지므로(504 원인) 반드시 배치로 처리."""
+        """doc_id→초록 맵을 받아 문서별로 검색어와 가장 유사한 문장 1개씩 반환.
+        scripts/embed_abstract_sentences.py가 만든 사전계산 캐시(self._sentence_cache)에
+        있으면 저장된 벡터로 코사인 계산만 한다(모델 인코딩 없음 — 후보 수와 무관하게 빠름).
+        캐시에 없는 문서(스크립트 실행 후 새로 적재된 논문 등)만 그때그때 인코딩해서 폴백한다
+        — 이런 문서가 대량이면 응답이 다시 느려지므로 캐시를 최신 상태로 유지해야 함."""
         doc_sentences: dict[str, list[str]] = {}
-        flat_sentences: list[str] = []
-        owners: list[str] = []
-
-        for doc_id, abstract in abstracts.items():
-            sentences = _split_sentences(abstract) if abstract else []
-            doc_sentences[doc_id] = sentences
-            flat_sentences.extend(sentences)
-            owners.extend([doc_id] * len(sentences))
-
-        if not flat_sentences:
-            return {doc_id: None for doc_id in abstracts}
-
-        sentence_vecs = self._model.encode(flat_sentences, convert_to_numpy=True)
         query_arr = np.array(query_vec)
-
         best: dict[str, tuple[float, str]] = {}
-        for doc_id, vec, sentence in zip(owners, sentence_vecs, flat_sentences):
-            sim = _cosine(vec, query_arr)
-            if doc_id not in best or sim > best[doc_id][0]:
-                best[doc_id] = (sim, sentence)
+
+        live_targets: dict[str, str] = {}
+        for doc_id, abstract in abstracts.items():
+            cached = self._sentence_cache.get(doc_id)
+            if cached is not None:
+                sentences, vecs = cached
+                doc_sentences[doc_id] = sentences
+                if len(vecs):
+                    norms = np.linalg.norm(vecs, axis=1) * np.linalg.norm(query_arr)
+                    sims = (vecs @ query_arr) / (norms + 1e-12)
+                    idx = int(np.argmax(sims))
+                    best[doc_id] = (float(sims[idx]), sentences[idx])
+            else:
+                sentences = _split_sentences(abstract) if abstract else []
+                doc_sentences[doc_id] = sentences
+                if abstract:
+                    live_targets[doc_id] = abstract
+
+        if live_targets:
+            flat_sentences: list[str] = []
+            owners: list[str] = []
+            for doc_id in live_targets:
+                sentences = doc_sentences[doc_id]
+                flat_sentences.extend(sentences)
+                owners.extend([doc_id] * len(sentences))
+            if flat_sentences:
+                sentence_vecs = self._model.encode(flat_sentences, convert_to_numpy=True)
+                for doc_id, vec, sentence in zip(owners, sentence_vecs, flat_sentences):
+                    sim = _cosine(vec, query_arr)
+                    if doc_id not in best or sim > best[doc_id][0]:
+                        best[doc_id] = (sim, sentence)
 
         return {
             doc_id: (sentences[0] if len(sentences) == 1 else best.get(doc_id, (0.0, None))[1])
@@ -243,7 +283,7 @@ class ChromaSearchService:
     def _sync_search(
         self,
         query: str,
-        n_results: int,
+        n_results: Optional[int] = None,
         pub_year_start: Optional[int] = None,
         scope: Optional[str] = None,
         paper_type: Optional[str] = None,
@@ -255,10 +295,12 @@ class ChromaSearchService:
 
         query_vec = self._encode_query(query)
 
-        # RRF 융합 품질을 위한 후보 확장
-        candidate_n = min(n_results * 4, self._collection.count())
-        semantic_results = self._semantic_search(query_vec, candidate_n, where=where_clause)
-        bm25_results = self._bm25_search(query, candidate_n)
+        # RRF 랭킹(순수 점수 계산)은 코퍼스 전체를 대상으로 해도 저렴함(실측 약 3초, 대부분
+        # 쿼리 인코딩 1회 비용) — where절 필터를 pub_year_start/paper_type처럼 정확하게 적용하기
+        # 위해 candidate_n을 n_results*4로 미리 자르던 것을 없애고 전체를 후보로 삼는다.
+        total = self._collection.count()
+        semantic_results = self._semantic_search(query_vec, total, where=where_clause)
+        bm25_results = self._bm25_search(query, total)
         semantic_score_map = dict(semantic_results)
 
         if where_clause:
@@ -268,10 +310,12 @@ class ChromaSearchService:
 
         combined = _rrf_combine(semantic_results, bm25_results)
 
-        # 1차 패스: 최종 후보(n_results개)만 확정 — similarity_score/snippet은 아직 계산 안 함
+        # 1차 패스: where절/scope 필터를 통과한 후보 확정 — similarity_score/snippet은
+        # 후보 1건당 문장 단위 임베딩이 필요해 비용이 크므로(실측: 20건 9초, 150건 50초),
+        # 이 비싼 2차 패스로 넘기기 전에 n_results로 반드시 자른다.
         selected: list[tuple[str, dict, float]] = []
         for doc_id, rrf_score in combined:
-            if len(selected) >= n_results:
+            if n_results is not None and len(selected) >= n_results:
                 break
             paper = self._paper_index.get(doc_id)
             if not paper:
@@ -287,8 +331,8 @@ class ChromaSearchService:
                     continue
             selected.append((doc_id, paper, rrf_score))
 
-        # 2차 패스: 확정된 후보에 대해서만 similarity_score/matched_snippet을 배치로 한 번에 계산
-        # (건마다 개별 encode()/get() 호출 시 n_results만큼 순차 호출이 생겨 응답 지연·타임아웃 유발됨)
+        # 2차 패스: 확정된(=n_results로 이미 잘린) 후보에 대해서만 similarity_score/matched_snippet을
+        # 배치로 한 번에 계산 (건마다 개별 encode()/get() 호출 시 결과 개수만큼 순차 호출이 생겨 응답 지연·타임아웃 유발됨)
         missing_ids = [doc_id for doc_id, _, _ in selected if doc_id not in semantic_score_map]
         fallback_scores = self._batch_similarity_for_ids(missing_ids, query_vec)
         abstracts = {
@@ -308,7 +352,7 @@ class ChromaSearchService:
     async def search(
         self,
         query: str,
-        n_results: int = 10,
+        n_results: Optional[int] = None,
         pub_year_start: Optional[int] = None,
         scope: Optional[str] = None,
         paper_type: Optional[str] = None,

@@ -13,10 +13,12 @@ class KeywordCandidate(TypedDict):
 
 
 class FilterState(TypedDict):
-    """연도/논문유형/인용수 3축 고정 + 누적 키워드"""
+    """연도/논문유형/인용수/KCI/SCI 5축 고정 + 누적 키워드"""
     pub_year_start: Optional[int]
     paper_type: Optional[str]  # DBCode 원본값 (JAKO/DIKO/JAFO/CFKO)
     citation_min: Optional[int]
+    kci_only: Optional[bool]  # true면 KCI 등재만
+    sci_only: Optional[bool]  # true면 SCI 계열(SCIE/SSCI/AHCI) 등재만
     keywords: List[str]
 
 
@@ -73,14 +75,16 @@ def empty_filters() -> FilterState:
         pub_year_start=None,
         paper_type=None,
         citation_min=None,
+        kci_only=None,
+        sci_only=None,
         keywords=[],
     )
 
 
 def _apply_filter_update(filters: FilterState, updates: Dict[str, Any]) -> FilterState:
-    """pub_year_start/paper_type/citation_min 중 None이 아닌 값만 반영한 새 filters 반환."""
+    """pub_year_start/paper_type/citation_min/kci_only/sci_only 중 None이 아닌 값만 반영한 새 filters 반환."""
     new_filters = dict(filters)
-    for key in ("pub_year_start", "paper_type", "citation_min"):
+    for key in ("pub_year_start", "paper_type", "citation_min", "kci_only", "sci_only"):
         if updates.get(key) is not None:
             new_filters[key] = updates[key]
     return FilterState(**new_filters)
