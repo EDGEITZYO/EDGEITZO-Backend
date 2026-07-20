@@ -72,6 +72,16 @@ async def check_bookmark(db: AsyncSession, user_id: UUID, paper_id: str) -> bool
     return result.scalar_one_or_none() is not None
 
 
+async def get_bookmarked_paper_ids(db: AsyncSession, user_id: UUID, paper_ids: list[str]) -> set[str]:
+    """검색 결과 카드에 북마크 여부를 배지로 표시할 때 쓰는 배치 조회."""
+    if not paper_ids:
+        return set()
+    result = await db.execute(
+        select(Bookmark.paper_id).where(Bookmark.user_id == user_id, Bookmark.paper_id.in_(paper_ids))
+    )
+    return set(result.scalars().all())
+
+
 def _build_paper(paper: Paper, journal: Journal | None) -> BookmarkedPaper:
     keywords_ko = paper.keywords_ko or []
     keywords_en = paper.keywords_en or []
