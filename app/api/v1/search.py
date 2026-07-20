@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.deps import get_current_user_optional
 from app.core.redis import get_redis
 from app.core.response import success_response
 from app.core.settings import settings
@@ -26,6 +27,7 @@ from app.langgraph.search_state import (
     _apply_keyword_addition,
     empty_filters,
 )
+from app.models.user import User
 from app.schemas.common import ApiErrorResponse, ApiResponse
 from app.schemas.search import PaperSearchItem, SearchPapersRequest, SearchPapersResponse
 from app.services.search_service import search_papers_service
@@ -55,12 +57,13 @@ _CHIP_TYPE_TO_STEP_TYPE = {
 async def search_papers(
     request: SearchPapersRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    result = await search_papers_service(request, db)
+    result = await search_papers_service(request, db, user_id=current_user.id if current_user else None)
     return success_response(
         data=result,
         message="paper search completed",
-        meta={"page": request.page, "size": request.size, "count": len(result.items)},
+        meta={"size": request.size, "count": len(result.items)},
     )
 
 
@@ -92,12 +95,30 @@ class ChatRequest(BaseModel):
             "'relevance': 관련도순 | 'year_desc': 최신순 | 'year_asc': 오래된순 | 'citation_desc': 인용수 높은순"
         ),
     )
+    pub_year_start: Optional[int] = Field(
+        None,
+        description="발행연도 필터 직접 지정 (이 연도 이상). 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지.",
+    )
+    paper_type: Optional[Literal["JAKO", "DIKO", "JAFO", "CFKO"]] = Field(
+        None,
+        description="논문유형 필터 직접 지정. 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지.",
+    )
+    kci_only: Optional[bool] = Field(
+        None,
+        description="true면 KCI 등재 논문만 필터. 토글로 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지.",
+    )
+    sci_only: Optional[bool] = Field(
+        None,
+        description="true면 SCI 계열(SCIE/SSCI/AHCI) 등재 논문만 필터. 토글로 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지.",
+    )
 
 
 class FilterStateSchema(BaseModel):
     pub_year_start: Optional[int] = Field(None, description="이 연도 이상만 포함 (예: 2021 → 2021년 이후). 미설정 시 null")
     paper_type: Optional[str] = Field(None, description="DBCode 원본값. 'JAKO'(국내 학술지) | 'DIKO'(학위논문) | 'JAFO'(해외 학술지) | 'CFKO'(학술대회). 미설정 시 null")
     citation_min: Optional[int] = Field(None, description="이 인용수 이상만 포함. 미설정 시 null")
+    kci_only: Optional[bool] = Field(None, description="true면 KCI 등재 논문만 포함. 미설정 시 null")
+    sci_only: Optional[bool] = Field(None, description="true면 SCI 계열(SCIE/SSCI/AHCI) 등재 논문만 포함. 미설정 시 null")
     keywords: List[str] = Field(default_factory=list, description="누적된 검색/확장 키워드 목록")
 
 
@@ -155,7 +176,8 @@ class ChatResponse(BaseModel):
             "'clarify'=검색 키워드가 비어있어 명확화 필요, "
             "'no_result'=조건에 맞는 결과가 0건, "
             "'off_topic'=검색과 무관한 질문으로 판단되어 검색 재실행 안 함(직전 result_items/filters 그대로 유지), "
-            "'topic_change'=완전히 다른 주제로 전환하려는 의도로 판단됨."
+            "'topic_change'=완전히 다른 주제로 전환하려는 의도로 판단되어 filters를 새 주제 기준으로 리셋하고 검색을 재실행함 "
+            "(result_items/ai_summary도 새 주제 결과로 갱신됨, history에는 이전 검색 기록이 그대로 누적되어 남음)."
         ),
     )
     is_broad_result: bool = Field(description="광범위 질문 판정. 임계값(search_broad_result_threshold) 미설정 시 항상 false")
@@ -239,6 +261,38 @@ def _apply_chip_action(state: SearchState, chip_id: str, chip_type: str) -> Sear
     return {**state, "filters": filters, "history": history, "_skip_classification": True}
 
 
+_DIRECT_FILTER_FIELDS = ("pub_year_start", "paper_type", "kci_only", "sci_only")
+
+
+def _apply_direct_filters(state: SearchState, request: ChatRequest) -> SearchState:
+    """발행연도/논문유형/KCI/SCI 드롭다운·토글 직접 지정 처리 — LLM 호출 없이 filters에 반영.
+    message가 비어있으면(순수 필터 변경만) 칩 클릭과 동일하게 history에 narrow 스텝을 기록하고
+    _skip_classification=True로 세팅해 자유입력 분류 노드가 이전 턴의 stale한 메시지를
+    재분류하는 걸 막는다. message가 함께 오면 free_input_classifier가 이번 턴의 history를
+    책임지므로 여기서는 중복 기록하지 않는다(뒤에서 result_count가 마지막 항목에만 채워지기 때문)."""
+    updates = {f: getattr(request, f) for f in _DIRECT_FILTER_FIELDS}
+    applied = {k: v for k, v in updates.items() if v is not None}
+    if not applied:
+        return state
+
+    filters = dict(state.get("filters") or empty_filters())
+    filters = dict(_apply_filter_update(filters, updates))
+    new_state = {**state, "filters": filters}
+
+    if not request.message:
+        history = list(state.get("history") or [])
+        history.append({
+            "step_type": "narrow",
+            "applied_filter": applied,
+            "added_keyword": None,
+            "result_count": 0,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        new_state["history"] = history
+        new_state["_skip_classification"] = True
+    return new_state
+
+
 def _sse(event_type: str, payload: dict) -> str:
     return f"data: {json.dumps({'type': event_type, **payload}, ensure_ascii=False)}\n\n"
 
@@ -274,9 +328,14 @@ def _to_chat_response(session_id: str, state: SearchState) -> ChatResponse:
 **칩 클릭 시 주의**: `chip_id`+`chip_type`을 전달하면 `message`는 무시되고 칩 값이 바로 필터에 반영됩니다 (LLM 호출 없음).
 """,
 )
-async def chat_search(request: ChatRequest, db: AsyncSession = Depends(get_db)):
+async def chat_search(
+    request: ChatRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
     session_id = request.session_id or str(uuid.uuid4())
     state = _load_state(session_id) or _new_state(session_id, request.message)
+    state["user_id"] = str(current_user.id) if current_user else ""
 
     if request.message:
         state["messages"] = (state.get("messages") or []) + [{"role": "user", "content": request.message}]
@@ -284,6 +343,8 @@ async def chat_search(request: ChatRequest, db: AsyncSession = Depends(get_db)):
 
     if request.sort_order:
         state["sort_order"] = request.sort_order
+
+    state = _apply_direct_filters(state, request)
 
     if request.chip_id and request.chip_type:
         state = _apply_chip_action(state, request.chip_id, request.chip_type)
@@ -320,18 +381,25 @@ async def chat_search(request: ChatRequest, db: AsyncSession = Depends(get_db)):
 `error` — 예외/타임아웃 시 `done` 없이 스트림 즉시 종료.
 """,
 )
-async def stream_chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
+async def stream_chat(
+    request: ChatRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
     session_id = request.session_id or str(uuid.uuid4())
 
     async def generate():
         try:
             state = _load_state(session_id) or _new_state(session_id, request.message)
+            state["user_id"] = str(current_user.id) if current_user else ""
             if request.message:
                 state["messages"] = (state.get("messages") or []) + [{"role": "user", "content": request.message}]
             state["user_query"] = state.get("user_query") or request.message
 
             if request.sort_order:
                 state["sort_order"] = request.sort_order
+
+            state = _apply_direct_filters(state, request)
 
             if request.chip_id and request.chip_type:
                 state = _apply_chip_action(state, request.chip_id, request.chip_type)

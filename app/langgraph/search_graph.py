@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -24,6 +25,7 @@ from app.langgraph.search_state import (
 from app.core.database import AsyncSessionLocal
 from app.repositories.paper_repository import get_paper_cards_batch
 from app.schemas.search import CredibilityInfo
+from app.services.bookmark_service import get_bookmarked_paper_ids
 from app.services.chroma_search_service import get_chroma_search_service
 from app.services.credibility_service import enrich_items_with_credibility, paper_type_label, resolve_paper_type
 from app.services.llm.client import chat
@@ -41,7 +43,7 @@ _PAPER_TYPE_LABEL = {
     "CFKO": "학술대회",
 }
 
-_KEYWORD_SYSTEM = """학술 키워드 추출기. 사용자 입력에서 연구 키워드를 추출해 JSON만 반환. 절대 설명하지 말 것. JSON 외 텍스트 금지."""
+_KEYWORD_SYSTEM = """학술 키워드·필터 추출기. 사용자 입력에서 연구 키워드와 필터 조건(연도/논문유형/인용수)을 추출해 JSON만 반환. 절대 설명하지 말 것. JSON 외 텍스트 금지."""
 
 _FREE_INPUT_SYSTEM = """검색 정교화 의도 분류기. 사용자 입력을 보고 JSON만 반환.
 절대 설명하지 말 것. JSON 외 텍스트 금지."""
@@ -89,14 +91,18 @@ async def node_intent_extractor(state: SearchState) -> SearchState:
     return {**state, "research_purpose_class": purpose_class}
 
 
-# ── node_keyword_extractor: 최초 검색 경로 전용, 기존 프롬프트 그대로 ──────────
+# ── node_keyword_extractor: 최초 검색 경로 전용 ──────────────────────────────
 
 async def node_keyword_extractor(state: SearchState) -> SearchState:
-    """최초 검색 경로 전용. 프롬프트(불용어 제거→명사구 추출→학술 키워드 변환→상위 3개)는
-    기존 그대로 — 신규 작성 금지 원칙 반영."""
+    """최초 검색 경로 전용. 키워드 추출(불용어 제거→명사구 추출→학술 키워드 변환→상위 3개)
+    프롬프트는 기존 그대로 두고, 첫 질의에 함께 언급된 필터 조건(연도/논문유형/인용수)도
+    같은 LLM 호출로 추출해 반영한다 — 기존엔 이 경로에서 필터가 통째로 무시됐음."""
     user_query = state.get("user_query", "")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    prompt = f"""사용자 입력: "{user_query}"
+    prompt = f"""오늘은 {today}입니다.
+
+사용자 입력: "{user_query}"
 
 [1단계] 불용어 제거
 "찾아줘", "알려줘", "연구한", "논문을", "좀", "관련" 등 탐색 의도 표현 제거.
@@ -111,19 +117,30 @@ async def node_keyword_extractor(state: SearchState) -> SearchState:
 기준: 원본 입력과의 의미 일치도, 학술 검색어로서의 구체성.
 3개 미만이면 찾은 것만 반환.
 
+[필터 조건 추출]
+입력에 아래 조건이 명시적으로 언급된 경우에만 채운다 (언급 안 된 필드는 null, 임의 추정 금지):
+- pub_year_start: 정수 연도. "최근 3년"처럼 상대 표현이면 오늘 날짜 기준으로 직접 계산해 절대 연도로 반환
+- paper_type: "JAKO"(국내 학술지) | "DIKO"(학위논문) | "JAFO"(해외 학술지) | "CFKO"(학술대회) 중 하나, 언급 없으면 null
+- citation_min: 정수. "인용 많은"처럼 모호하면 null (숫자 임의 추정 금지)
+- kci_only: "KCI 등재 논문만" 같은 언급이 있으면 true, 언급 없으면 null
+- sci_only: "SCI 논문만", "SCI급" 같은 언급이 있으면 true, 언급 없으면 null
+
 JSON만 반환:
 {{
   "keywords": [
     {{"ko": "키워드1", "en": "Keyword1", "desc": "설명"}},
     {{"ko": "키워드2", "en": "Keyword2", "desc": "설명"}}
-  ]
+  ],
+  "filter": {{"pub_year_start": null, "paper_type": null, "citation_min": null, "kci_only": null, "sci_only": null}}
 }}"""
 
     result = await _llm_json(_KEYWORD_SYSTEM, prompt, max_tokens=600)
     candidates = result.get("keywords", [])[:3]
+    filter_vals = result.get("filter") or {}
 
     filters = dict(state.get("filters") or empty_filters())
     filters["keywords"] = [c["ko"] for c in candidates]
+    filters = dict(_apply_filter_update(filters, filter_vals))
 
     return {**state, "filters": filters}
 
@@ -150,6 +167,8 @@ async def node_free_input_classifier(state: SearchState) -> SearchState:
 - pub_year_start: 정수 연도. "최근 3년"처럼 상대 표현이면 오늘 날짜 기준으로 직접 계산해 절대 연도로 반환
 - paper_type: "JAKO"(국내 학술지) | "DIKO"(학위논문) | "JAFO"(해외 학술지) | "CFKO"(학술대회) 중 하나, 언급 없으면 null
 - citation_min: 정수. "인용 많은"처럼 모호하면 null (숫자 임의 추정 금지)
+- kci_only: "KCI 등재 논문만" 같은 언급이 있으면 true, 언급 없으면 null
+- sci_only: "SCI 논문만", "SCI급" 같은 언급이 있으면 true, 언급 없으면 null
 
 [intent="확장"일 때] params.keywords에 아래 4단계를 거쳐 키워드를 채운다 (기존 keyword_extractor와 동일 지침):
 [1단계] 불용어 제거 — "찾아줘", "알려줘", "연구한", "논문을", "좀", "관련" 등 제거
@@ -157,11 +176,15 @@ async def node_free_input_classifier(state: SearchState) -> SearchState:
 [3단계] 학술 키워드 변환 — 한글명 + 영문명 + 한 줄 설명
 [4단계] 신뢰도 기준 상위 3개 선정
 
+[intent="주제변경"일 때] 기존 조건은 전부 버려지고 이 입력만으로 검색이 새로 시작된다.
+params.keywords에 "확장"과 동일한 4단계를 거쳐 새 주제 기준 키워드를 채운다.
+같은 입력에 필터 조건(연도/논문유형/인용수/KCI/SCI)이 함께 언급됐으면 params.filter에도 채운다 (언급 없으면 null).
+
 JSON만 반환:
 {{
   "intent": "좁히기" | "확장" | "무관" | "주제변경",
   "params": {{
-    "filter": {{"pub_year_start": null, "paper_type": null, "citation_min": null}},
+    "filter": {{"pub_year_start": null, "paper_type": null, "citation_min": null, "kci_only": null, "sci_only": null}},
     "keywords": [{{"ko": "...", "en": "...", "desc": "..."}}]
   }}
 }}"""
@@ -191,13 +214,28 @@ JSON만 반환:
             result_count=0,
             timestamp=datetime.now(timezone.utc).isoformat(),
         ))
+    elif intent == "주제변경":
+        # 검색 조건(filters)은 새 주제 기준으로 완전히 리셋 — 이전 주제 키워드와 섞이면 안 됨.
+        # history(탐색 로그)는 비우지 않고 이어서 추가 — 이전 검색 결과가 채팅에 계속 누적돼 보여야 함.
+        new_keywords = [c["ko"] for c in (params.get("keywords") or [])]
+        filter_vals = params.get("filter") or {}
+        filters = dict(_apply_filter_update(empty_filters(), filter_vals))
+        filters["keywords"] = new_keywords
+        history.append(RefinementStep(
+            step_type="search", applied_filter=None, added_keyword=None,
+            result_count=0,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        ))
 
-    return {
+    new_state = {
         **state,
         "filters": filters,
         "history": history,
         "_free_input_intent": intent,
     }
+    if intent == "주제변경":
+        new_state["user_query"] = user_message
+    return new_state
 
 
 # ── node_response_builder: 검색 실행 + 요약 + 칩 생성 ─────────────────────────
@@ -412,21 +450,21 @@ async def node_response_builder(state: SearchState) -> SearchState:
 
     if intent == "무관":
         return {**state, "ai_summary": None, "fallback": "off_topic"}
-    if intent == "주제변경":
-        return {**state, "ai_summary": None, "fallback": "topic_change"}
 
     filters = state.get("filters") or empty_filters()
     svc = get_chroma_search_service()
+    # similarity_score/snippet은 사전계산 캐시(scripts/embed_abstract_sentences.py)를 쓰므로
+    # 후보 수와 무관하게 빠름 — n_results 생략해 where절 필터를 통과한 전체 후보를 받는다.
+    # kci_only/sci_only는 뒤에서 전체 후보에 대해 적용된다.
     items = await svc.search(
         query=" ".join(filters.get("keywords") or []),
-        n_results=20,
         pub_year_start=filters.get("pub_year_start"),
         paper_type=filters.get("paper_type"),
         citation_min=filters.get("citation_min"),
     )
 
-    # 칩 엔트로피 계산 전용 lookup — Chroma 메타데이터 578건 기준 그대로 유지
-    # (PostgreSQL citation_count는 미매칭 69건도 0으로 채워져 있어 엔트로피 계산에 부적합 — 별도 이슈로만 기록)
+    # 칩 엔트로피 계산 전용 lookup
+    # (PostgreSQL citation_count는 미매칭 건도 0으로 채워져 있어 엔트로피 계산에 부적합 — 별도 이슈로만 기록)
     ids = [it.paper_id for it in items]
     citation_lookup = await svc.get_citation_counts(ids)
 
@@ -441,6 +479,20 @@ async def node_response_builder(state: SearchState) -> SearchState:
             items = await enrich_items_with_credibility(items, db)
         except Exception as e:
             logger.warning("검색 결과 신뢰도 enrichment 실패, 배지 없이 진행: %s", e)
+
+        user_id_raw = state.get("user_id")
+        if user_id_raw:
+            try:
+                bookmarked_ids = await get_bookmarked_paper_ids(db, uuid.UUID(user_id_raw), ids)
+                for it in items:
+                    it.is_bookmarked = it.paper_id in bookmarked_ids
+            except Exception as e:
+                logger.warning("검색 결과 북마크 여부 조회 실패, false로 진행: %s", e)
+
+    if filters.get("kci_only"):
+        items = [it for it in items if it.credibility.kci_registered]
+    if filters.get("sci_only"):
+        items = [it for it in items if it.credibility.sci_indexed]
 
     # items = _apply_scoring(items, research_purpose_class=state.get("research_purpose_class") or "neutral")  # 관련도순 정렬 원칙에 따라 비활성화
     items = _sort_items(items)
@@ -485,6 +537,9 @@ async def node_response_builder(state: SearchState) -> SearchState:
         "summary_failed": summary_failed,
         "is_broad_result": is_broad_result,
         "history": history,
+        # 이전 턴의 fallback(topic_change/no_result 등)이 **state 스프레드로 새어나오지 않도록 매 정상 턴마다 명시적으로 갱신.
+        # topic_change는 여기서도 계속 내려줌 — "감지했다"가 아니라 "감지해서 새 주제로 이미 재검색했다"는 의미로 재해석됨.
+        "fallback": "topic_change" if intent == "주제변경" else None,
     }
 
 

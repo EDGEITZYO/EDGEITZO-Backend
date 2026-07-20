@@ -5,20 +5,24 @@ from pydantic import BaseModel, Field
 
 class SearchPapersRequest(BaseModel):
     query: str = Field(..., min_length=1, description="사용자 검색어")
-    paper_scope: Literal["kci", "international", "both", "any"] = Field(
-        default="any",
-        description="논문 범위",
+    pub_year_start: Optional[int] = Field(
+        None, description="이 연도 이상만 포함. 미설정 시 전체 연도"
     )
-    time_range: Literal["3y", "5y", "10y", "all", "skip"] = Field(
-        default="skip",
-        description="발행 시기 범위",
+    paper_type: Optional[Literal["JAKO", "DIKO", "JAFO", "CFKO"]] = Field(
+        None,
+        description="논문 유형(DBCode 원본값)으로 좁히기. 'JAKO'=국내 학술지 | 'DIKO'=학위논문 | 'JAFO'=해외 학술지 | 'CFKO'=학술대회. 미설정 시 전체 유형",
     )
+    kci_only: bool = Field(False, description="true면 KCI 등재 논문만 포함")
+    sci_only: bool = Field(False, description="true면 SCI 계열(SCIE/SSCI/AHCI) 등재 논문만 포함")
     keywords: list[str] = Field(
         default_factory=list,
-        description="추출/선택된 키워드 목록",
+        description="추출/선택된 키워드 목록. query와 함께 검색어에 반영됨",
     )
-    page: int = Field(default=1, ge=1, description="페이지 번호")
-    size: int = Field(default=10, ge=1, le=30, description="페이지 크기")
+    size: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="반환할 최대 건수. 생략하면 필터링·정렬까지 마친 전체 결과를 반환 (페이지 개념 없음 — 프론트에서 무한스크롤로 렌더링)",
+    )
     sort_order: Literal["relevance", "year_asc", "year_desc", "citation_desc"] = Field(
         default="relevance",
         description="정렬 기준. 'relevance': 관련도순(기본값) / 'year_desc': 최신순 / 'year_asc': 오래된순 / 'citation_desc': 인용수 높은순",
@@ -65,6 +69,7 @@ class PaperSearchItem(BaseModel):
         None, description="논문 유형 배지. '학술 저널' | '박사학위 논문' | '석사학위 논문' | '학위논문'(degree 정보 없는 학위논문) | null. UI 배지 표시용 — db_code 대신 이 필드를 사용할 것"
     )
     source: str = Field(description="검색 소스. 현재 항상 'local_chroma'")
+    is_bookmarked: bool = Field(False, description="요청자가 이 논문을 북마크했는지 여부. 비로그인 요청이면 항상 false")
     credibility: CredibilityInfo = Field(description="신뢰도 배지/지표 정보")
     score: float = Field(description="정렬에 쓰이는 관련도 점수. 시맨틱+키워드(BM25) 검색 융합(RRF) 점수 기준 — 값 자체의 절대적 의미보다 상대적 순위 비교용")
     similarity_score: float = Field(

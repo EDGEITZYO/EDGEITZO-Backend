@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +13,7 @@ from app.schemas.search import (
     SearchPapersResponse,
 )
 from app.repositories.paper_repository import get_paper_cards_batch
+from app.services.bookmark_service import get_bookmarked_paper_ids
 from app.services.chroma_search_service import get_chroma_search_service
 from app.services.credibility_service import enrich_items_with_credibility, paper_type_label, resolve_paper_type
 
@@ -137,19 +139,23 @@ def _apply_sort_order(items: list[PaperSearchItem], sort_order: str) -> list[Pap
     return items
 
 
+# similarity_score/matched_snippet은 scripts/embed_abstract_sentences.py가 사전계산한
+# 캐시(문장 임베딩)를 쓰므로 후보 수와 무관하게 빠름 — n_results를 생략해 where절 필터를
+# 통과한 전체 후보를 반환한다. kci_only/sci_only(PostgreSQL 조인 필요) 등 여기서 못 거르는
+# 필터는 호출부(search_papers_service)가 전체 후보에 대해 적용한 뒤 마지막에 size로 자른다.
 async def _search_chroma_local(
     query: str,
-    size: int,
     pub_year_start: int | None = None,
     scope: str | None = None,
+    paper_type: str | None = None,
 ) -> list[PaperSearchItem]:
     try:
         service = get_chroma_search_service()
         return await service.search(
             query=query,
-            n_results=size,
             pub_year_start=pub_year_start,
             scope=scope,
+            paper_type=paper_type,
         )
     except Exception:
         return []
@@ -158,11 +164,15 @@ async def _search_chroma_local(
 async def search_papers_service(
     request: SearchPapersRequest,
     db: AsyncSession | None = None,
+    user_id: UUID | None = None,
 ) -> SearchPapersResponse:
-    items: list[PaperSearchItem] = []
+    query_text = " ".join([request.query, *request.keywords]) if request.keywords else request.query
 
-    chroma_items = await _search_chroma_local(query=request.query, size=request.size)
-    items.extend(chroma_items)
+    items = await _search_chroma_local(
+        query=query_text,
+        pub_year_start=request.pub_year_start,
+        paper_type=request.paper_type,
+    )
 
     if db is not None:
         try:
@@ -178,13 +188,29 @@ async def search_papers_service(
         except Exception:
             pass
 
+        if user_id is not None:
+            try:
+                bookmarked_ids = await get_bookmarked_paper_ids(db, user_id, [i.paper_id for i in items])
+                for item in items:
+                    item.is_bookmarked = item.paper_id in bookmarked_ids
+            except Exception:
+                pass
+
+    if request.kci_only:
+        items = [i for i in items if i.credibility.kci_registered]
+    if request.sci_only:
+        items = [i for i in items if i.credibility.sci_indexed]
+
     # items = _apply_scoring(items)  # 관련도순 정렬 원칙에 따라 비활성화 — 순수 RRF 점수(item.score)로만 정렬
     items = _sort_items(items)
     items = _apply_sort_order(items, request.sort_order)
 
+    if request.size is not None:
+        items = items[: request.size]
+
     return SearchPapersResponse(
         search_id=str(uuid.uuid4()),
-        items=items[: request.size],
+        items=items,
     )
 
 
@@ -213,7 +239,6 @@ async def execute_search(
 
     chroma_items = await _search_chroma_local(
         query=expanded_query,
-        size=size,
         pub_year_start=pub_year_start,
         scope=scope,
     )
