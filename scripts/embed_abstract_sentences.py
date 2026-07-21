@@ -35,7 +35,7 @@ from app.services.chroma_search_service import (
     _split_sentences,
 )
 
-BATCH_SIZE = 256
+BATCH_SIZE = 16  # 운영 서버(vCPU 2 / RAM 3.7GB)에서 256이면 스와핑으로 응답 불가 상태까지 감. 실측 확인됨.
 
 
 def main() -> None:
