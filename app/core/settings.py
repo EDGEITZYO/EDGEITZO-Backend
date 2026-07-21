@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     # 자유입력 광범위 질문 판정 — 결과 10건 이상이면 광범위한 검색으로 판정
     search_broad_result_threshold: Optional[int] = 10
 
+    # 관련도 하한선 — 1위 논문의 similarity_score 대비 이 비율 미만인 후보는 제외.
+    # 절대 점수는 코퍼스/질의마다 분포가 달라 고정 임계값으로 못 쓰므로(실측 확인됨),
+    # "1등 대비 상대적으로 얼마나 안 맞는지"를 기준으로 삼는다. 테스트하며 조정 예정.
+    search_relevance_ratio: float = 0.7
+
     # 키워드맵 — 빈도/동시출현 기반 그래프 생성 튜닝값
     keyword_map_candidate_pool_size: int = 40
     keyword_map_max_nodes: int = 25

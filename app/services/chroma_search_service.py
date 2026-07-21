@@ -310,7 +310,14 @@ class ChromaSearchService:
 
         combined = _rrf_combine(semantic_results, bm25_results)
 
-        # 1차 패스: where절/scope 필터를 통과한 후보 확정 — similarity_score/snippet은
+        # 관련도 하한선 — where절 통과 후보 중 1위 similarity_score 대비 search_relevance_ratio
+        # 미만인 건 제외. 절대 점수 기준으로는 코퍼스 전체가 다 걸려버리는 경우가 있어
+        # (질의와 진짜 무관한 문서도 완만하게 이어지는 분포라 절벽이 없음, 실측 확인됨)
+        # "1위 대비 상대적으로 얼마나 안 맞는지"로 판단한다.
+        top_similarity = semantic_results[0][1] if semantic_results else 0.0
+        min_similarity = top_similarity * settings.search_relevance_ratio
+
+        # 1차 패스: where절/scope/관련도 필터를 통과한 후보 확정 — similarity_score/snippet은
         # 후보 1건당 문장 단위 임베딩이 필요해 비용이 크므로(실측: 20건 9초, 150건 50초),
         # 이 비싼 2차 패스로 넘기기 전에 n_results로 반드시 자른다.
         selected: list[tuple[str, dict, float]] = []
@@ -319,6 +326,8 @@ class ChromaSearchService:
                 break
             paper = self._paper_index.get(doc_id)
             if not paper:
+                continue
+            if semantic_score_map.get(doc_id, 0.0) < min_similarity:
                 continue
             # scope 필터 — DBCode 기준 (기존 로직 그대로 유지, 이번 작업 범위 아님)
             # KCI: JAKO / SCI계열: SCIE·SSCI·AHCI (현재 미적재, 추후 추가 가능)
