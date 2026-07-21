@@ -197,38 +197,6 @@ def _journal_to_evidence(journal: Journal | None) -> JournalEvidence | None:
     )
 
 
-async def find_journal_evidence(
-    db: AsyncSession,
-    *,
-    journal_name: str | None = None,
-    issn: str | None = None,
-) -> JournalEvidence | None:
-    issns = _split_issns(issn)
-    normalized_title = _normalize_title(journal_name)
-
-    conditions = []
-    if issns:
-        conditions.append(or_(*(Journal.issn.any(value) for value in issns)))
-    if normalized_title:
-        conditions.append(func.lower(Journal.title) == normalized_title)
-
-    if not conditions:
-        return None
-
-    stmt = (
-        select(Journal)
-        .where(or_(*conditions))
-        .order_by(
-            Journal.sjr_year.desc().nullslast(),
-            Journal.sjr_score.desc().nullslast(),
-            Journal.h_index.desc().nullslast(),
-        )
-        .limit(1)
-    )
-    result = await db.execute(stmt)
-    return _journal_to_evidence(result.scalar_one_or_none())
-
-
 def resolve_paper_type(db_code: str | None, degree: str | None = None) -> str:
     """db_code + degree → internal paper_type 코드.
     반환값: 'thesis_phd' | 'thesis_master' | 'thesis' | 'journal' | 'conference'
@@ -310,19 +278,64 @@ async def find_journal_by_issn(
     return _journal_to_evidence(result.scalar_one_or_none())
 
 
+def _journal_sort_key(journal: Journal) -> tuple[int, float, int]:
+    """저널 우선순위: sjr_year desc, sjr_score desc, h_index desc, 값 없으면 항상 꼴찌.
+    세 지표 모두 음수가 없으므로 None을 -1로 두면 그 순서가 그대로 재현된다."""
+    return (
+        journal.sjr_year if journal.sjr_year is not None else -1,
+        journal.sjr_score if journal.sjr_score is not None else -1.0,
+        journal.h_index if journal.h_index is not None else -1,
+    )
+
+
 async def enrich_items_with_credibility(
     items: list[PaperSearchItem],
     db: AsyncSession,
 ) -> list[PaperSearchItem]:
+    """논문 건마다 저널을 따로 조회하면 결과 건수만큼 DB 왕복이 생겨(N+1) 후보가
+    많을 때 응답이 크게 느려짐 — 전체 후보의 ISSN/제목을 모아 쿼리 1번으로 후보
+    저널을 가져온 뒤, 항목별 최적 매칭은 메모리에서 처리한다."""
+    if not items:
+        return items
+
+    all_issns: set[str] = set()
+    all_titles: set[str] = set()
     for item in items:
-        journal = await find_journal_evidence(
-            db,
-            journal_name=item.journal_name,
-            issn=item.issn,
-        )
+        all_issns.update(_split_issns(item.issn))
+        title = _normalize_title(item.journal_name)
+        if title:
+            all_titles.add(title)
+
+    journals: list[Journal] = []
+    if all_issns or all_titles:
+        conditions = []
+        if all_issns:
+            conditions.append(Journal.issn.overlap(list(all_issns)))
+        if all_titles:
+            conditions.append(func.lower(Journal.title).in_(all_titles))
+        result = await db.execute(select(Journal).where(or_(*conditions)))
+        journals = list(result.scalars().all())
+
+    by_issn: dict[str, list[Journal]] = {}
+    by_title: dict[str, list[Journal]] = {}
+    for journal in journals:
+        for value in journal.issn or []:
+            by_issn.setdefault(value, []).append(journal)
+        if journal.title:
+            by_title.setdefault(journal.title.casefold(), []).append(journal)
+
+    for item in items:
+        candidates: list[Journal] = []
+        for value in _split_issns(item.issn):
+            candidates.extend(by_issn.get(value, []))
+        title = _normalize_title(item.journal_name)
+        if title:
+            candidates.extend(by_title.get(title, []))
+
+        best = max(candidates, key=_journal_sort_key, default=None)
         item.credibility = calculate_credibility(
             citation_count=item.credibility.citation_count,
             journal_name=item.journal_name,
-            journal=journal,
+            journal=_journal_to_evidence(best),
         )
     return items
