@@ -36,13 +36,6 @@ logger = logging.getLogger(__name__)
 _MODEL = settings.llm_default_model
 _kiwi = Kiwi()  # 모듈 로드 시 1회 초기화 (싱글턴)
 
-_PAPER_TYPE_LABEL = {
-    "JAKO": "국내 학술지",
-    "DIKO": "학위논문",
-    "JAFO": "해외 학술지",
-    "CFKO": "학술대회",
-}
-
 _KEYWORD_SYSTEM = """학술 키워드·필터 추출기. 사용자 입력에서 연구 키워드와 필터 조건(연도/논문유형/인용수)을 추출해 JSON만 반환. 절대 설명하지 말 것. JSON 외 텍스트 금지."""
 
 _FREE_INPUT_SYSTEM = """검색 정교화 의도 분류기. 사용자 입력을 보고 JSON만 반환.
@@ -120,7 +113,7 @@ async def node_keyword_extractor(state: SearchState) -> SearchState:
 [필터 조건 추출]
 입력에 아래 조건이 명시적으로 언급된 경우에만 채운다 (언급 안 된 필드는 null, 임의 추정 금지):
 - pub_year_start: 정수 연도. "최근 3년"처럼 상대 표현이면 오늘 날짜 기준으로 직접 계산해 절대 연도로 반환
-- paper_type: "JAKO"(국내 학술지) | "DIKO"(학위논문) | "JAFO"(해외 학술지) | "CFKO"(학술대회) 중 하나, 언급 없으면 null
+- paper_type: "학술 저널"(국내외 학술지·학술대회 포함) | "박사학위 논문" | "석사학위 논문" 중 하나, 언급 없으면 null
 - citation_min: 정수. "인용 많은"처럼 모호하면 null (숫자 임의 추정 금지)
 - kci_only: "KCI 등재 논문만" 같은 언급이 있으면 true, 언급 없으면 null
 - sci_only: "SCI 논문만", "SCI급" 같은 언급이 있으면 true, 언급 없으면 null
@@ -165,7 +158,7 @@ async def node_free_input_classifier(state: SearchState) -> SearchState:
 
 [intent="좁히기"일 때] params.filter에 아래 중 해당하는 필드만 채운다 (언급 안 된 필드는 null):
 - pub_year_start: 정수 연도. "최근 3년"처럼 상대 표현이면 오늘 날짜 기준으로 직접 계산해 절대 연도로 반환
-- paper_type: "JAKO"(국내 학술지) | "DIKO"(학위논문) | "JAFO"(해외 학술지) | "CFKO"(학술대회) 중 하나, 언급 없으면 null
+- paper_type: "학술 저널"(국내외 학술지·학술대회 포함) | "박사학위 논문" | "석사학위 논문" 중 하나, 언급 없으면 null
 - citation_min: 정수. "인용 많은"처럼 모호하면 null (숫자 임의 추정 금지)
 - kci_only: "KCI 등재 논문만" 같은 언급이 있으면 true, 언급 없으면 null
 - sci_only: "SCI 논문만", "SCI급" 같은 언급이 있으면 true, 언급 없으면 null
@@ -312,15 +305,14 @@ def _build_narrow_chips(
                 value={"citation_min": citation_value},
             )))
 
-    types = [it["db_code"] for it in result_items if it.get("db_code")]
+    types = [it["paper_type"] for it in result_items if it.get("paper_type")]
     if types:
         type_counts = Counter(types)
         score, k_eff = _entropy_score(list(type_counts.values()))
         if k_eff > 1 and score >= threshold:
             most_common_type = type_counts.most_common(1)[0][0]
-            type_label = _PAPER_TYPE_LABEL.get(most_common_type, most_common_type)
             candidates.append((score, NarrowChip(
-                chip_id="narrow_paper_type", chip_type="paper_type", label=f"{type_label} 논문만 보기",
+                chip_id="narrow_paper_type", chip_type="paper_type", label=f"{most_common_type}만 보기",
                 value={"paper_type": most_common_type},
             )))
 
@@ -456,13 +448,20 @@ async def node_response_builder(state: SearchState) -> SearchState:
 
     filters = state.get("filters") or empty_filters()
     svc = get_chroma_search_service()
+    # paper_type은 세션에 "학술 저널"/"박사학위 논문"/"석사학위 논문" 레이블로 저장되지만,
+    # Chroma의 DBCode 메타데이터는 원본 코드(JAKO/DIKO/JAFO/CFKO)라 여기선 매칭 안 됨.
+    # 박사/석사 구분은 degree 정보가 있어야 하는데 그건 PostgreSQL enrichment 이후에나 알 수 있으므로,
+    # 여기서는 DIKO(학위논문)로만 1차 축소하고, 실제 박사/석사/학술 저널 구분은
+    # 아래 enrichment 이후 it.paper_type 기준 2차 필터로 처리한다.
+    paper_type_filter = filters.get("paper_type")
+    chroma_paper_type = "DIKO" if paper_type_filter in ("박사학위 논문", "석사학위 논문") else None
     # similarity_score/snippet은 사전계산 캐시(scripts/embed_abstract_sentences.py)를 쓰므로
     # 후보 수와 무관하게 빠름 — n_results 생략해 where절 필터를 통과한 전체 후보를 받는다.
-    # kci_only/sci_only는 뒤에서 전체 후보에 대해 적용된다.
+    # kci_only/sci_only/paper_type은 뒤에서 전체 후보에 대해 적용된다.
     items = await svc.search(
         query=" ".join(filters.get("keywords") or []),
         pub_year_start=filters.get("pub_year_start"),
-        paper_type=filters.get("paper_type"),
+        paper_type=chroma_paper_type,
         citation_min=filters.get("citation_min"),
     )
 
@@ -496,6 +495,8 @@ async def node_response_builder(state: SearchState) -> SearchState:
         items = [it for it in items if it.credibility.kci_registered]
     if filters.get("sci_only"):
         items = [it for it in items if it.credibility.sci_indexed]
+    if paper_type_filter:
+        items = [it for it in items if it.paper_type == paper_type_filter]
 
     # items = _apply_scoring(items, research_purpose_class=state.get("research_purpose_class") or "neutral")  # 관련도순 정렬 원칙에 따라 비활성화
     items = _sort_items(items)
@@ -518,15 +519,21 @@ async def node_response_builder(state: SearchState) -> SearchState:
     narrow_chips = _build_narrow_chips(result_items, citation_lookup) if total_count > 4 else []
     expand_chips = await _build_expand_chips(_top_result_keywords(result_items))
     type_distribution = dict(Counter(
-        _PAPER_TYPE_LABEL.get(it["db_code"], "기타") for it in result_items if it.get("db_code")
+        it["paper_type"] for it in result_items if it.get("paper_type")
     ))
-    ai_summary, summary_failed = await _build_summary(
-        topic=state.get("user_query", ""),
-        total_count=total_count,
-        keywords=filters.get("keywords") or [],
-        type_distribution=type_distribution,
-        sort_order=state.get("sort_order") or "relevance",
-    )
+    if state.get("_skip_classification"):
+        # 칩 클릭/필터 직접 지정 — 새 사용자 발화가 없었던 턴이므로 요약 문장을 다시 만들 필요가
+        # 없다. LLM 재호출 없이 직전 턴의 ai_summary/summary_failed를 그대로 유지한다.
+        ai_summary = state.get("ai_summary")
+        summary_failed = state.get("summary_failed", False)
+    else:
+        ai_summary, summary_failed = await _build_summary(
+            topic=state.get("user_query", ""),
+            total_count=total_count,
+            keywords=filters.get("keywords") or [],
+            type_distribution=type_distribution,
+            sort_order=state.get("sort_order") or "relevance",
+        )
 
     threshold = settings.search_broad_result_threshold
     is_broad_result = threshold is not None and total_count >= threshold
@@ -570,8 +577,8 @@ def _entry_router(state: dict) -> str:
 
     파라미터 타입을 SearchState가 아닌 dict로 둔다 — LangGraph가 조건부 엔트리포인트
     라우팅 함수의 파라미터 타입 힌트를 보고 그 스키마에 선언된 키만 남기고 나머지를
-    걸러낸 뒤 호출하는 것으로 확인됨. state: SearchState로 선언하면 SearchState에
-    없는 임시 키(_skip_classification)가 라우팅 함수 도달 전에 사라진다."""
+    걸러낸 뒤 호출하는 것으로 확인됨. SearchState에 선언 안 된 임시 키를 라우팅에서만
+    쓰고 싶을 때는(스키마에 추가하고 싶지 않을 때) 여기처럼 dict로 받아야 한다."""
     if state.get("_skip_classification"):
         return "response_builder"
     filters = state.get("filters") or {}

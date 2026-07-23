@@ -15,7 +15,7 @@ class KeywordCandidate(TypedDict):
 class FilterState(TypedDict):
     """연도/논문유형/인용수/KCI/SCI 5축 고정 + 누적 키워드"""
     pub_year_start: Optional[int]
-    paper_type: Optional[str]  # DBCode 원본값 (JAKO/DIKO/JAFO/CFKO)
+    paper_type: Optional[str]  # "학술 저널" | "박사학위 논문" | "석사학위 논문" (사용자 노출 레이블)
     citation_min: Optional[int]
     kci_only: Optional[bool]  # true면 KCI 등재만
     sci_only: Optional[bool]  # true면 SCI 계열(SCIE/SSCI/AHCI) 등재만
@@ -69,6 +69,9 @@ class SearchState(TypedDict):
     is_broad_result: bool  # settings.search_broad_result_threshold 기준 판정 (임계값 미정 동안 항상 False)
     messages: List[Dict[str, Any]]
     _free_input_intent: Optional[str]  # free_input_classifier→response_builder 전달용 임시 신호.
+    _skip_classification: Optional[bool]  # 칩 클릭/필터 직접 지정(자유입력 없음) 시 True.
+    # response_builder가 이번 턴엔 새 사용자 발화가 없었음을 알고 ai_summary 재생성(LLM 호출)을
+    # 건너뛸 수 있게 하는 신호로도 쓰인다.
     # LangGraph는 노드 간 엣지 전달 시 StateGraph(SearchState)에 선언된 채널만 유지하므로
     # (수신 함수의 파라미터 타입힌트와 무관), 스키마에 없으면 값이 전달 도중 사라진다.
     # 세션에 영속화하면 안 되므로 _save_state()에서 저장 직전 반드시 pop한다.

@@ -81,7 +81,7 @@ class ChatRequest(BaseModel):
         description=(
             "chip_id와 함께 전달. "
             "'year'=발행연도 이하로 좁히기, "
-            "'paper_type'=논문유형(JAKO/DIKO/JAFO/CFKO)으로 좁히기, "
+            "'paper_type'=논문유형(학술 저널/박사학위 논문/석사학위 논문)으로 좁히기, "
             "'citation'=인용수 이상으로 좁히기, "
             "'expand'=연관 키워드 추가로 확장. "
             "year/paper_type/citation은 narrow_chips 응답에서, expand는 expand_chips 응답에서 옴."
@@ -99,9 +99,12 @@ class ChatRequest(BaseModel):
         None,
         description="발행연도 필터 직접 지정 (이 연도 이상). 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지.",
     )
-    paper_type: Optional[Literal["JAKO", "DIKO", "JAFO", "CFKO"]] = Field(
+    paper_type: Optional[Literal["학술 저널", "박사학위 논문", "석사학위 논문"]] = Field(
         None,
-        description="논문유형 필터 직접 지정. 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지.",
+        description=(
+            "논문유형 필터 직접 지정. '학술 저널'=국내외 학술지·학술대회 통합 | '박사학위 논문' | '석사학위 논문'. "
+            "값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지."
+        ),
     )
     kci_only: Optional[bool] = Field(
         None,
@@ -115,7 +118,7 @@ class ChatRequest(BaseModel):
 
 class FilterStateSchema(BaseModel):
     pub_year_start: Optional[int] = Field(None, description="이 연도 이상만 포함 (예: 2021 → 2021년 이후). 미설정 시 null")
-    paper_type: Optional[str] = Field(None, description="DBCode 원본값. 'JAKO'(국내 학술지) | 'DIKO'(학위논문) | 'JAFO'(해외 학술지) | 'CFKO'(학술대회). 미설정 시 null")
+    paper_type: Optional[str] = Field(None, description="'학술 저널'(국내외 학술지·학술대회 통합) | '박사학위 논문' | '석사학위 논문'. 미설정 시 null")
     citation_min: Optional[int] = Field(None, description="이 인용수 이상만 포함. 미설정 시 null")
     kci_only: Optional[bool] = Field(None, description="true면 KCI 등재 논문만 포함. 미설정 시 null")
     sci_only: Optional[bool] = Field(None, description="true면 SCI 계열(SCIE/SSCI/AHCI) 등재 논문만 포함. 미설정 시 null")
@@ -141,8 +144,8 @@ class NarrowChipSchema(BaseModel):
             "클릭 시 filters에 반영될 값. "
             "chip_type='year' → {'pub_year_start': int}, "
             "chip_type='citation' → {'citation_min': int}, "
-            "chip_type='paper_type' → {'paper_type': str} (DBCode 원본값. "
-            "'JAKO'=국내 학술지 | 'DIKO'=학위논문 | 'JAFO'=해외 학술지 | 'CFKO'=학술대회)"
+            "chip_type='paper_type' → {'paper_type': str} "
+            "('학술 저널' | '박사학위 논문' | '석사학위 논문')"
         )
     )
 
