@@ -97,22 +97,39 @@ class ChatRequest(BaseModel):
     )
     pub_year_start: Optional[int] = Field(
         None,
-        description="발행연도 필터 직접 지정 (이 연도 이상). 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지.",
+        description=(
+            "발행연도 필터 직접 지정 (이 연도 이상). 드롭다운의 현재 선택값을 매 요청마다 그대로 보내면 됨. "
+            "필드 자체를 아예 안 보내면 이전 값 유지, 필드를 포함해서 null로 보내면 '전체'로 해제됨 "
+            "(즉 드롭다운에서 '전체'를 선택했을 때는 pub_year_start: null을 명시적으로 보낼 것 — "
+            "필드를 통째로 빼면 안 됨). 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨."
+        ),
     )
     paper_type: Optional[Literal["학술 저널", "박사학위 논문", "석사학위 논문"]] = Field(
         None,
         description=(
             "논문유형 필터 직접 지정. '학술 저널'=국내외 학술지·학술대회 통합 | '박사학위 논문' | '석사학위 논문'. "
-            "값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지."
+            "드롭다운의 현재 선택값을 매 요청마다 그대로 보내면 됨. 필드 자체를 아예 안 보내면 이전 값 유지, "
+            "필드를 포함해서 null로 보내면 '전체'로 해제됨(드롭다운에서 '전체' 선택 시 paper_type: null을 "
+            "명시적으로 보낼 것 — 필드를 통째로 빼면 안 됨). 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 "
+            "이후 턴에도 유지됨."
         ),
     )
     kci_only: Optional[bool] = Field(
         None,
-        description="true면 KCI 등재 논문만 필터. 토글로 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지.",
+        description=(
+            "true면 KCI 등재 논문만 필터. 토글의 현재 on/off 상태를 매 요청마다 true/false로 그대로 보내면 됨 "
+            "(off일 때 필드를 빼지 말고 반드시 false를 명시적으로 보낼 것). 값을 보내면 LLM 분류 없이 세션에 "
+            "즉시 반영되어 이후 턴에도 유지됨. 필드 자체를 아예 안 보내면 이전 값 유지."
+        ),
     )
     sci_only: Optional[bool] = Field(
         None,
-        description="true면 SCI 계열(SCIE/SSCI/AHCI) 등재 논문만 필터. 토글로 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지.",
+        description=(
+            "true면 SCI 계열(SCIE/SSCI/AHCI) 등재 논문만 필터. 토글의 현재 on/off 상태를 매 요청마다 "
+            "true/false로 그대로 보내면 됨(off일 때 필드를 빼지 말고 반드시 false를 명시적으로 보낼 것). "
+            "값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 필드 자체를 아예 안 보내면 "
+            "이전 값 유지."
+        ),
     )
 
 
@@ -273,17 +290,29 @@ _DIRECT_FILTER_FIELDS = ("pub_year_start", "paper_type", "kci_only", "sci_only")
 
 def _apply_direct_filters(state: SearchState, request: ChatRequest) -> SearchState:
     """발행연도/논문유형/KCI/SCI 드롭다운·토글 직접 지정 처리 — LLM 호출 없이 filters에 반영.
+
+    field-presence 기반: request.model_fields_set에 필드명이 있는지(요청 JSON에 그 키가
+    실제로 포함됐는지)로 판단한다. 포함돼 있으면 값이 null이어도 '명시적으로 이 값으로
+    설정(=해제)'로 처리하고, 키 자체가 없으면 이전 값을 그대로 둔다. 즉 드롭다운에서
+    '전체'를 고르거나 토글을 껐을 때는 필드를 아예 빼지 말고 null/false를 명시적으로
+    보내야 실제로 해제된다 — 그래야 '생략=이전 값 유지'와 구분됨.
+    (LLM 분류 경로(_apply_filter_update)는 '언급 안 함=null=변경 없음'이 맞으므로
+    이 field-presence 판단을 쓰지 않는다 — 의도적으로 다른 규칙.)
+
     message가 비어있으면(순수 필터 변경만) 칩 클릭과 동일하게 history에 narrow 스텝을 기록하고
     _skip_classification=True로 세팅해 자유입력 분류 노드가 이전 턴의 stale한 메시지를
     재분류하는 걸 막는다. message가 함께 오면 free_input_classifier가 이번 턴의 history를
     책임지므로 여기서는 중복 기록하지 않는다(뒤에서 result_count가 마지막 항목에만 채워지기 때문)."""
-    updates = {f: getattr(request, f) for f in _DIRECT_FILTER_FIELDS}
-    applied = {k: v for k, v in updates.items() if v is not None}
-    if not applied:
+    touched = request.model_fields_set & set(_DIRECT_FILTER_FIELDS)
+    if not touched:
         return state
 
     filters = dict(state.get("filters") or empty_filters())
-    filters = dict(_apply_filter_update(filters, updates))
+    applied = {}
+    for field in touched:
+        value = getattr(request, field)
+        filters[field] = value
+        applied[field] = value
     new_state = {**state, "filters": filters}
 
     if not request.message:
