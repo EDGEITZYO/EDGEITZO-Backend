@@ -66,7 +66,7 @@ class PaperSearchItem(BaseModel):
         None, description="ScienceON DB 코드. 'JAKO'=국내 학술지 | 'DIKO'=학위논문 | 'JAFO'=해외 학술지 | 'CFKO'=학술대회"
     )
     paper_type: Optional[str] = Field(
-        None, description="논문 유형 배지. '학술 저널' | '박사학위 논문' | '석사학위 논문' | '학위논문'(degree 정보 없는 학위논문) | null. UI 배지 표시용 — db_code 대신 이 필드를 사용할 것"
+        None, description="논문 유형 배지. '학술 저널' | '박사학위 논문' | '석사학위 논문' | null. UI 배지 표시용 — db_code 대신 이 필드를 사용할 것"
     )
     source: str = Field(description="검색 소스. 현재 항상 'local_chroma'")
     is_bookmarked: bool = Field(False, description="요청자가 이 논문을 북마크했는지 여부. 비로그인 요청이면 항상 false")

@@ -30,7 +30,7 @@ class KeywordPaperRequest(BaseModel):
     keyword_en: str = Field("", description="검색할 키워드 (영어). Neo4j 실패 시 ChromaDB fallback 검색에 사용", example="deep learning")
     sort: Literal["citation", "date"] = Field("date", description="정렬 기준. 'citation': 인용수 내림차순, 'date': 발행일 내림차순")
     year_range: Optional[str] = Field(None, description="발행 연도 필터. '3y'(2023~) / '5y'(2021~) / '10y'(2016~) / null(전체)")
-    paper_type: Optional[str] = Field(None, description="논문 유형 필터. '학술 저널' | '박사학위 논문' | '석사학위 논문' | '학위논문' | null(전체)")
+    paper_type: Optional[str] = Field(None, description="논문 유형 필터. '학술 저널' | '박사학위 논문' | '석사학위 논문' | null(전체)")
     kci: Optional[bool] = Field(None, description="KCI 등재 필터. true(KCI만) / false(비KCI만) / null(전체)")
     sci: Optional[bool] = Field(None, description="SCI 계열 필터. true(SCI만) / null(전체)")
     page: int = Field(1, description="페이지 번호 (1부터 시작)")
@@ -87,7 +87,7 @@ async def get_last_anchor(user_id: str, db: AsyncSession = Depends(get_db)):
 
 **필터 파라미터**
 - `year_range`: `'3y'`(2023~) / `'5y'`(2021~) / `'10y'`(2016~) / null(전체)
-- `paper_type`: `'학술 저널'` / `'박사학위 논문'` / `'석사학위 논문'` / `'학위논문'` / null(전체)
+- `paper_type`: `'학술 저널'` / `'박사학위 논문'` / `'석사학위 논문'` / null(전체)
 - `kci`: `true`(KCI만) / `false`(비KCI만) / null(전체)
 - `sci`: `true`(SCI 계열만) / null(전체)
 - `sort`: `'date'`(발행일, 기본값) / `'citation'`(인용수)

@@ -40,7 +40,7 @@ class PaperCardResponse(BaseModel):
     )
     paper_type: Optional[str] = Field(
         None,
-        description="논문 유형. '박사학위 논문' | '석사학위 논문' | '학위논문' | '학술 저널' | null",
+        description="논문 유형. '박사학위 논문' | '석사학위 논문' | '학술 저널' | null",
         example="학술 저널",
     )
     abstract: Optional[str] = Field(
@@ -118,7 +118,7 @@ class PaperDetailResponse(BaseModel):
     keywords_ko: Optional[list[str]] = Field(None, description="한국어 키워드")
     keywords_en: Optional[list[str]] = Field(None, description="영문 키워드")
     published_at: Optional[str] = Field(None, description="발행일 (ISO8601). pubdate 우선, 없으면 '{year}-01-01'")
-    paper_type: Optional[str] = Field(None, description="논문 유형. '박사학위 논문' | '석사학위 논문' | '학위논문' | '학술 저널' | null")
+    paper_type: Optional[str] = Field(None, description="논문 유형. '박사학위 논문' | '석사학위 논문' | '학술 저널' | null")
     journal_name: Optional[str] = Field(None, description="학술지명. 없으면 null")
     doi: Optional[str] = Field(None, description="DOI. 없으면 null")
     citation_count: Optional[int] = Field(None, description="인용 수. 없으면 null")

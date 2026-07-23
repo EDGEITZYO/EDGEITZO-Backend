@@ -20,6 +20,7 @@ from app.core.deps import get_current_user_optional
 from app.core.redis import get_redis
 from app.core.response import success_response
 from app.core.settings import settings
+from app.api.v1.home import save_search_history
 from app.langgraph.search_graph import get_graph
 from app.langgraph.search_state import (
     SearchState,
@@ -81,7 +82,7 @@ class ChatRequest(BaseModel):
         description=(
             "chip_id와 함께 전달. "
             "'year'=발행연도 이하로 좁히기, "
-            "'paper_type'=논문유형(JAKO/DIKO/JAFO/CFKO)으로 좁히기, "
+            "'paper_type'=논문유형(학술 저널/박사학위 논문/석사학위 논문)으로 좁히기, "
             "'citation'=인용수 이상으로 좁히기, "
             "'expand'=연관 키워드 추가로 확장. "
             "year/paper_type/citation은 narrow_chips 응답에서, expand는 expand_chips 응답에서 옴."
@@ -97,25 +98,45 @@ class ChatRequest(BaseModel):
     )
     pub_year_start: Optional[int] = Field(
         None,
-        description="발행연도 필터 직접 지정 (이 연도 이상). 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지.",
+        description=(
+            "발행연도 필터 직접 지정 (이 연도 이상). 드롭다운의 현재 선택값을 매 요청마다 그대로 보내면 됨. "
+            "필드 자체를 아예 안 보내면 이전 값 유지, 필드를 포함해서 null로 보내면 '전체'로 해제됨 "
+            "(즉 드롭다운에서 '전체'를 선택했을 때는 pub_year_start: null을 명시적으로 보낼 것 — "
+            "필드를 통째로 빼면 안 됨). 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨."
+        ),
     )
-    paper_type: Optional[Literal["JAKO", "DIKO", "JAFO", "CFKO"]] = Field(
+    paper_type: Optional[Literal["학술 저널", "박사학위 논문", "석사학위 논문"]] = Field(
         None,
-        description="논문유형 필터 직접 지정. 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지.",
+        description=(
+            "논문유형 필터 직접 지정. '학술 저널'=국내외 학술지·학술대회 통합 | '박사학위 논문' | '석사학위 논문'. "
+            "드롭다운의 현재 선택값을 매 요청마다 그대로 보내면 됨. 필드 자체를 아예 안 보내면 이전 값 유지, "
+            "필드를 포함해서 null로 보내면 '전체'로 해제됨(드롭다운에서 '전체' 선택 시 paper_type: null을 "
+            "명시적으로 보낼 것 — 필드를 통째로 빼면 안 됨). 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 "
+            "이후 턴에도 유지됨."
+        ),
     )
     kci_only: Optional[bool] = Field(
         None,
-        description="true면 KCI 등재 논문만 필터. 토글로 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지.",
+        description=(
+            "true면 KCI 등재 논문만 필터. 토글의 현재 on/off 상태를 매 요청마다 true/false로 그대로 보내면 됨 "
+            "(off일 때 필드를 빼지 말고 반드시 false를 명시적으로 보낼 것). 값을 보내면 LLM 분류 없이 세션에 "
+            "즉시 반영되어 이후 턴에도 유지됨. 필드 자체를 아예 안 보내면 이전 값 유지."
+        ),
     )
     sci_only: Optional[bool] = Field(
         None,
-        description="true면 SCI 계열(SCIE/SSCI/AHCI) 등재 논문만 필터. 토글로 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 생략하면 이전 값 유지.",
+        description=(
+            "true면 SCI 계열(SCIE/SSCI/AHCI) 등재 논문만 필터. 토글의 현재 on/off 상태를 매 요청마다 "
+            "true/false로 그대로 보내면 됨(off일 때 필드를 빼지 말고 반드시 false를 명시적으로 보낼 것). "
+            "값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. 필드 자체를 아예 안 보내면 "
+            "이전 값 유지."
+        ),
     )
 
 
 class FilterStateSchema(BaseModel):
     pub_year_start: Optional[int] = Field(None, description="이 연도 이상만 포함 (예: 2021 → 2021년 이후). 미설정 시 null")
-    paper_type: Optional[str] = Field(None, description="DBCode 원본값. 'JAKO'(국내 학술지) | 'DIKO'(학위논문) | 'JAFO'(해외 학술지) | 'CFKO'(학술대회). 미설정 시 null")
+    paper_type: Optional[str] = Field(None, description="'학술 저널'(국내외 학술지·학술대회 통합) | '박사학위 논문' | '석사학위 논문'. 미설정 시 null")
     citation_min: Optional[int] = Field(None, description="이 인용수 이상만 포함. 미설정 시 null")
     kci_only: Optional[bool] = Field(None, description="true면 KCI 등재 논문만 포함. 미설정 시 null")
     sci_only: Optional[bool] = Field(None, description="true면 SCI 계열(SCIE/SSCI/AHCI) 등재 논문만 포함. 미설정 시 null")
@@ -141,8 +162,8 @@ class NarrowChipSchema(BaseModel):
             "클릭 시 filters에 반영될 값. "
             "chip_type='year' → {'pub_year_start': int}, "
             "chip_type='citation' → {'citation_min': int}, "
-            "chip_type='paper_type' → {'paper_type': str} (DBCode 원본값. "
-            "'JAKO'=국내 학술지 | 'DIKO'=학위논문 | 'JAFO'=해외 학술지 | 'CFKO'=학술대회)"
+            "chip_type='paper_type' → {'paper_type': str} "
+            "('학술 저널' | '박사학위 논문' | '석사학위 논문')"
         )
     )
 
@@ -270,17 +291,29 @@ _DIRECT_FILTER_FIELDS = ("pub_year_start", "paper_type", "kci_only", "sci_only")
 
 def _apply_direct_filters(state: SearchState, request: ChatRequest) -> SearchState:
     """발행연도/논문유형/KCI/SCI 드롭다운·토글 직접 지정 처리 — LLM 호출 없이 filters에 반영.
+
+    field-presence 기반: request.model_fields_set에 필드명이 있는지(요청 JSON에 그 키가
+    실제로 포함됐는지)로 판단한다. 포함돼 있으면 값이 null이어도 '명시적으로 이 값으로
+    설정(=해제)'로 처리하고, 키 자체가 없으면 이전 값을 그대로 둔다. 즉 드롭다운에서
+    '전체'를 고르거나 토글을 껐을 때는 필드를 아예 빼지 말고 null/false를 명시적으로
+    보내야 실제로 해제된다 — 그래야 '생략=이전 값 유지'와 구분됨.
+    (LLM 분류 경로(_apply_filter_update)는 '언급 안 함=null=변경 없음'이 맞으므로
+    이 field-presence 판단을 쓰지 않는다 — 의도적으로 다른 규칙.)
+
     message가 비어있으면(순수 필터 변경만) 칩 클릭과 동일하게 history에 narrow 스텝을 기록하고
     _skip_classification=True로 세팅해 자유입력 분류 노드가 이전 턴의 stale한 메시지를
     재분류하는 걸 막는다. message가 함께 오면 free_input_classifier가 이번 턴의 history를
     책임지므로 여기서는 중복 기록하지 않는다(뒤에서 result_count가 마지막 항목에만 채워지기 때문)."""
-    updates = {f: getattr(request, f) for f in _DIRECT_FILTER_FIELDS}
-    applied = {k: v for k, v in updates.items() if v is not None}
-    if not applied:
+    touched = request.model_fields_set & set(_DIRECT_FILTER_FIELDS)
+    if not touched:
         return state
 
     filters = dict(state.get("filters") or empty_filters())
-    filters = dict(_apply_filter_update(filters, updates))
+    applied = {}
+    for field in touched:
+        value = getattr(request, field)
+        filters[field] = value
+        applied[field] = value
     new_state = {**state, "filters": filters}
 
     if not request.message:
@@ -301,6 +334,25 @@ def _apply_direct_filters(state: SearchState, request: ChatRequest) -> SearchSta
 
 def _sse(event_type: str, payload: dict) -> str:
     return f"data: {json.dumps({'type': event_type, **payload}, ensure_ascii=False)}\n\n"
+
+
+def _record_search_history(current_user: Optional[User], session_id: str, result_state: SearchState) -> None:
+    """홈 화면 '최근 탐색 이력'(recent_searches, type='ai')에 반영. 로그인 유저에 한해,
+    턴마다(검색/좁히기/확장/필터 무관) 갱신 — save_search_history가 session_id로 기존
+    항목을 찾아 맨 앞으로 옮기므로 중복 생성되지 않는다. 실패해도 검색 응답 자체는
+    막지 않는다(부가 기능)."""
+    if not current_user:
+        return
+    try:
+        save_search_history(
+            user_id=str(current_user.id),
+            search_type="ai",
+            title=result_state.get("user_query") or "논문 탐색",
+            search_id=session_id,
+            recommended_keywords=list((result_state.get("filters") or {}).get("keywords") or []),
+        )
+    except Exception:
+        logger.warning("최근 탐색 이력 저장 실패 session_id=%s", session_id, exc_info=True)
 
 
 def _to_chat_response(session_id: str, state: SearchState) -> ChatResponse:
@@ -365,6 +417,7 @@ async def chat_search(
         raise HTTPException(status_code=504, detail="요청 시간이 초과됐어요. 다시 시도해주세요.")
 
     _save_state(session_id, result_state)
+    _record_search_history(current_user, session_id, result_state)
     return success_response(data=_to_chat_response(session_id, result_state), message="chat processed")
 
 
@@ -431,6 +484,7 @@ async def stream_chat(
             result_state: SearchState = task.result()
 
             _save_state(session_id, result_state)
+            _record_search_history(current_user, session_id, result_state)
 
             yield _sse("papers_found", {"count": result_state.get("total_count", 0)})
             yield _sse("fetching", {})
