@@ -20,6 +20,7 @@ from app.core.deps import get_current_user_optional
 from app.core.redis import get_redis
 from app.core.response import success_response
 from app.core.settings import settings
+from app.api.v1.home import save_search_history
 from app.langgraph.search_graph import get_graph
 from app.langgraph.search_state import (
     SearchState,
@@ -335,6 +336,25 @@ def _sse(event_type: str, payload: dict) -> str:
     return f"data: {json.dumps({'type': event_type, **payload}, ensure_ascii=False)}\n\n"
 
 
+def _record_search_history(current_user: Optional[User], session_id: str, result_state: SearchState) -> None:
+    """홈 화면 '최근 탐색 이력'(recent_searches, type='ai')에 반영. 로그인 유저에 한해,
+    턴마다(검색/좁히기/확장/필터 무관) 갱신 — save_search_history가 session_id로 기존
+    항목을 찾아 맨 앞으로 옮기므로 중복 생성되지 않는다. 실패해도 검색 응답 자체는
+    막지 않는다(부가 기능)."""
+    if not current_user:
+        return
+    try:
+        save_search_history(
+            user_id=str(current_user.id),
+            search_type="ai",
+            title=result_state.get("user_query") or "논문 탐색",
+            search_id=session_id,
+            recommended_keywords=list((result_state.get("filters") or {}).get("keywords") or []),
+        )
+    except Exception:
+        logger.warning("최근 탐색 이력 저장 실패 session_id=%s", session_id, exc_info=True)
+
+
 def _to_chat_response(session_id: str, state: SearchState) -> ChatResponse:
     return ChatResponse(
         session_id=session_id,
@@ -397,6 +417,7 @@ async def chat_search(
         raise HTTPException(status_code=504, detail="요청 시간이 초과됐어요. 다시 시도해주세요.")
 
     _save_state(session_id, result_state)
+    _record_search_history(current_user, session_id, result_state)
     return success_response(data=_to_chat_response(session_id, result_state), message="chat processed")
 
 
@@ -463,6 +484,7 @@ async def stream_chat(
             result_state: SearchState = task.result()
 
             _save_state(session_id, result_state)
+            _record_search_history(current_user, session_id, result_state)
 
             yield _sse("papers_found", {"count": result_state.get("total_count", 0)})
             yield _sse("fetching", {})
