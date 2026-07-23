@@ -11,7 +11,6 @@ from app.schemas.search import PaperSearchItem
 # 필터값 → 허용 db_code 집합 (1차 pre-filter, degree 정보 없어도 가능)
 _PAPER_TYPE_TO_DB_CODES: dict[str, set[str]] = {
     "학술 저널":    {"JAKO", "JAFO", "CFKO", "CFFO"},
-    "학위논문":     {"DIKO"},
     "박사학위 논문": {"DIKO"},
     "석사학위 논문": {"DIKO"},
 }
@@ -27,7 +26,7 @@ _DB_CODE_DEFAULT_LABEL: dict[str, str] = {
 
 _YEAR_CUTOFF = {"3y": 2023, "5y": 2021, "10y": 2016}
 
-PaperTypeFilter = Literal["학술 저널", "박사학위 논문", "석사학위 논문", "학위논문", "전체"]
+PaperTypeFilter = Literal["학술 저널", "박사학위 논문", "석사학위 논문", "전체"]
 
 
 def apply_filters(
@@ -67,13 +66,9 @@ def apply_paper_type_postfilter(
     cards: list[PaperCardResponse],
     paper_type: Optional[str],
 ) -> list[PaperCardResponse]:
-    """build_paper_cards 이후 degree 반영된 paper_type으로 2차 필터.
-    "학위논문"은 박사/석사/fallback 모두 포함.
-    """
+    """build_paper_cards 이후 degree 반영된 paper_type으로 2차 필터."""
     if not paper_type or paper_type == "전체":
         return cards
-    if paper_type == "학위논문":
-        return [c for c in cards if c.paper_type in ("박사학위 논문", "석사학위 논문", "학위논문")]
     return [c for c in cards if c.paper_type == paper_type]
 
 

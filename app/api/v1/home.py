@@ -46,7 +46,7 @@ class RecentSearchItem(BaseModel):
 
 class RecentPaperItem(BaseModel):
     paper_id: str = Field(description="논문 고유 ID", example="JAKO202312345678")
-    paper_type: Optional[str] = Field(None, description="논문 유형. '박사학위 논문' | '석사학위 논문' | '학위논문' | '학술 저널' | null", example="학술 저널")
+    paper_type: Optional[str] = Field(None, description="논문 유형. '박사학위 논문' | '석사학위 논문' | '학술 저널' | null", example="학술 저널")
     journal_name: Optional[str] = Field(None, description="학술지명. 없으면 null", example="한국정보과학회논문지")
     published_at: Optional[str] = Field(None, description="발행일 (ISO8601). pubdate 우선, 없으면 pubyear 기준 '{year}-01-01' 형태", example="2023-06-15")
     title: str = Field(description="논문 제목", example="BERT를 활용한 자연어처리 연구")
