@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid as _uuid
 from typing import Literal, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.paper_repository import get_paper_cards_batch
 from app.schemas.paper import PaperCardResponse, PaperCardTrustBadge
 from app.schemas.search import PaperSearchItem
+from app.services.bookmark_service import get_bookmarked_paper_ids
 
 # 필터값 → 허용 db_code 집합 (1차 pre-filter, degree 정보 없어도 가능)
 _PAPER_TYPE_TO_DB_CODES: dict[str, set[str]] = {
@@ -94,12 +96,24 @@ def paginate(
 async def build_paper_cards(
     items: list[PaperSearchItem],
     db: AsyncSession,
+    *,
+    user_id: Optional[str] = None,
 ) -> list[PaperCardResponse]:
     """ChromaDB 결과 목록 → PaperCardResponse 목록.
     papers + journals IN 쿼리 1회로 citation_count, kci_registered, sci_indexed, degree 보강.
+    user_id 제공 시 북마크 여부도 배치 조회 1회로 보강 (카드마다 개별 조회 없음).
     """
     paper_ids = [i.paper_id for i in items]
     db_data = await get_paper_cards_batch(db, paper_ids)
+
+    bookmarked_ids: set[str] = set()
+    if user_id:
+        try:
+            uid = _uuid.UUID(user_id)
+        except ValueError:
+            uid = None
+        if uid is not None:
+            bookmarked_ids = await get_bookmarked_paper_ids(db, uid, paper_ids)
 
     cards = []
     for item in items:
@@ -143,5 +157,6 @@ async def build_paper_cards(
             citation_count=citation_count,
             relevance_score=item.score,
             trust_badge=trust_badge,
+            is_bookmarked=item.paper_id in bookmarked_ids,
         ))
     return cards

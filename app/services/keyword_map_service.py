@@ -450,7 +450,7 @@ async def get_node_papers(
     items = apply_filters(items, year_range=year_range, paper_type=paper_type, kci=kci, sci=sci)
     items = apply_sort(items, sort)
 
-    all_cards = await build_paper_cards(items, db)
+    all_cards = await build_paper_cards(items, db, user_id=user_id)
     all_cards = apply_paper_type_postfilter(all_cards, paper_type)
     paged, total = paginate(all_cards, page, size)
 

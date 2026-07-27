@@ -78,6 +78,10 @@ class PaperCardResponse(BaseModel):
         None,
         description="신뢰도 뱃지. kci/sci/citation_count/degree_type 포함. papers 테이블에 없는 논문은 null",
     )
+    is_bookmarked: bool = Field(
+        False,
+        description="요청자가 이 논문을 북마크했는지 여부. user_id 미제공(비로그인) 시 항상 false",
+    )
 
 
 class PaperListResponse(BaseModel):
