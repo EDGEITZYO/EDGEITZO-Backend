@@ -91,19 +91,11 @@ class PaperListResponse(BaseModel):
         example="딥러닝",
     )
     papers: List[PaperCardResponse] = Field(
-        description="논문 카드 목록. 필터/정렬/페이지네이션 적용 후 결과",
+        description="논문 카드 목록. 필터/정렬 적용 후 전체 결과 (페이지네이션 없음)",
     )
     total: int = Field(
-        description="필터 적용 후 전체 결과 수. 페이지네이션 기준값",
+        description="필터 적용 후 전체 결과 수 (papers의 길이와 동일)",
         example=142,
-    )
-    page: int = Field(
-        description="현재 페이지 번호 (1부터 시작)",
-        example=1,
-    )
-    size: int = Field(
-        description="페이지당 결과 수",
-        example=20,
     )
     search_id: Optional[str] = Field(
         None,

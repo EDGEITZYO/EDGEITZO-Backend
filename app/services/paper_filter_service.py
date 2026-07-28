@@ -26,15 +26,13 @@ _DB_CODE_DEFAULT_LABEL: dict[str, str] = {
     "CFFO": "학술 저널",
 }
 
-_YEAR_CUTOFF = {"3y": 2023, "5y": 2021, "10y": 2016}
-
 PaperTypeFilter = Literal["학술 저널", "박사학위 논문", "석사학위 논문", "전체"]
 
 
 def apply_filters(
     items: list[PaperSearchItem],
     *,
-    year_range: Optional[str] = None,
+    year: Optional[int] = None,
     paper_type: Optional[str] = None,
     kci: Optional[bool] = None,
     sci: Optional[bool] = None,
@@ -43,10 +41,8 @@ def apply_filters(
     degree 기반 세분화("박사학위 논문"/"석사학위 논문")는 build_paper_cards 후
     apply_paper_type_postfilter()로 처리.
     """
-    if year_range:
-        cutoff = _YEAR_CUTOFF.get(year_range)
-        if cutoff:
-            items = [i for i in items if i.year and i.year >= cutoff]
+    if year is not None:
+        items = [i for i in items if i.year == year]
 
     if paper_type and paper_type != "전체":
         allowed = _PAPER_TYPE_TO_DB_CODES.get(paper_type)
@@ -76,21 +72,15 @@ def apply_paper_type_postfilter(
 
 def apply_sort(
     items: list[PaperSearchItem],
-    sort: Literal["citation", "date"] = "date",
+    sort: Literal["relevance", "latest", "oldest", "citation"] = "relevance",
 ) -> list[PaperSearchItem]:
     if sort == "citation":
         return sorted(items, key=lambda x: x.credibility.citation_count or 0, reverse=True)
-    return sorted(items, key=lambda x: x.year or 0, reverse=True)
-
-
-def paginate(
-    items: list,
-    page: int,
-    size: int,
-) -> tuple[list, int]:
-    total = len(items)
-    offset = (page - 1) * size
-    return items[offset: offset + size], total
+    if sort == "latest":
+        return sorted(items, key=lambda x: x.year or 0, reverse=True)
+    if sort == "oldest":
+        return sorted(items, key=lambda x: x.year or 0)
+    return sorted(items, key=lambda x: x.score, reverse=True)
 
 
 async def build_paper_cards(

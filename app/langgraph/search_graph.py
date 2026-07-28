@@ -463,6 +463,7 @@ async def node_response_builder(state: SearchState) -> SearchState:
         pub_year_start=filters.get("pub_year_start"),
         paper_type=chroma_paper_type,
         citation_min=filters.get("citation_min"),
+        pub_year_exact=bool(filters.get("pub_year_exact")),
     )
 
     # 칩 엔트로피 계산 전용 lookup

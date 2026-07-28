@@ -99,10 +99,13 @@ class ChatRequest(BaseModel):
     pub_year_start: Optional[int] = Field(
         None,
         description=(
-            "발행연도 필터 직접 지정 (이 연도 이상). 드롭다운의 현재 선택값을 매 요청마다 그대로 보내면 됨. "
+            "발행연도 필터 직접 지정 — 이 경로(드롭다운 직접 지정)로 보내면 정확히 그 연도만 매칭됨 "
+            "('이상' 범위가 아님). 드롭다운의 현재 선택값을 매 요청마다 그대로 보내면 됨. "
             "필드 자체를 아예 안 보내면 이전 값 유지, 필드를 포함해서 null로 보내면 '전체'로 해제됨 "
             "(즉 드롭다운에서 '전체'를 선택했을 때는 pub_year_start: null을 명시적으로 보낼 것 — "
-            "필드를 통째로 빼면 안 됨). 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨."
+            "필드를 통째로 빼면 안 됨). 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. "
+            "참고: 자연어로 '최근 3년'/'OOOO년 이후'라고 말했을 때는 이 필드가 아니라 LLM 분류 경로를 "
+            "타므로 여전히 그 연도 이상 범위로 처리됨 — 동작이 다르니 혼용하지 말 것."
         ),
     )
     paper_type: Optional[Literal["학술 저널", "박사학위 논문", "석사학위 논문"]] = Field(
@@ -135,7 +138,8 @@ class ChatRequest(BaseModel):
 
 
 class FilterStateSchema(BaseModel):
-    pub_year_start: Optional[int] = Field(None, description="이 연도 이상만 포함 (예: 2021 → 2021년 이후). 미설정 시 null")
+    pub_year_start: Optional[int] = Field(None, description="발행 연도 필터값. pub_year_exact가 true면 이 연도만, 아니면 이 연도 이상(예: 2021 → 2021년 이후). 미설정 시 null")
+    pub_year_exact: Optional[bool] = Field(None, description="true면 pub_year_start를 정확히 그 연도로만 매칭(논문 목록 드롭다운). false/null이면 그 연도 이상 범위(자연어 검색/칩)")
     paper_type: Optional[str] = Field(None, description="'학술 저널'(국내외 학술지·학술대회 통합) | '박사학위 논문' | '석사학위 논문'. 미설정 시 null")
     citation_min: Optional[int] = Field(None, description="이 인용수 이상만 포함. 미설정 시 null")
     kci_only: Optional[bool] = Field(None, description="true면 KCI 등재 논문만 포함. 미설정 시 null")
@@ -300,6 +304,10 @@ def _apply_direct_filters(state: SearchState, request: ChatRequest) -> SearchSta
     (LLM 분류 경로(_apply_filter_update)는 '언급 안 함=null=변경 없음'이 맞으므로
     이 field-presence 판단을 쓰지 않는다 — 의도적으로 다른 규칙.)
 
+    pub_year_start는 이 드롭다운 경로로 들어올 때만 pub_year_exact=True로 같이 세팅해
+    "그 연도 이상"이 아니라 "정확히 그 해"로 매칭한다 (논문 목록 화면의 연도 드롭다운 전용 —
+    자연어 검색의 "최근 3년"/"OOOO년 이후" 해석이나 칩 클릭은 계속 기존 범위 검색을 쓴다).
+
     message가 비어있으면(순수 필터 변경만) 칩 클릭과 동일하게 history에 narrow 스텝을 기록하고
     _skip_classification=True로 세팅해 자유입력 분류 노드가 이전 턴의 stale한 메시지를
     재분류하는 걸 막는다. message가 함께 오면 free_input_classifier가 이번 턴의 history를
@@ -314,6 +322,8 @@ def _apply_direct_filters(state: SearchState, request: ChatRequest) -> SearchSta
         value = getattr(request, field)
         filters[field] = value
         applied[field] = value
+        if field == "pub_year_start":
+            filters["pub_year_exact"] = value is not None
     new_state = {**state, "filters": filters}
 
     if not request.message:

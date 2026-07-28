@@ -142,27 +142,28 @@ async def expand_node_in_place(node_key: str, request: KeywordMapExpandRequest):
     response_model=ApiResponse[PaperListResponse],
     summary="키워드 노드 논문 목록",
     description="""노드 key로 연결된 논문 목록을 반환합니다 (Neo4j → ChromaDB → PostgreSQL 보강, 기존 동작 유지).
+페이지네이션 없이 필터링된 전체 결과를 한 번에 반환합니다.
 
 **필터 파라미터**
-- `year_range`: `'3y'`(2023~) / `'5y'`(2021~) / `'10y'`(2016~) / null(전체)
+- `year`: 발행 연도 (예: `2020`) — 해당 연도에 발행된 논문만. null이면 전체
 - `paper_type`: `'학술 저널'` / `'박사학위 논문'` / `'석사학위 논문'` / null(전체)
 - `kci`: `true`(KCI만) / `false`(비KCI만) / null(전체)
 - `sci`: `true`(SCI 계열만) / null(전체)
-- `sort`: `'date'`(발행일, 기본값) / `'citation'`(인용수)
+- `sort`: `'relevance'`(관련도순, 기본값) / `'latest'`(최신순) / `'oldest'`(오래된순) / `'citation'`(인용높은순)
 
 **탐색 이력**
-- `user_id` 제공 + `page=1`일 때 탐색 이력 자동 저장
+- `user_id` 제공 시 탐색 이력 자동 저장
 """,
 )
 async def get_keyword_map_node_papers(
     node_key: str,
-    year_range: Optional[str] = Query(None, description="'3y'|'5y'|'10y'|null"),
+    year: Optional[int] = Query(None, description="발행 연도 (예: 2020). null이면 전체"),
     paper_type: Optional[str] = Query(None, description="'학술 저널'|'박사학위 논문'|'석사학위 논문'"),
     kci: Optional[bool] = Query(None, description="KCI 등재 여부"),
     sci: Optional[bool] = Query(None, description="SCI 등재 여부"),
-    sort: Literal["citation", "date"] = Query("date", description="'date'(발행일) | 'citation'(인용수)"),
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=50),
+    sort: Literal["relevance", "latest", "oldest", "citation"] = Query(
+        "relevance", description="'relevance'(관련도) | 'latest'(최신) | 'oldest'(오래된순) | 'citation'(인용수)"
+    ),
     user_id: Optional[str] = Query(None, description="탐색 이력 저장용 유저 ID (선택)"),
     keyword_path: Optional[str] = Query(None, description="탐색 경로 (콤마 구분)"),
     map_session_id: Optional[str] = Query(None, description="키워드맵 탐색 세션 ID"),
@@ -171,13 +172,11 @@ async def get_keyword_map_node_papers(
 ):
     result = await get_node_papers(
         keyword=node_key,
-        year_range=year_range,
+        year=year,
         paper_type=paper_type,
         kci=kci,
         sci=sci,
         sort=sort,
-        page=page,
-        size=size,
         user_id=user_id,
         keyword_path=keyword_path,
         map_session_id=map_session_id,
