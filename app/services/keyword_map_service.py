@@ -26,7 +26,6 @@ from app.services.paper_filter_service import (
     apply_paper_type_postfilter,
     apply_sort,
     build_paper_cards,
-    paginate,
 )
 
 logger = logging.getLogger(__name__)
@@ -423,13 +422,11 @@ async def get_node_papers(
     *,
     keyword: str,
     keyword_en: str = "",
-    year_range: Optional[str] = None,
+    year: Optional[int] = None,
     paper_type: Optional[str] = None,
     kci: Optional[bool] = None,
     sci: Optional[bool] = None,
-    sort: Literal["citation", "date"] = "date",
-    page: int = 1,
-    size: int = 20,
+    sort: Literal["relevance", "latest", "oldest", "citation"] = "relevance",
     user_id: Optional[str] = None,
     keyword_path: Optional[str] = None,
     map_session_id: Optional[str] = None,
@@ -437,7 +434,8 @@ async def get_node_papers(
     db: AsyncSession,
 ) -> PaperListResponse:
     """키워드 노드 클릭 시 논문 리스트 조회 — keyword_map.py(GET, path param)와
-    keyword_search.py(POST, body) 양쪽에서 공용으로 호출 (기존에 두 파일에 따로 구현돼 있던 로직 통합)."""
+    keyword_search.py(POST, body) 양쪽에서 공용으로 호출 (기존에 두 파일에 따로 구현돼 있던 로직 통합).
+    페이지네이션 없이 필터링된 전체 결과를 한 번에 반환한다."""
     service = get_chroma_search_service()
     paper_ids = await get_paper_ids_by_keyword(keyword)
 
@@ -445,17 +443,16 @@ async def get_node_papers(
         items = await service.get_items_by_ids(paper_ids)
     else:
         query = f"{keyword} {keyword_en}".strip()
-        items = await service.search(query=query, n_results=size * 2)
+        items = await service.search(query=query)
 
-    items = apply_filters(items, year_range=year_range, paper_type=paper_type, kci=kci, sci=sci)
+    items = apply_filters(items, year=year, paper_type=paper_type, kci=kci, sci=sci)
     items = apply_sort(items, sort)
 
     all_cards = await build_paper_cards(items, db, user_id=user_id)
     all_cards = apply_paper_type_postfilter(all_cards, paper_type)
-    paged, total = paginate(all_cards, page, size)
 
     saved_search_id = None
-    if user_id and page == 1:
+    if user_id:
         try:
             saved_search_id = map_session_id or str(uuid.uuid4())
             save_search_history(
@@ -469,4 +466,4 @@ async def get_node_papers(
         except Exception:
             saved_search_id = None
 
-    return PaperListResponse(keyword=keyword, papers=paged, total=total, page=page, size=size, search_id=saved_search_id)
+    return PaperListResponse(keyword=keyword, papers=all_cards, total=len(all_cards), search_id=saved_search_id)

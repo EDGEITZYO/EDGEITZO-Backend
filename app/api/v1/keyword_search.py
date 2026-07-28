@@ -28,14 +28,14 @@ class LastAnchorResponse(BaseModel):
 class KeywordPaperRequest(BaseModel):
     keyword: str = Field(description="검색할 키워드 (한국어)", example="딥러닝")
     keyword_en: str = Field("", description="검색할 키워드 (영어). Neo4j 실패 시 ChromaDB fallback 검색에 사용", example="deep learning")
-    sort: Literal["citation", "date"] = Field("date", description="정렬 기준. 'citation': 인용수 내림차순, 'date': 발행일 내림차순")
-    year_range: Optional[str] = Field(None, description="발행 연도 필터. '3y'(2023~) / '5y'(2021~) / '10y'(2016~) / null(전체)")
+    sort: Literal["relevance", "latest", "oldest", "citation"] = Field(
+        "relevance", description="정렬 기준. 'relevance': 관련도순(기본값), 'latest': 최신순, 'oldest': 오래된순, 'citation': 인용수 내림차순"
+    )
+    year: Optional[int] = Field(None, description="발행 연도 필터 (예: 2020). null이면 전체")
     paper_type: Optional[str] = Field(None, description="논문 유형 필터. '학술 저널' | '박사학위 논문' | '석사학위 논문' | null(전체)")
     kci: Optional[bool] = Field(None, description="KCI 등재 필터. true(KCI만) / false(비KCI만) / null(전체)")
     sci: Optional[bool] = Field(None, description="SCI 계열 필터. true(SCI만) / null(전체)")
-    page: int = Field(1, description="페이지 번호 (1부터 시작)")
-    size: int = Field(30, description="페이지당 결과 수")
-    user_id: Optional[str] = Field(None, description="검색 이력 저장용 유저 ID (선택). 제공 시 첫 페이지 반환 시 이력 저장")
+    user_id: Optional[str] = Field(None, description="검색 이력 저장용 유저 ID (선택). 제공 시 이력 저장")
     map_session_id: Optional[str] = Field(None, description="키워드맵 생성 시 발급된 세션 ID. 제공 시 동일 세션 이력에 경로 누적")
     research_field: Optional[str] = Field(None, description="최상위 연구 분야 (탐색 이력 제목용)")
 
@@ -84,16 +84,17 @@ async def get_last_anchor(user_id: str, db: AsyncSession = Depends(get_db)):
     summary="키워드 기반 논문 검색",
     description="""키워드 노드 클릭 시 호출. `app.services.keyword_map_service.get_node_papers`를 통해
 `GET /keyword-map/node/{node_key}/papers`와 동일한 로직을 공유합니다 (중복 구현 없음).
+페이지네이션 없이 필터링된 전체 결과를 한 번에 반환합니다.
 
 **필터 파라미터**
-- `year_range`: `'3y'`(2023~) / `'5y'`(2021~) / `'10y'`(2016~) / null(전체)
+- `year`: 발행 연도 (예: `2020`) — 해당 연도에 발행된 논문만. null이면 전체
 - `paper_type`: `'학술 저널'` / `'박사학위 논문'` / `'석사학위 논문'` / null(전체)
 - `kci`: `true`(KCI만) / `false`(비KCI만) / null(전체)
 - `sci`: `true`(SCI 계열만) / null(전체)
-- `sort`: `'date'`(발행일, 기본값) / `'citation'`(인용수)
+- `sort`: `'relevance'`(관련도순, 기본값) / `'latest'`(최신순) / `'oldest'`(오래된순) / `'citation'`(인용높은순)
 
 **검색 이력**
-- `user_id` 제공 + `page=1`일 때 Redis에 검색 이력 자동 저장 (실패해도 결과에 영향 없음)
+- `user_id` 제공 시 Redis에 검색 이력 자동 저장 (실패해도 결과에 영향 없음)
 """,
 )
 async def search_papers_by_keyword(
@@ -103,13 +104,11 @@ async def search_papers_by_keyword(
     result = await get_node_papers(
         keyword=request.keyword,
         keyword_en=request.keyword_en,
-        year_range=request.year_range,
+        year=request.year,
         paper_type=request.paper_type,
         kci=request.kci,
         sci=request.sci,
         sort=request.sort,
-        page=request.page,
-        size=request.size,
         user_id=request.user_id,
         map_session_id=request.map_session_id,
         research_field=request.research_field,

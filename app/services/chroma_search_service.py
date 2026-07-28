@@ -44,14 +44,19 @@ def _build_where_clause(
     pub_year_start: Optional[int] = None,
     paper_type: Optional[str] = None,
     citation_min: Optional[int] = None,
+    pub_year_exact: bool = False,
 ) -> Optional[dict]:
     """Chroma where절 조립 — 연도/논문유형/인용수 pre-filter.
 
     paper_type은 현재 $eq(단일값)만 지원. 다중 유형 배제 조건(예: 학위논문 제외)이 필요해지면 $in으로 확장 예정 — 지금은 미구현 (4단계 칩 생성 로직에서 실제 필요 여부 확인 후 확장).
+    pub_year_exact=True면 pub_year_start를 "이상"이 아니라 정확히 그 해로 매칭 (논문 목록 연도 드롭다운 전용).
     """
     conditions = []
     if pub_year_start:
-        conditions.append({"Pubyear": {"$gte": pub_year_start}})
+        if pub_year_exact:
+            conditions.append({"Pubyear": {"$eq": pub_year_start}})
+        else:
+            conditions.append({"Pubyear": {"$gte": pub_year_start}})
     if paper_type:
         conditions.append({"DBCode": {"$eq": paper_type}})
     if citation_min is not None:
@@ -288,10 +293,11 @@ class ChromaSearchService:
         scope: Optional[str] = None,
         paper_type: Optional[str] = None,
         citation_min: Optional[int] = None,
+        pub_year_exact: bool = False,
     ) -> list[PaperSearchItem]:
         self._init()
 
-        where_clause = _build_where_clause(pub_year_start, paper_type, citation_min)
+        where_clause = _build_where_clause(pub_year_start, paper_type, citation_min, pub_year_exact)
 
         query_vec = self._encode_query(query)
 
@@ -366,9 +372,10 @@ class ChromaSearchService:
         scope: Optional[str] = None,
         paper_type: Optional[str] = None,
         citation_min: Optional[int] = None,
+        pub_year_exact: bool = False,
     ) -> list[PaperSearchItem]:
         return await asyncio.to_thread(
-            self._sync_search, query, n_results, pub_year_start, scope, paper_type, citation_min
+            self._sync_search, query, n_results, pub_year_start, scope, paper_type, citation_min, pub_year_exact
         )
 
     def _sync_get_by_ids(self, ids: list[str]) -> list[PaperSearchItem]:

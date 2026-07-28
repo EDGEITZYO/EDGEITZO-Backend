@@ -15,6 +15,7 @@ class KeywordCandidate(TypedDict):
 class FilterState(TypedDict):
     """연도/논문유형/인용수/KCI/SCI 5축 고정 + 누적 키워드"""
     pub_year_start: Optional[int]
+    pub_year_exact: Optional[bool]  # true면 pub_year_start를 "그 연도 이상"이 아니라 "정확히 그 해"로 매칭
     paper_type: Optional[str]  # "학술 저널" | "박사학위 논문" | "석사학위 논문" (사용자 노출 레이블)
     citation_min: Optional[int]
     kci_only: Optional[bool]  # true면 KCI 등재만
@@ -80,6 +81,7 @@ class SearchState(TypedDict):
 def empty_filters() -> FilterState:
     return FilterState(
         pub_year_start=None,
+        pub_year_exact=None,
         paper_type=None,
         citation_min=None,
         kci_only=None,
@@ -89,11 +91,16 @@ def empty_filters() -> FilterState:
 
 
 def _apply_filter_update(filters: FilterState, updates: Dict[str, Any]) -> FilterState:
-    """pub_year_start/paper_type/citation_min/kci_only/sci_only 중 None이 아닌 값만 반영한 새 filters 반환."""
+    """pub_year_start/paper_type/citation_min/kci_only/sci_only 중 None이 아닌 값만 반영한 새 filters 반환.
+    이 경로(LLM 분류/칩 클릭)로 들어오는 pub_year_start는 항상 "이후" 범위 검색이므로,
+    이전에 논문 목록 드롭다운(_apply_direct_filters)이 남겨둔 pub_year_exact=True가
+    새 pub_year_start에 잘못 적용되지 않도록 함께 초기화한다."""
     new_filters = dict(filters)
     for key in ("pub_year_start", "paper_type", "citation_min", "kci_only", "sci_only"):
         if updates.get(key) is not None:
             new_filters[key] = updates[key]
+            if key == "pub_year_start":
+                new_filters["pub_year_exact"] = False
     return FilterState(**new_filters)
 
 
