@@ -63,6 +63,11 @@ async def _call_claude(
     resp = await client.messages.create(
         model=model, max_tokens=max_tokens, temperature=temperature, messages=messages
     )
+    if resp.stop_reason == "max_tokens":
+        logger.warning(
+            "LLM 응답이 max_tokens(%d)에 걸려 중간에 잘림 — model=%s output_tokens=%d",
+            max_tokens, model, resp.usage.output_tokens,
+        )
     return resp.content[0].text, resp.usage.input_tokens, resp.usage.output_tokens
 
 

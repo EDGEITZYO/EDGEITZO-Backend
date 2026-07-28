@@ -42,7 +42,7 @@ _FREE_INPUT_SYSTEM = """검색 정교화 의도 분류기. 사용자 입력을 �
 절대 설명하지 말 것. JSON 외 텍스트 금지."""
 
 
-async def _llm_json(system: str, user: str, max_tokens: int = 500) -> dict:
+async def _llm_json(system: str, user: str, max_tokens: int = 1000) -> dict:
     try:
         resp = await chat(
             messages=[
@@ -127,7 +127,7 @@ JSON만 반환:
   "filter": {{"pub_year_start": null, "paper_type": null, "citation_min": null, "kci_only": null, "sci_only": null}}
 }}"""
 
-    result = await _llm_json(_KEYWORD_SYSTEM, prompt, max_tokens=600)
+    result = await _llm_json(_KEYWORD_SYSTEM, prompt)
     candidates = result.get("keywords", [])[:3]
     filter_vals = result.get("filter") or {}
 
@@ -182,7 +182,7 @@ JSON만 반환:
   }}
 }}"""
 
-    result = await _llm_json(_FREE_INPUT_SYSTEM, prompt, max_tokens=600)
+    result = await _llm_json(_FREE_INPUT_SYSTEM, prompt)
     intent = result.get("intent", "무관")
     params = result.get("params") or {}
 
@@ -431,7 +431,7 @@ async def _build_summary(
             messages=[
                 {"role": "user", "content": f"[System]\n{_SUMMARY_SYSTEM_PROMPT}\n\n[User]\n{user_prompt}"},
             ],
-            model=_MODEL, temperature=0.9, max_tokens=150, use_cache=False,
+            model=_MODEL, temperature=0.9, use_cache=False,
         )
         text = resp.text.strip()
         return (text, False) if text else (None, True)
@@ -522,19 +522,17 @@ async def node_response_builder(state: SearchState) -> SearchState:
     type_distribution = dict(Counter(
         it["paper_type"] for it in result_items if it.get("paper_type")
     ))
-    if state.get("_skip_classification"):
-        # 칩 클릭/필터 직접 지정 — 새 사용자 발화가 없었던 턴이므로 요약 문장을 다시 만들 필요가
-        # 없다. LLM 재호출 없이 직전 턴의 ai_summary/summary_failed를 그대로 유지한다.
-        ai_summary = state.get("ai_summary")
-        summary_failed = state.get("summary_failed", False)
-    else:
-        ai_summary, summary_failed = await _build_summary(
-            topic=state.get("user_query", ""),
-            total_count=total_count,
-            keywords=filters.get("keywords") or [],
-            type_distribution=type_distribution,
-            sort_order=state.get("sort_order") or "relevance",
-        )
+    # _skip_classification은 자유입력 분류 노드(LLM)만 건너뛰기 위한 신호일 뿐 — 칩 클릭/필터
+    # 직접 지정이어도 검색 결과(total_count/keywords/type_distribution)는 매 턴 새로 계산되므로
+    # 요약 문장도 항상 최신 값 기준으로 다시 생성해야 한다. (과거엔 여기서 이전 턴 ai_summary를
+    # 그대로 재사용해 "문장은 그대로, 건수는 새 값"으로 어긋나는 버그가 있었음)
+    ai_summary, summary_failed = await _build_summary(
+        topic=state.get("user_query", ""),
+        total_count=total_count,
+        keywords=filters.get("keywords") or [],
+        type_distribution=type_distribution,
+        sort_order=state.get("sort_order") or "relevance",
+    )
 
     threshold = settings.search_broad_result_threshold
     is_broad_result = threshold is not None and total_count >= threshold

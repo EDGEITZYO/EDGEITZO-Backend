@@ -69,7 +69,6 @@ async def expand_query_for_embedding(query: str) -> str:
             }],
             model=settings.llm_default_model,
             temperature=0.3,
-            max_tokens=300,
         )
         hypothetical = resp.text.strip()
         return f"{query} {hypothetical}" if hypothetical else query

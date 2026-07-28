@@ -49,7 +49,6 @@ async def _summarize_from_abstracts(keyword_text: str, papers: list[Paper]) -> O
             messages=[{"role": "user", "content": f"[System]\n{_DEFINITION_SYSTEM_PROMPT}\n\n[User]\n{user_prompt}"}],
             model=settings.llm_default_model,
             temperature=0.3,
-            max_tokens=200,
         )
         text = resp.text.strip()
         return text or None
