@@ -342,8 +342,11 @@ def _top_result_keywords(
     return ranked[:top_k_keywords]
 
 
-async def _build_expand_chips(keywords: list[str]) -> List[ExpandChip]:
-    """매칭 키워드별 find_related_keywords 호출 후 합산(sum) 병합, 상위 3개."""
+async def _build_expand_chips(keywords: list[str], existing_keywords: Optional[list[str]] = None) -> List[ExpandChip]:
+    """매칭 키워드별 find_related_keywords 호출 후 합산(sum) 병합, 상위 3개.
+    existing_keywords(현재 세션에 이미 반영된 검색 키워드)와 같은 그래프 노드는 후보에서 제외 —
+    안 그러면 방금 확장으로 추가한 키워드가 다른 키워드들과 계속 연관도가 높아 다음 턴에도
+    똑같이 다시 추천되는 문제가 있었음."""
     from app.core.neo4j_client import get_neo4j_driver
     from app.repositories.graph_repository import GraphRepository
 
@@ -354,6 +357,12 @@ async def _build_expand_chips(keywords: list[str]) -> List[ExpandChip]:
     merged: dict[str, dict] = {}
     try:
         repo = GraphRepository(driver)
+        excluded_keys: set[str] = set()
+        for kw in existing_keywords or []:
+            existing = repo.find_keyword(kw)
+            if existing:
+                excluded_keys.add(existing["key"])
+
         for kw in keywords:
             center = repo.find_keyword(kw)
             if not center:
@@ -362,6 +371,8 @@ async def _build_expand_chips(keywords: list[str]) -> List[ExpandChip]:
             for item in related:
                 node = item["node"]
                 key = node["key"]
+                if key in excluded_keys:
+                    continue
                 count = item["edge"].get("paper_count", 0)
                 if key in merged:
                     merged[key]["count"] += count
@@ -518,7 +529,7 @@ async def node_response_builder(state: SearchState) -> SearchState:
         ))
 
     narrow_chips = _build_narrow_chips(result_items, citation_lookup) if total_count > 4 else []
-    expand_chips = await _build_expand_chips(_top_result_keywords(result_items))
+    expand_chips = await _build_expand_chips(_top_result_keywords(result_items), filters.get("keywords"))
     type_distribution = dict(Counter(
         it["paper_type"] for it in result_items if it.get("paper_type")
     ))
