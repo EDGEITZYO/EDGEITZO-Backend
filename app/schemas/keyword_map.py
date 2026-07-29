@@ -12,6 +12,7 @@ class KeywordMapNode(BaseModel):
     paper_count: int = Field(..., ge=0, description="이 키워드 고유 빈도 (연결된 논문 수)")
     is_hub: bool = Field(default=False, description="cross-link 연결 수가 임계값 이상인 노드 여부")
     cross_link_count: int = Field(default=0, ge=0, description="이 노드에 연결된 cross-link 엣지 수")
+    has_more: bool = Field(default=False, description="expand 시 새로 추가될 자식 후보가 남아있는지 여부. false면 프론트에서 expand 버튼 비활성화/숨김")
 
 
 class KeywordMapEdge(BaseModel):
@@ -38,6 +39,7 @@ class KeywordMapExpandResponse(BaseModel):
     parent_key: str
     new_nodes: list[KeywordMapNode] = Field(default_factory=list)
     new_edges: list[KeywordMapEdge] = Field(default_factory=list, description="tree + cross_link 모두 포함")
+    parent_has_more: bool = Field(default=False, description="이번 expand로 다 못 가져온, parent_key의 남은 자식 후보가 더 있는지 여부")
 
 
 class KeywordMapRecenterRequest(BaseModel):

@@ -102,10 +102,8 @@ class Settings(BaseSettings):
     # 키워드맵 — 빈도/동시출현 기반 그래프 생성 튜닝값
     keyword_map_candidate_pool_size: int = 40
     keyword_map_max_nodes: int = 25
-    keyword_map_initial_node_target: int = 20
     keyword_map_parent_max: int = 4
     keyword_map_child_l1_max: int = 6
-    keyword_map_child_l2_max_per_parent: int = 3
     keyword_map_expand_max: int = 3
     keyword_map_hub_cross_link_threshold: int = 3
     keyword_map_cache_ttl_seconds: int = 300

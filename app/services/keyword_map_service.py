@@ -82,8 +82,8 @@ def _candidate_from_related_item(item: dict) -> _Candidate:
     )
 
 
-def _node_from_candidate(c: _Candidate, *, tier: int, side: Literal["parent", "child"]) -> KeywordMapNode:
-    return KeywordMapNode(key=c.key, name_ko=c.name_ko, name_en=c.name_en, tier=tier, side=side, paper_count=c.own_paper_count)
+def _node_from_candidate(c: _Candidate, *, tier: int, side: Literal["parent", "child"], has_more: bool = False) -> KeywordMapNode:
+    return KeywordMapNode(key=c.key, name_ko=c.name_ko, name_en=c.name_en, tier=tier, side=side, paper_count=c.own_paper_count, has_more=has_more)
 
 
 def _fetch_candidates(repo: GraphRepository, node_key: str) -> list[_Candidate]:
@@ -113,6 +113,13 @@ def _has_more_parents(candidates: list[_Candidate], node_own_paper_count: int) -
 def _has_more_children(candidates: list[_Candidate], node_own_paper_count: int) -> bool:
     # _classify의 동률->하위 규칙과 달리 여기는 엄격한 부등호만 인정 (동률만 있는 경우는 "더 이상 하위 없음"으로 취급)
     return any(c.own_paper_count < node_own_paper_count for c in candidates)
+
+
+def _compute_has_more(repo: GraphRepository, key: str, own_paper_count: int, excluded: set[str]) -> bool:
+    """이 노드를 expand했을 때 excluded(이미 화면에 있는 노드)에 안 걸리는 자식이 하나라도 남아있는지."""
+    candidates = _fetch_candidates(repo, key)
+    _, children = _classify(candidates, own_paper_count)
+    return any(c.key not in excluded for c in children)
 
 
 def _attach_cross_links(repo: GraphRepository, nodes: list[KeywordMapNode], edges: list[KeywordMapEdge], placed_keys: set[str]) -> None:
@@ -146,35 +153,28 @@ def _build_anchor_subgraph(repo: GraphRepository, anchor: _AnchorInfo) -> _Subgr
     has_more_parents = _has_more_parents(candidates0, anchor.paper_count)
     has_more_children = _has_more_children(candidates0, anchor.paper_count)
 
+    tier1_pairs: list[tuple[KeywordMapNode, _Candidate]] = []
+
     parent_nodes = [c for c in parents0 if c.key not in placed_keys][: settings.keyword_map_parent_max]
     for p in parent_nodes:
         placed_keys.add(p.key)
-        nodes.append(_node_from_candidate(p, tier=1, side="parent"))
+        node = _node_from_candidate(p, tier=1, side="parent")
+        nodes.append(node)
+        tier1_pairs.append((node, p))
         edges.append(KeywordMapEdge(source=p.key, target=anchor.key, type="tree", paper_count=p.cooccurrence_paper_count))
 
     l1_candidates = [c for c in children0 if c.key not in placed_keys][: settings.keyword_map_child_l1_max]
     for c in l1_candidates:
         placed_keys.add(c.key)
-        nodes.append(_node_from_candidate(c, tier=1, side="child"))
+        node = _node_from_candidate(c, tier=1, side="child")
+        nodes.append(node)
+        tier1_pairs.append((node, c))
         edges.append(KeywordMapEdge(source=anchor.key, target=c.key, type="tree", paper_count=c.cooccurrence_paper_count))
 
-    # 2단계 자동 펼침: 1단계를 앵커와의 동시출현 랭킹 순으로 그리디 채택 — 소프트 타겟/하드캡을 넘기는 지점에서 즉시 중단
-    # (스킵하고 다음 1단계로 넘어가지 않음 — "상위 몇 개" 같은 고정 매직넘버 대신 예산 기반으로 결정)
-    running_total = len(nodes)
-    budget = min(settings.keyword_map_initial_node_target, settings.keyword_map_max_nodes)
-    for l1 in l1_candidates:
-        candidates1 = _fetch_candidates(repo, l1.key)
-        _, children1 = _classify(candidates1, l1.own_paper_count)
-        take = [c for c in children1 if c.key not in placed_keys][: settings.keyword_map_child_l2_max_per_parent]
-        if not take:
-            continue
-        if running_total + len(take) > budget:
-            break
-        for c in take:
-            placed_keys.add(c.key)
-            nodes.append(_node_from_candidate(c, tier=2, side="child"))
-            edges.append(KeywordMapEdge(source=l1.key, target=c.key, type="tree", paper_count=c.cooccurrence_paper_count))
-        running_total += len(take)
+    # tier-2는 여기서 미리 채우지 않음 — 사용자가 expand를 눌렀을 때만 계산(expand_node).
+    # 대신 각 tier-1 노드가 "펼치면 뭐가 나오긴 하는지"만 미리 확인해서 has_more로 알려준다.
+    for node, candidate in tier1_pairs:
+        node.has_more = _compute_has_more(repo, candidate.key, candidate.own_paper_count, placed_keys)
 
     _attach_cross_links(repo, nodes, edges, placed_keys)
 
@@ -283,6 +283,7 @@ def _recenter_keyword_map_sync(new_anchor_key: str, existing_node_keys: list[str
         edges = list(result.edges)
 
         # carry-forward: 새 그래프에 없는 이전 화면 노드 중, 새 그래프와 실제로 연결된 것만 유지 (연결 안 되면 응답에서 자연히 빠짐)
+        carried_paper_count: dict[str, int] = {}
         carry_keys = [k for k in existing_node_keys if k not in result.placed_keys and k != anchor.key]
         if carry_keys:
             carried = [(k, d) for k in carry_keys if (d := repo.find_keyword(k)) is not None]
@@ -308,6 +309,7 @@ def _recenter_keyword_map_sync(new_anchor_key: str, existing_node_keys: list[str
                     name_ko, name_en = _split_name(d)
                     nodes.append(KeywordMapNode(key=k, name_ko=name_ko, name_en=name_en, tier=1, side=side, paper_count=d.get("paper_count", 0)))
                     sibling_counts[side] += 1
+                    carried_paper_count[k] = d.get("paper_count", 0)
 
                 final_keys = {n.key for n in nodes}
                 for r in relations:
@@ -326,6 +328,13 @@ def _recenter_keyword_map_sync(new_anchor_key: str, existing_node_keys: list[str
             edges = [e for e in edges if e.source not in drop and e.target not in drop]
 
         final_keys = {n.key for n in nodes}
+
+        if carried_paper_count:
+            visible = set(result.placed_keys) | final_keys
+            for n in nodes:
+                if n.key in carried_paper_count:
+                    n.has_more = _compute_has_more(repo, n.key, carried_paper_count[n.key], visible)
+
         cross_link_degree: dict[str, int] = {}
         for e in edges:
             if e.type != "cross_link":
@@ -366,7 +375,9 @@ def _expand_node_sync(node_key: str, *, current_tier: int, existing_node_keys: l
         _, children = _classify(candidates, node_dict.get("paper_count", 0))
 
         excluded = set(existing_node_keys) | {node_key}
-        take = [c for c in children if c.key not in excluded][: settings.keyword_map_expand_max]
+        remaining = [c for c in children if c.key not in excluded]
+        take = remaining[: settings.keyword_map_expand_max]
+        parent_has_more = len(remaining) > len(take)
 
         new_tier = current_tier + 1
         new_nodes = [_node_from_candidate(c, tier=new_tier, side="child") for c in take]
@@ -376,7 +387,11 @@ def _expand_node_sync(node_key: str, *, current_tier: int, existing_node_keys: l
 
         if new_nodes:
             new_keys = {c.key for c in take}
-            probe_keys = list(excluded | new_keys)
+            full_excluded = excluded | new_keys
+            for node, c in zip(new_nodes, take):
+                node.has_more = _compute_has_more(repo, c.key, c.own_paper_count, full_excluded)
+
+            probe_keys = list(full_excluded)
             relations = repo.find_relations_among(probe_keys, min_paper_count=1)
             tree_pairs = {frozenset((e.source, e.target)) for e in new_edges}
             for r in relations:
@@ -390,7 +405,7 @@ def _expand_node_sync(node_key: str, *, current_tier: int, existing_node_keys: l
     finally:
         driver.close()
 
-    return KeywordMapExpandResponse(parent_key=node_key, new_nodes=new_nodes, new_edges=new_edges)
+    return KeywordMapExpandResponse(parent_key=node_key, new_nodes=new_nodes, new_edges=new_edges, parent_has_more=parent_has_more)
 
 
 async def expand_node(node_key: str, *, current_tier: int, existing_node_keys: list[str]) -> KeywordMapExpandResponse:
