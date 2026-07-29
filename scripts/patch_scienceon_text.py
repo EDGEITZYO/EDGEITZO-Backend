@@ -13,10 +13,14 @@ ScienceON 원본 XML의 Abstract/Title 계열 필드에 이중 이스케이프�
 태그 alternation에 알려진 태그명만 하드코딩되어 있어 `<Parasite>`, `<0.001` 같은
 꺾쇠괄호/부등호 오탐은 애초에 매칭되지 않는다.
 
-사용법 (로컬, data/parsed/scienceon_enriched.json이 있는 환경):
+사용법 (로컬, data/parsed/scienceon_enriched.json이 있는 환경 — DB 적재 원본 정리):
   python scripts/patch_scienceon_text.py --dry-run
   python scripts/patch_scienceon_text.py            # JSON 파일 정리 (원본은 .bak로 백업)
   python scripts/patch_scienceon_text.py --db        # DB papers 테이블까지 UPDATE
+
+사용법 (검색 API가 실제로 읽는 data/parsed/scienceon_keywords_normalized.json 정리):
+  python scripts/patch_scienceon_text.py --file search-index --dry-run
+  python scripts/patch_scienceon_text.py --file search-index
 
 사용법 (프로덕션 등 위 JSON 파일이 없는 환경 — DB를 직접 읽어서 정제):
   python scripts/patch_scienceon_text.py --dry-run --db
@@ -52,6 +56,9 @@ from sqlalchemy import text as sql_text
 from app.core.database import AsyncSessionLocal
 
 JSON_PATH = PROJECT_ROOT / "data/parsed/scienceon_enriched.json"
+# 검색 결과 API(ChromaSearchService._load_papers)가 실제로 읽는 파일 — DB/enriched.json과는
+# 별개 경로라 따로 정리해야 함. 필드 구조(CN/Abstract/Title 등)는 동일.
+SEARCH_INDEX_JSON_PATH = PROJECT_ROOT / "data/parsed/scienceon_keywords_normalized.json"
 TEXT_FIELDS = ["Abstract", "Abstract2", "Title", "Title2"]
 # JSON 필드명 → DB 컬럼명
 DB_COLUMNS = {"Abstract": "abstract", "Abstract2": "abstract_en", "Title": "title", "Title2": "title_en"}
@@ -182,19 +189,19 @@ async def run_db_native(*, dry_run: bool) -> None:
         print(f"DB 업데이트: {updated}건")
 
 
-async def run(*, dry_run: bool, update_db: bool) -> None:
-    if not JSON_PATH.exists():
+async def run(*, dry_run: bool, update_db: bool, json_path: Path = JSON_PATH) -> None:
+    if not json_path.exists():
         await run_db_native(dry_run=dry_run)
         return
 
-    data = json.loads(JSON_PATH.read_text(encoding="utf-8"))
+    data = json.loads(json_path.read_text(encoding="utf-8"))
     papers: list[dict] = data["papers"]
-    print(f"전체 레코드: {len(papers)}건")
+    print(f"[{json_path.name}] 전체 레코드: {len(papers)}건")
 
     # 이전 실행으로 JSON이 이미 정리된 상태라면(.bak 존재), 정제 전 원본은
     # 지금의 live JSON이 아니라 .bak에 있다. 그래야 --db만 다시 돌려도
     # 어떤 필드가 원래 오염됐었는지 판단할 수 있다.
-    backup_path = JSON_PATH.with_suffix(".json.bak")
+    backup_path = json_path.with_suffix(".json.bak")
     ref_by_cn: dict[str, dict] | None = None
     if backup_path.exists():
         ref_data = json.loads(backup_path.read_text(encoding="utf-8"))
@@ -232,13 +239,13 @@ async def run(*, dry_run: bool, update_db: bool) -> None:
         return
 
     if not backup_path.exists():
-        shutil.copy2(JSON_PATH, backup_path)
+        shutil.copy2(json_path, backup_path)
         print(f"백업 생성: {backup_path}")
     else:
         print(f"기존 백업 유지: {backup_path} (원본은 이걸 기준으로 재계산)")
 
-    JSON_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"JSON 저장 완료: {JSON_PATH}")
+    json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"JSON 저장 완료: {json_path}")
 
     if update_db:
         db_updated = await _update_db(db_changes, dry_run=dry_run)
@@ -247,14 +254,22 @@ async def run(*, dry_run: bool, update_db: bool) -> None:
         print("DB는 건드리지 않음 (--db 플래그로 실행하면 papers 테이블도 업데이트)")
 
 
+_FILE_CHOICES = {"enriched": JSON_PATH, "search-index": SEARCH_INDEX_JSON_PATH}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="ScienceON 텍스트 이스케이프/태그 정리")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--db", action="store_true", help="papers 테이블까지 UPDATE")
+    parser.add_argument(
+        "--file", choices=sorted(_FILE_CHOICES), default="enriched",
+        help="enriched: data/parsed/scienceon_enriched.json (기본, DB 적재 원본) / "
+             "search-index: data/parsed/scienceon_keywords_normalized.json (검색 API가 읽는 파일)",
+    )
     args = parser.parse_args()
     if args.dry_run:
         print("[dry-run] 파일/DB 쓰기 생략\n")
-    asyncio.run(run(dry_run=args.dry_run, update_db=args.db))
+    asyncio.run(run(dry_run=args.dry_run, update_db=args.db, json_path=_FILE_CHOICES[args.file]))
 
 
 if __name__ == "__main__":
