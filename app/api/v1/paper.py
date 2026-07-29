@@ -71,7 +71,7 @@ async def get_paper_detail(
     else:
         credibility = calculate_credibility(
             citation_count=paper.citation_count,
-            journal_name=paper.journal.title if paper.journal else None,
+            journal_name=paper.journal.title if paper.journal else paper.journal_name,
             journal=journal_evidence,
         )
 
@@ -102,7 +102,7 @@ async def get_paper_detail(
         keywords_en=paper.keywords_en,
         published_at=published_at,
         paper_type=paper_type_label(resolve_paper_type(paper.db_code, paper.degree)),
-        journal_name=paper.journal.title if paper.journal else None,
+        journal_name=paper.journal.title if paper.journal else paper.journal_name,
         doi=paper.doi,
         citation_count=paper.citation_count,
         degree=paper.degree,
