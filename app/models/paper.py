@@ -33,6 +33,7 @@ class Paper(Base):
         ForeignKey("journals.id", ondelete="SET NULL"),
         nullable=True,
     )
+    journal_name = Column(String(500), nullable=True)
     db_code = Column(String(20), nullable=True)
     source = Column(String(30), nullable=True)
     degree = Column(String(30), nullable=True)
