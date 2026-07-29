@@ -13,10 +13,14 @@ ScienceON 원본 XML의 Abstract/Title 계열 필드에 이중 이스케이프�
 태그 alternation에 알려진 태그명만 하드코딩되어 있어 `<Parasite>`, `<0.001` 같은
 꺾쇠괄호/부등호 오탐은 애초에 매칭되지 않는다.
 
-사용법:
+사용법 (로컬, data/parsed/scienceon_enriched.json이 있는 환경):
   python scripts/patch_scienceon_text.py --dry-run
   python scripts/patch_scienceon_text.py            # JSON 파일 정리 (원본은 .bak로 백업)
   python scripts/patch_scienceon_text.py --db        # DB papers 테이블까지 UPDATE
+
+사용법 (프로덕션 등 위 JSON 파일이 없는 환경 — DB를 직접 읽어서 정제):
+  python scripts/patch_scienceon_text.py --dry-run --db
+  python scripts/patch_scienceon_text.py --db
 """
 from __future__ import annotations
 
@@ -129,7 +133,60 @@ async def _update_db(changed: list[tuple[str, str, str]], *, dry_run: bool) -> i
     return updated
 
 
+async def run_db_native(*, dry_run: bool) -> None:
+    """data/parsed/scienceon_enriched.json이 없는 환경(프로덕션 등)에서
+    papers 테이블 값을 직접 읽어 정제 후 그대로 다시 UPDATE."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            sql_text(
+                "SELECT scienceon_cn, abstract, abstract_en, title, title_en "
+                "FROM papers WHERE scienceon_cn IS NOT NULL"
+            )
+        )
+        rows = result.fetchall()
+        print(f"전체 대상(scienceon_cn 보유): {len(rows)}건")
+
+        updates: list[tuple[str, str, str]] = []
+        examples: list[tuple[str, str, str, str]] = []
+        for cn, abstract, abstract_en, title, title_en in rows:
+            for column, value in [
+                ("abstract", abstract), ("abstract_en", abstract_en),
+                ("title", title), ("title_en", title_en),
+            ]:
+                if not value:
+                    continue
+                cleaned = clean_text(value)
+                if cleaned != value:
+                    updates.append((cn, column, cleaned))
+                    if len(examples) < 3:
+                        examples.append((column, cn, value[:200], cleaned[:200]))
+
+        print(f"정리 대상 필드값: {len(updates)}건")
+
+        if dry_run:
+            print("\n[dry-run] DB 쓰기 생략. 변경 예시 3개:")
+            for column, cn, before, after in examples:
+                print(f"\n--- {column} (CN={cn}) ---")
+                print("BEFORE:", before)
+                print("AFTER :", after)
+            return
+
+        updated = 0
+        for cn, column, val in updates:
+            r = await session.execute(
+                sql_text(f"UPDATE papers SET {column} = :val WHERE scienceon_cn = :cn"),
+                {"val": val, "cn": cn},
+            )
+            updated += r.rowcount
+        await session.commit()
+        print(f"DB 업데이트: {updated}건")
+
+
 async def run(*, dry_run: bool, update_db: bool) -> None:
+    if not JSON_PATH.exists():
+        await run_db_native(dry_run=dry_run)
+        return
+
     data = json.loads(JSON_PATH.read_text(encoding="utf-8"))
     papers: list[dict] = data["papers"]
     print(f"전체 레코드: {len(papers)}건")
