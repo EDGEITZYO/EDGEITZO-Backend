@@ -73,7 +73,9 @@ async def _save_last_anchor(db: AsyncSession, user_id: str, anchor: KeywordMapNo
 
 - 상위/하위 분류: 후보 빈도가 앵커보다 크면 상위, 작거나 같으면 하위 (동률은 하위)
 - 정렬: 동시출현 수(유사도) 내림차순
-- `has_more_parents`/`has_more_children`: 화살표 활성화 여부
+- 최초 로드는 앵커 + 1단계(직계 부모/자녀)까지만 반환. 2단계 이상은 각 노드의 `expand`로 조회
+- `has_more_parents`/`has_more_children`: 앵커 기준 화살표 활성화 여부
+- 각 노드의 `has_more`: 그 노드를 expand했을 때 새로 나올 게 있는지 여부. false면 프론트에서 expand 버튼 비활성화/숨김 처리 필요
 - `user_id` 제공 시 '마지막 조회 앵커'를 세션 재개용으로 저장 (`GET /keyword-search/map/{user_id}`에서 조회 가능)
 """,
 )
@@ -124,6 +126,8 @@ async def recenter_node(
 
 - `existing_node_keys`: 현재 화면에 표시 중인 전체 노드 key (전역 중복 제거용, 필수)
 - `current_tier`: 확장 대상 노드의 현재 tier. 신규 노드는 이 값+1로 배정됨
+- `parent_has_more`: 이번 응답에 다 담지 못한, node_key 자신의 남은 자식 후보가 더 있는지 여부 (같은 노드에 expand를 또 호출할 수 있는지)
+- `new_nodes[].has_more`: 새로 추가된 노드 각각을 또 expand할 수 있는지 여부
 """,
 )
 async def expand_node_in_place(node_key: str, request: KeywordMapExpandRequest):
