@@ -18,7 +18,7 @@ def _profile_from_user(user: User) -> MypageProfile:
         provider=user.provider,
         name=user.name,
         gender=user.gender,
-        age=user.age,
+        birth_year=user.birth_year,
         role=user.role,
         research_field=user.research_field,
         purposes=user.purposes,
