@@ -57,6 +57,7 @@ class GraphPayload:
     years: list[dict[str, Any]]
     paper_years: list[dict[str, Any]]
     related_keywords: list[dict[str, Any]]
+    same_as: list[dict[str, Any]]
     skipped_papers: int
 
 
@@ -165,6 +166,7 @@ def build_graph_payload(data: dict[str, Any], *, limit: int | None = None) -> Gr
     year_rows: list[dict[str, Any]] = []
     paper_year_rows: list[dict[str, Any]] = []
     related_counter: Counter[tuple[str, str, str]] = Counter()
+    same_as_rows: list[dict[str, Any]] = []
     skipped_papers = 0
 
     for paper in raw_papers:
@@ -222,8 +224,24 @@ def build_graph_payload(data: dict[str, Any], *, limit: int | None = None) -> Gr
         paper_keyword_rows.extend(ko_rel_rows)
         paper_keyword_rows.extend(en_rel_rows)
 
+        # 원본 데이터의 Keyword[i]/Keyword2[i]는 같은 개념의 한글/영문 번역쌍이다(인덱스로 대응됨).
+        # 번역쌍은 "관련 키워드"가 아니라 같은 개념의 다른 표기이므로 RELATED_TO 카운팅에서 제외하고
+        # 대신 SAME_AS로 별도 연결한다 — 안 그러면 앵커 자신의 번역어가 "관련 키워드"로 뜨는 문제가 생김.
+        # 두 리스트 길이가 다르면 인덱스 대응을 신뢰할 수 없으므로 번역쌍 처리 없이 건너뜀.
+        translation_pairs: set[tuple[str, str]] = set()
+        if len(ko_keywords) == len(en_keywords):
+            for ko_kw, en_kw in zip(ko_keywords, en_keywords):
+                ko_key = _keyword_key(ko_kw, "ko")
+                en_key = _keyword_key(en_kw, "en")
+                if ko_key == en_key:
+                    continue
+                translation_pairs.add(tuple(sorted((ko_key, en_key))))
+                same_as_rows.append({"from_key": ko_key, "to_key": en_key, "loaded_at": loaded_at})
+
         paper_keyword_keys = sorted({row["keyword_key"] for row in ko_rel_rows + en_rel_rows})
         for from_key, to_key in combinations(paper_keyword_keys, 2):
+            if tuple(sorted((from_key, to_key))) in translation_pairs:
+                continue
             from_lang = from_key.split(":", 1)[0]
             to_lang = to_key.split(":", 1)[0]
             lang_pair = "-".join(sorted((from_lang, to_lang)))
@@ -262,6 +280,11 @@ def build_graph_payload(data: dict[str, Any], *, limit: int | None = None) -> Gr
         for (from_key, to_key, lang_pair), paper_count in related_counter.items()
     ]
 
+    same_as_unique: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in same_as_rows:
+        same_as_unique.setdefault((row["from_key"], row["to_key"]), row)
+    same_as_rows = list(same_as_unique.values())
+
     journal_rows = [
         {
             "name": name,
@@ -282,6 +305,7 @@ def build_graph_payload(data: dict[str, Any], *, limit: int | None = None) -> Gr
         years=_merge_unique(year_rows, "value"),
         paper_years=paper_year_rows,
         related_keywords=related_keyword_rows,
+        same_as=same_as_rows,
         skipped_papers=skipped_papers,
     )
 
@@ -413,6 +437,14 @@ def load_payload(session: Any, payload: GraphPayload, *, batch_size: int) -> Non
         r.loaded_at = row.loaded_at
     """
 
+    same_as_query = """
+    UNWIND $rows AS row
+    MATCH (a:Keyword {key: row.from_key})
+    MATCH (b:Keyword {key: row.to_key})
+    MERGE (a)-[r:SAME_AS]->(b)
+    SET r.loaded_at = row.loaded_at
+    """
+
     for label, query, rows in [
         ("Paper", paper_query, payload.papers),
         ("Keyword", keyword_query, payload.keywords),
@@ -424,6 +456,7 @@ def load_payload(session: Any, payload: GraphPayload, *, batch_size: int) -> Non
         ("Year", year_query, payload.years),
         ("Paper-PUBLISHED_IN_YEAR-Year", paper_year_query, payload.paper_years),
         ("Keyword-RELATED_TO-Keyword", related_keyword_query, payload.related_keywords),
+        ("Keyword-SAME_AS-Keyword", same_as_query, payload.same_as),
     ]:
         if not rows:
             continue
@@ -442,6 +475,7 @@ def print_summary(payload: GraphPayload) -> None:
     print(f"years: {len(payload.years)}")
     print(f"paper_year_edges: {len(payload.paper_years)}")
     print(f"related_keyword_edges: {len(payload.related_keywords)}")
+    print(f"same_as_edges: {len(payload.same_as)}")
     print(f"skipped_papers: {payload.skipped_papers}")
 
 
