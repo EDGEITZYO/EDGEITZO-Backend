@@ -34,6 +34,8 @@ from app.services.search_service import _apply_sort_order, _SORT_LABELS, _sort_i
 logger = logging.getLogger(__name__)
 
 _MODEL = settings.llm_default_model
+# 사용자에게 직접 노출되는 자연어 요약은 표현력이 중요해 분류/추출용 기본 모델(Haiku)보다 상위 모델을 씀
+_SUMMARY_MODEL = "claude-sonnet-5"
 _kiwi = Kiwi()  # 모듈 로드 시 1회 초기화 (싱글턴)
 
 _KEYWORD_SYSTEM = """학술 키워드·필터 추출기. 사용자 입력에서 연구 키워드와 필터 조건(연도/논문유형/인용수)을 추출해 JSON만 반환. 절대 설명하지 말 것. JSON 외 텍스트 금지."""
@@ -442,7 +444,7 @@ async def _build_summary(
             messages=[
                 {"role": "user", "content": f"[System]\n{_SUMMARY_SYSTEM_PROMPT}\n\n[User]\n{user_prompt}"},
             ],
-            model=_MODEL, temperature=0.9, use_cache=False,
+            model=_SUMMARY_MODEL, temperature=0.9, use_cache=False,
         )
         text = resp.text.strip()
         return (text, False) if text else (None, True)

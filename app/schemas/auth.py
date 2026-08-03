@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import datetime
 import re
 from typing import Literal, Optional
 
@@ -75,7 +76,7 @@ _VALID_PURPOSES = {
 class ProfileCreateRequest(BaseModel):
     name: str
     gender: Optional[Literal["남성", "여성", "기타"]] = None
-    age: Optional[str] = None
+    birth_year: Optional[int] = Field(None, ge=1900, description="출생연도", example=2002)
     role: Optional[Literal["대학원 진학 준비", "석사과정", "박사과정", "석박통합과정", "교수·연구원", "대학생", "기타"]] = None
     research_field: Optional[str] = None
     purposes: Optional[list[str]] = Field(
@@ -89,6 +90,13 @@ class ProfileCreateRequest(BaseModel):
     def normalize_gender(cls, v: str | None) -> str | None:
         if v == "선택 안함":
             return None
+        return v
+
+    @field_validator("birth_year")
+    @classmethod
+    def validate_birth_year(cls, v: int | None) -> int | None:
+        if v is not None and v > datetime.now().year:
+            raise ValueError("출생연도는 현재 연도보다 클 수 없습니다")
         return v
 
     @field_validator("purposes")
