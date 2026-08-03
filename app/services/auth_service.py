@@ -289,7 +289,7 @@ async def create_profile_service(
         user,
         name=data.get("name"),
         gender=data.get("gender"),
-        age=data.get("age"),
+        birth_year=data.get("birth_year"),
         role=data.get("role"),
         research_field=data.get("research_field"),
         purposes=data.get("purposes"),

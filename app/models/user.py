@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, JSON, String
+from sqlalchemy import Boolean, Column, DateTime, Integer, JSON, String
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.base import Base
@@ -17,6 +17,7 @@ class User(Base):
     provider_id = Column(String, nullable=True)
     name = Column(String, nullable=True)
     gender = Column(String, nullable=True)
+    birth_year = Column(Integer, nullable=True)
     age = Column(String, nullable=True)
     role = Column(String, nullable=True)
     research_field = Column(String, nullable=True)
