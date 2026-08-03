@@ -21,10 +21,10 @@ from typing import Optional
 import chromadb
 import numpy as np
 from rank_bm25 import BM25Okapi
-from sentence_transformers import SentenceTransformer
 
 from app.core.settings import settings
 from app.schemas.search import CredibilityInfo, PaperAuthor, PaperSearchItem
+from app.services.embedding_model import get_bge_model
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,6 @@ _FALLBACK_PATH = _PROJECT_ROOT / "data" / "parsed" / "scienceon_keywords_normali
 # 없으면 _batch_best_snippets가 그 논문에 한해서만 실시간 인코딩으로 폴백함.
 _SENTENCE_CACHE_PATH = _PROJECT_ROOT / "data" / "parsed" / "abstract_sentence_embeddings.pkl"
 
-_MODEL_NAME = "dragonkue/BGE-m3-ko"
 _COLLECTION_NAME = "papers"
 _RRF_K = 60  # RRF 상수 — 값이 클수록 하위 랭크 페널티 완화
 
@@ -195,7 +194,7 @@ class ChromaSearchService:
         tokenized = [_tokenize(_paper_to_bm25_text(p)) for p in self._papers]
         self._bm25 = BM25Okapi(tokenized)
 
-        self._model = SentenceTransformer(_MODEL_NAME, device="cpu")
+        self._model = get_bge_model()
         self._sentence_cache = _load_sentence_cache()
 
         chroma_client = chromadb.HttpClient(
