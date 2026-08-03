@@ -174,8 +174,15 @@ async def get_keyword_map_node_papers(
     research_field: Optional[str] = Query(None, description="최상위 연구 분야 (탐색 이력 제목용)"),
     db: AsyncSession = Depends(get_db),
 ):
+    # node_key는 "ko:관리" 같은 내부 저장용 key 포맷이라, 화면에 노출되는 title/keyword_path/
+    # keyword 필드에 그대로 쓰면 안 됨 — 사람이 읽는 이름(name_ko/name_en)으로 변환해서 넘긴다.
+    names = await get_keyword_names(node_key)
+    display_keyword, display_keyword_en = (names or (None, None))
+    display_keyword = display_keyword or display_keyword_en or node_key
+
     result = await get_node_papers(
-        keyword=node_key,
+        keyword=display_keyword,
+        keyword_en=display_keyword_en or "",
         year=year,
         paper_type=paper_type,
         kci=kci,

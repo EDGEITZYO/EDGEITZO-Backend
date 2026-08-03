@@ -24,6 +24,7 @@ class LLMBudgetExceededError(Exception):
 # 모델별 단가 (USD per 1M tokens) — 확정 모델 결정 후 갱신
 _PRICING: dict[str, dict[str, float]] = {
     "claude-sonnet-4-5": {"input": 3.0, "output": 15.0},
+    "claude-sonnet-5": {"input": 3.0, "output": 15.0},
     "claude-haiku-4-5": {"input": 1.0, "output": 5.0},
 }
 
@@ -52,6 +53,10 @@ def _calc_cost_micro_usd(model: str, input_tokens: int, output_tokens: int) -> i
     return int(cost_usd * 1_000_000)
 
 
+# Sonnet 5 이상(Opus 5, Fable 5 등)은 temperature/top_p/top_k를 완전히 거부함(400) — 이 모델들엔 안 보냄
+_NO_SAMPLING_PARAMS_MODELS = {"claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-mythos-5"}
+
+
 async def _call_claude(
     messages: list[dict], model: str, temperature: float, max_tokens: int
 ) -> tuple[str, int, int]:
@@ -60,15 +65,21 @@ async def _call_claude(
         api_key=settings.anthropic_api_key,
         timeout=settings.llm_timeout_seconds,
     )
+    sampling_kwargs = {} if model in _NO_SAMPLING_PARAMS_MODELS else {"temperature": temperature}
     resp = await client.messages.create(
-        model=model, max_tokens=max_tokens, temperature=temperature, messages=messages
+        model=model, max_tokens=max_tokens, messages=messages, **sampling_kwargs
     )
     if resp.stop_reason == "max_tokens":
         logger.warning(
             "LLM 응답이 max_tokens(%d)에 걸려 중간에 잘림 — model=%s output_tokens=%d",
             max_tokens, model, resp.usage.output_tokens,
         )
-    return resp.content[0].text, resp.usage.input_tokens, resp.usage.output_tokens
+    # 위 모델들은 기본적으로 adaptive thinking이 켜져 있어 thinking 블록이 먼저 오므로
+    # content[0]이 아니라 text 타입 블록을 명시적으로 찾아야 함
+    text_block = next((b for b in resp.content if b.type == "text"), None)
+    if text_block is None:
+        raise ValueError(f"Claude 응답에 text 블록이 없음 (model={model}, stop_reason={resp.stop_reason})")
+    return text_block.text, resp.usage.input_tokens, resp.usage.output_tokens
 
 
 async def chat(
