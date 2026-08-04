@@ -69,12 +69,12 @@ async def _save_last_anchor(db: AsyncSession, user_id: str, anchor: KeywordMapNo
     response_model=ApiResponse[KeywordMapGraphResponse],
     responses={404: {"model": ApiErrorResponse}},
     summary="키워드맵 최초 앵커 로드",
-    description="""검색어를 화면 중앙 앵커로 고정하고, 빈도/동시출현 데이터로 좌(상위)/우(하위) 그래프를 즉시 계산합니다 (LLM 미사용).
+    description="""검색어를 화면 중앙 앵커로 고정하고, 빈도/동시출현 데이터로 하위 그래프를 즉시 계산합니다 (LLM 미사용).
 
-- 상위/하위 분류: 후보 빈도가 앵커보다 크면 상위, 작거나 같으면 하위 (동률은 하위)
+- 하위 분류: 후보 빈도가 앵커 이하인 것만 채택 (앵커보다 빈도 높은 후보는 노출하지 않음)
 - 정렬: 동시출현 수(유사도) 내림차순
-- 최초 로드는 앵커 + 1단계(직계 부모/자녀)까지만 반환. 2단계 이상은 각 노드의 `expand`로 조회
-- `has_more_parents`/`has_more_children`: 앵커 기준 화살표 활성화 여부
+- 최초 로드는 앵커 + 1단계(직계 자녀)까지만 반환. 2단계 이상은 각 노드의 `expand`로 조회
+- `has_more_children`: 앵커 기준 화살표 활성화 여부
 - 각 노드의 `has_more`: 그 노드를 expand했을 때 새로 나올 게 있는지 여부. false면 프론트에서 expand 버튼 비활성화/숨김 처리 필요
 - `user_id` 제공 시 '마지막 조회 앵커'를 세션 재개용으로 저장 (`GET /keyword-search/map/{user_id}`에서 조회 가능)
 """,
@@ -99,8 +99,8 @@ async def get_keyword_map(
     summary="재중심화",
     description="""클릭한 노드를 새 앵커로 삼아 그래프를 다시 계산합니다.
 
-- 이전 앵커의 좌/우 배치는 확정된 빈도 비교 규칙을 그대로 적용 (별도 규칙 없음)
-- `existing_node_keys`로 전달된 이전 화면의 형제 노드는, 새 그래프와 실제로 연결되면 cross-link로 유지되고 아니면 응답에서 자연히 빠짐
+- 이전 앵커 기준 하위 배치는 확정된 빈도 비교 규칙을 그대로 적용 (별도 규칙 없음)
+- `existing_node_keys`로 전달된 이전 화면의 형제 노드는, 새 그래프와 실제로 연결되고 새 앵커 이하 빈도인 것만 cross-link로 유지되고 아니면 응답에서 자연히 빠짐
 """,
 )
 async def recenter_node(

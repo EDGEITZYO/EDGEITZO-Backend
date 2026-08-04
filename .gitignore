@@ -58,6 +58,7 @@ logs/
 data/raw/*.json
 data/parsed/*.json
 data/parsed/*.pkl
+data/parsed/*.bak
 neo4j_data/
 
 # Raw CSV / 대용량 데이터 파일 — 커밋 제외
