@@ -108,6 +108,14 @@ class Settings(BaseSettings):
     keyword_map_cache_ttl_seconds: int = 300
     keyword_map_definition_llm_max_abstracts: int = 5
 
+    # 논문 인용관계(참고문헌/피인용) 그래프 — 자체 코퍼스 내부 CITES 관계 기반
+    paper_citation_max_nodes: int = 100
+    paper_citation_summary_limit: int = 12
+    paper_citation_expand_max: int = 6
+    paper_citation_cache_ttl_seconds: int = 300
+    # 요약 그래프(07-01) 클러스터링 — 1단계 in-service 자식끼리 이 개수 이상 키워드를 공유하면 같은 그룹으로 묶음
+    paper_citation_cluster_min_shared_keywords: int = 2
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
