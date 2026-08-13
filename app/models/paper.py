@@ -71,3 +71,26 @@ class PaperSimilar(Base):
     issn = Column(String(50), nullable=True)
     material_type = Column(String(50), nullable=True)
     internal_paper_id = Column(String(100), ForeignKey("papers.id", ondelete="SET NULL"), nullable=True, index=True)
+
+
+class PaperCitationExternalRef(Base):
+    """인용관계 그래프의 코퍼스 밖(비-in-service) 노드용 서지정보.
+    양쪽 다 papers 테이블에 있는 관계는 Neo4j CITES가 담당하고, 여긴 상대 논문이
+    서비스 코퍼스 밖에 있는 경우만 저장한다(제목/저자 등 표시용 메타데이터만, 상세페이지 없음)."""
+    __tablename__ = "paper_citation_external_refs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_cn = Column(String(100), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False, index=True)
+    direction = Column(String(20), nullable=False)  # "reference" | "citing"
+    external_source = Column(String(20), nullable=False)  # "kci" | "openalex"
+    external_id = Column(String(100), nullable=False)
+    title = Column(String(1000), nullable=True)
+    authors = Column(ARRAY(String(300)), nullable=True)
+    journal = Column(String(500), nullable=True)
+    doi = Column(String(200), nullable=True)
+    pubyear = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=True)
+
+    __table_args__ = (
+        Index("ix_paper_citation_external_refs_source_direction", "source_cn", "direction"),
+    )

@@ -129,7 +129,12 @@ class SimilarPaperResponse(BaseModel):
     title: Optional[str] = Field(None, description="유사 논문 제목. 없으면 null")
     author: Optional[str] = Field(None, description="저자. 없으면 null")
     pubyear: Optional[int] = Field(None, description="발행 연도. 없으면 null")
-    material_type: Optional[str] = Field(None, description="자료 유형. 없으면 null")
+    material_type: Optional[str] = Field(None, description="자료 유형(ScienceON 원본 값). 현재 데이터 미보유로 항상 null — paper_type 사용 권장")
+    paper_type: Optional[str] = Field(
+        None,
+        description="논문 유형. '학술 저널' | '박사학위 논문' | '석사학위 논문' | '학위논문'. "
+        "PaperCardResponse.paper_type과 동일 컨벤션. in_service=true일 때만 채워짐(db_code/degree 필요), false면 null",
+    )
     in_service: bool = Field(description="서비스 DB(papers 테이블) 수록 여부. true 시 paper_id로 이동 가능")
     paper_id: Optional[str] = Field(None, description="in_service=true일 때 서비스 DB의 논문 ID. false 시 null")
     journal_name: Optional[str] = Field(None, description="학술지명. in_service=true이고 저널 매칭 시. 없으면 null")
