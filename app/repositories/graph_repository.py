@@ -438,3 +438,88 @@ class GraphRepository:
             "nodes": list(unique_nodes.values()),
             "edges": edges,
         }
+
+    def find_paper(self, cn: str) -> Optional[dict[str, Any]]:
+        query = "MATCH (p:Paper {cn: $cn}) RETURN p AS paper"
+
+        with self.driver.session() as session:
+            record = session.run(query, cn=cn).single()
+
+        if record is None:
+            return None
+
+        return self._paper_to_dict(record["paper"])
+
+    def find_citation_neighbors(
+        self,
+        cn: str,
+        *,
+        direction: str,
+        limit: int,
+        excluded_cns: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """논문 인용관계 이웃 조회"""
+        pattern = "-[:CITES]->" if direction == "reference" else "<-[:CITES]-"
+        exclude_clause = "WHERE NOT c.cn IN $excluded_cns" if excluded_cns else ""
+        query = f"""
+        MATCH (:Paper {{cn: $cn}}){pattern}(c:Paper)
+        {exclude_clause}
+        RETURN c AS paper
+        ORDER BY coalesce(c.pubyear, 0) DESC, c.title ASC
+        LIMIT $limit
+        """
+
+        with self.driver.session() as session:
+            records = list(
+                session.run(query, cn=cn, limit=limit, excluded_cns=excluded_cns or [])
+            )
+
+        return [self._paper_to_dict(record["paper"]) for record in records]
+
+    def has_more_citation_neighbors(
+        self,
+        cn: str,
+        *,
+        direction: str,
+        excluded_cns: list[str],
+    ) -> bool:
+        """excluded_cns(이미 화면에 있는 논문)에 안 걸리는 이웃이 하나라도 남아있는지."""
+        pattern = "-[:CITES]->" if direction == "reference" else "<-[:CITES]-"
+        query = f"""
+        MATCH (:Paper {{cn: $cn}}){pattern}(c:Paper)
+        WHERE NOT c.cn IN $excluded_cns
+        RETURN count(c) > 0 AS has_more
+        """
+
+        with self.driver.session() as session:
+            record = session.run(query, cn=cn, excluded_cns=excluded_cns).single()
+
+        return bool(record["has_more"]) if record else False
+
+    def find_citation_relations_among(self, cns: list[str]) -> list[dict[str, Any]]:
+        """cns 집합 내부에서 실제로 존재하는 모든 CITES 관계 조회"""
+        if not cns:
+            return []
+        query = """
+        MATCH (a:Paper)-[:CITES]->(b:Paper)
+        WHERE a.cn IN $cns AND b.cn IN $cns
+        RETURN a.cn AS citing, b.cn AS cited
+        """
+        with self.driver.session() as session:
+            records = list(session.run(query, cns=cns))
+        return [{"citing": r["citing"], "cited": r["cited"]} for r in records]
+
+    def find_keyword_overlap_pairs(self, cns: list[str], *, min_shared: int) -> list[dict[str, Any]]:
+        """cns 집합 내부에서 키워드를 min_shared개 이상 공유하는 논문 쌍 조회 (07-01 클러스터링용)."""
+        if len(cns) < 2:
+            return []
+        query = """
+        MATCH (a:Paper)-[:HAS_KEYWORD]->(k:Keyword)<-[:HAS_KEYWORD]-(b:Paper)
+        WHERE a.cn IN $cns AND b.cn IN $cns AND a.cn < b.cn
+        WITH a.cn AS a, b.cn AS b, count(DISTINCT k) AS shared
+        WHERE shared >= $min_shared
+        RETURN a, b, shared
+        """
+        with self.driver.session() as session:
+            records = list(session.run(query, cns=cns, min_shared=min_shared))
+        return [{"a": r["a"], "b": r["b"], "shared": r["shared"]} for r in records]

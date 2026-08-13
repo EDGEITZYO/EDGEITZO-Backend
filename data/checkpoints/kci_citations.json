@@ -3700,5 +3700,305 @@
     "art_id": "ART002429234",
     "citation_count": 0,
     "processed_at": "2026-06-02T08:50:15.893136+00:00"
+  },
+  "ART002391745": {
+    "status": "ok",
+    "art_id": "ART002391745",
+    "citation_count": 5,
+    "processed_at": "2026-08-12T16:17:56.544072+00:00"
+  },
+  "ART001760989": {
+    "status": "ok",
+    "art_id": "ART001760989",
+    "citation_count": 19,
+    "processed_at": "2026-08-12T16:17:56.544077+00:00"
+  },
+  "ART002371209": {
+    "status": "ok",
+    "art_id": "ART002371209",
+    "citation_count": 13,
+    "processed_at": "2026-08-12T16:17:56.544078+00:00"
+  },
+  "ART002454659": {
+    "status": "ok",
+    "art_id": "ART002454659",
+    "citation_count": 16,
+    "processed_at": "2026-08-12T16:17:56.544079+00:00"
+  },
+  "ART002337673": {
+    "status": "ok",
+    "art_id": "ART002337673",
+    "citation_count": 4,
+    "processed_at": "2026-08-12T16:17:56.544079+00:00"
+  },
+  "ART002301359": {
+    "status": "ok",
+    "art_id": "ART002301359",
+    "citation_count": 8,
+    "processed_at": "2026-08-12T16:17:56.544080+00:00"
+  },
+  "ART002696010": {
+    "status": "ok",
+    "art_id": "ART002696010",
+    "citation_count": 6,
+    "processed_at": "2026-08-12T16:17:56.544081+00:00"
+  },
+  "ART002043079": {
+    "status": "ok",
+    "art_id": "ART002043079",
+    "citation_count": 7,
+    "processed_at": "2026-08-12T16:17:56.544082+00:00"
+  },
+  "ART002037024": {
+    "status": "ok",
+    "art_id": "ART002037024",
+    "citation_count": 8,
+    "processed_at": "2026-08-12T16:17:56.544083+00:00"
+  },
+  "ART001982912": {
+    "status": "ok",
+    "art_id": "ART001982912",
+    "citation_count": 10,
+    "processed_at": "2026-08-12T16:17:56.544083+00:00"
+  },
+  "ART001950769": {
+    "status": "ok",
+    "art_id": "ART001950769",
+    "citation_count": 9,
+    "processed_at": "2026-08-12T16:17:56.544084+00:00"
+  },
+  "ART002705988": {
+    "status": "ok",
+    "art_id": "ART002705988",
+    "citation_count": 4,
+    "processed_at": "2026-08-12T16:17:56.544085+00:00"
+  },
+  "ART001861007": {
+    "status": "ok",
+    "art_id": "ART001861007",
+    "citation_count": 28,
+    "processed_at": "2026-08-12T16:17:56.544085+00:00"
+  },
+  "ART002620786": {
+    "status": "ok",
+    "art_id": "ART002620786",
+    "citation_count": 12,
+    "processed_at": "2026-08-12T16:17:56.544086+00:00"
+  },
+  "ART002292145": {
+    "status": "ok",
+    "art_id": "ART002292145",
+    "citation_count": 5,
+    "processed_at": "2026-08-12T16:17:56.544087+00:00"
+  },
+  "ART002161709": {
+    "status": "ok",
+    "art_id": "ART002161709",
+    "citation_count": 4,
+    "processed_at": "2026-08-12T16:17:56.544088+00:00"
+  },
+  "ART001994185": {
+    "status": "ok",
+    "art_id": "ART001994185",
+    "citation_count": 19,
+    "processed_at": "2026-08-12T16:17:56.544088+00:00"
+  },
+  "ART001677688": {
+    "status": "ok",
+    "art_id": "ART001677688",
+    "citation_count": 26,
+    "processed_at": "2026-08-12T16:17:56.544089+00:00"
+  },
+  "ART001699850": {
+    "status": "ok",
+    "art_id": "ART001699850",
+    "citation_count": 30,
+    "processed_at": "2026-08-12T16:17:56.544090+00:00"
+  },
+  "ART002295537": {
+    "status": "ok",
+    "art_id": "ART002295537",
+    "citation_count": 7,
+    "processed_at": "2026-08-12T16:17:56.544090+00:00"
+  },
+  "ART001369428": {
+    "status": "ok",
+    "art_id": "ART001369428",
+    "citation_count": 17,
+    "processed_at": "2026-08-12T16:17:56.544091+00:00"
+  },
+  "ART001471861": {
+    "status": "ok",
+    "art_id": "ART001471861",
+    "citation_count": 5,
+    "processed_at": "2026-08-12T16:17:56.544092+00:00"
+  },
+  "ART001869484": {
+    "status": "ok",
+    "art_id": "ART001869484",
+    "citation_count": 9,
+    "processed_at": "2026-08-12T16:17:56.544096+00:00"
+  },
+  "ART001097832": {
+    "status": "ok",
+    "art_id": "ART001097832",
+    "citation_count": 9,
+    "processed_at": "2026-08-12T16:17:56.544097+00:00"
+  },
+  "ART001516397": {
+    "status": "ok",
+    "art_id": "ART001516397",
+    "citation_count": 9,
+    "processed_at": "2026-08-12T16:17:56.544097+00:00"
+  },
+  "ART002087340": {
+    "status": "ok",
+    "art_id": "ART002087340",
+    "citation_count": 17,
+    "processed_at": "2026-08-12T16:17:56.544098+00:00"
+  },
+  "ART002129560": {
+    "status": "ok",
+    "art_id": "ART002129560",
+    "citation_count": 9,
+    "processed_at": "2026-08-12T16:17:56.544099+00:00"
+  },
+  "ART002760092": {
+    "status": "ok",
+    "art_id": "ART002760092",
+    "citation_count": 2,
+    "processed_at": "2026-08-12T16:17:56.544100+00:00"
+  },
+  "ART001310632": {
+    "status": "ok",
+    "art_id": "ART001310632",
+    "citation_count": 7,
+    "processed_at": "2026-08-12T16:17:56.544100+00:00"
+  },
+  "ART001669082": {
+    "status": "ok",
+    "art_id": "ART001669082",
+    "citation_count": 9,
+    "processed_at": "2026-08-12T16:17:56.544101+00:00"
+  },
+  "ART002008980": {
+    "status": "ok",
+    "art_id": "ART002008980",
+    "citation_count": 5,
+    "processed_at": "2026-08-12T16:17:56.544104+00:00"
+  },
+  "ART002258717": {
+    "status": "ok",
+    "art_id": "ART002258717",
+    "citation_count": 6,
+    "processed_at": "2026-08-12T16:17:56.544105+00:00"
+  },
+  "ART001801332": {
+    "status": "ok",
+    "art_id": "ART001801332",
+    "citation_count": 8,
+    "processed_at": "2026-08-12T16:17:56.544105+00:00"
+  },
+  "ART002172125": {
+    "status": "ok",
+    "art_id": "ART002172125",
+    "citation_count": 2,
+    "processed_at": "2026-08-12T16:17:56.544106+00:00"
+  },
+  "ART002365188": {
+    "status": "ok",
+    "art_id": "ART002365188",
+    "citation_count": 23,
+    "processed_at": "2026-08-12T16:17:56.544107+00:00"
+  },
+  "ART001927723": {
+    "status": "ok",
+    "art_id": "ART001927723",
+    "citation_count": 5,
+    "processed_at": "2026-08-12T16:17:56.544108+00:00"
+  },
+  "ART001201977": {
+    "status": "ok",
+    "art_id": "ART001201977",
+    "citation_count": 40,
+    "processed_at": "2026-08-12T16:17:56.544108+00:00"
+  },
+  "ART002067873": {
+    "status": "ok",
+    "art_id": "ART002067873",
+    "citation_count": 2,
+    "processed_at": "2026-08-12T16:17:56.544109+00:00"
+  },
+  "ART002705986": {
+    "status": "ok",
+    "art_id": "ART002705986",
+    "citation_count": 5,
+    "processed_at": "2026-08-12T16:17:56.544110+00:00"
+  },
+  "ART002822615": {
+    "status": "ok",
+    "art_id": "ART002822615",
+    "citation_count": 2,
+    "processed_at": "2026-08-12T16:17:56.544110+00:00"
+  },
+  "ART002150533": {
+    "status": "ok",
+    "art_id": "ART002150533",
+    "citation_count": 5,
+    "processed_at": "2026-08-12T16:17:56.544111+00:00"
+  },
+  "ART002540304": {
+    "status": "ok",
+    "art_id": "ART002540304",
+    "citation_count": 2,
+    "processed_at": "2026-08-12T16:17:56.544112+00:00"
+  },
+  "ART001785145": {
+    "status": "ok",
+    "art_id": "ART001785145",
+    "citation_count": 17,
+    "processed_at": "2026-08-12T16:17:56.544112+00:00"
+  },
+  "ART002737462": {
+    "status": "ok",
+    "art_id": "ART002737462",
+    "citation_count": 4,
+    "processed_at": "2026-08-12T16:17:56.544113+00:00"
+  },
+  "ART002785788": {
+    "status": "ok",
+    "art_id": "ART002785788",
+    "citation_count": 7,
+    "processed_at": "2026-08-12T16:17:56.544114+00:00"
+  },
+  "ART002773482": {
+    "status": "ok",
+    "art_id": "ART002773482",
+    "citation_count": 2,
+    "processed_at": "2026-08-12T16:17:56.544115+00:00"
+  },
+  "ART002249024": {
+    "status": "ok",
+    "art_id": "ART002249024",
+    "citation_count": 8,
+    "processed_at": "2026-08-12T16:17:56.544115+00:00"
+  },
+  "ART001985687": {
+    "status": "ok",
+    "art_id": "ART001985687",
+    "citation_count": 6,
+    "processed_at": "2026-08-12T16:17:56.544116+00:00"
+  },
+  "ART002115661": {
+    "status": "ok",
+    "art_id": "ART002115661",
+    "citation_count": 93,
+    "processed_at": "2026-08-12T16:17:56.544117+00:00"
+  },
+  "ART001257443": {
+    "status": "ok",
+    "art_id": "ART001257443",
+    "citation_count": 21,
+    "processed_at": "2026-08-12T16:17:56.544117+00:00"
   }
 }
