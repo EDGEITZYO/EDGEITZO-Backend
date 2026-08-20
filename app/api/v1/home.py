@@ -20,6 +20,7 @@ from app.models.journal import Journal
 from app.models.paper import Paper
 from app.models.recent_read import RecentRead
 from app.models.user import User
+from app.schemas.common import ApiResponse
 from app.schemas.paper import PaperCardTrustBadge
 
 router = APIRouter()
@@ -28,6 +29,10 @@ _KST           = timezone(timedelta(hours=9))
 _REDIS_DB      = 7
 _HISTORY_KEY   = "recent_searches:{user_id}"
 _HISTORY_LIMIT = 10
+
+_SEARCH_TERM_KEY   = "recent_search_terms:{user_id}"
+_SEARCH_TERM_LIMIT = 6
+_SEARCH_TERM_TTL   = 86400 * 7
 
 
 # ── 스키마 ─────────────────────────────────────────────────────────────
@@ -66,7 +71,15 @@ class RecordReadRequest(BaseModel):
     search_id: str | None = Field(default=None, description="연결된 탐색 세션 ID (recent_searches 갱신용)")
 
 
-# ── 헬퍼 ───────────────────────────────────────────────────────────────
+class SaveSearchTermRequest(BaseModel):
+    term: str = Field(..., min_length=1, description="사용자가 검색한 검색어 원문. 연구자명 검색/연구 분야 검색 구분 없이 그대로 전달", example="딥러닝")
+
+
+class RecentSearchTermsResponse(BaseModel):
+    terms: List[str] = Field(description="최근 검색어 목록 (최대 6개, 최신 검색순). 동일 검색어(공백까지 완전 일치)는 1개만 포함됨", example=["딥러닝", "홍길동"])
+
+
+# 헬퍼
 
 _JOURNAL_DB_CODES = {"JAKO", "JAFO", "CFKO", "CFFO"}
 _GREETING = [
@@ -79,7 +92,7 @@ def _personalized_message(name: str) -> str:
     return random.choice(_GREETING).format(name=name or "연구자")
 
 
-# ── 엔드포인트 ──────────────────────────────────────────────────────────
+# 엔드포인트
 
 @router.get(
     "/home",
@@ -257,6 +270,65 @@ async def record_read(
         )
 
     return success_response(data={"recorded": True}, message="read recorded")
+
+
+@router.post(
+    "/home/recent-search-terms",
+    response_model=ApiResponse[dict],
+    summary="최근 검색어 저장",
+    description="""검색 실행 시 호출해 최근 검색어를 저장합니다.
+
+- 연구자명 검색/연구 분야 검색 구분 없이 하나의 목록에 저장됩니다.
+- 동일 검색어(공백까지 완전 일치)가 이미 있으면 기존 항목을 지우고 맨 앞으로 옮깁니다 (중복 저장 안 함).
+- 최대 6개까지만 유지되며, 초과되는 오래된 검색어는 잘려나갑니다.
+""",
+)
+async def add_recent_search_term(
+    request: SaveSearchTermRequest,
+    current_user: User = Depends(get_current_user),
+):
+    save_search_term(user_id=str(current_user.id), term=request.term)
+    return success_response(data={"saved": True}, message="recent search term saved")
+
+
+@router.get(
+    "/home/recent-search-terms",
+    response_model=ApiResponse[RecentSearchTermsResponse],
+    summary="최근 검색어 목록 조회",
+    description="""홈에서 검색창 진입 시 호출. 검색창 하단에 칩 형태로 노출할 최근 검색어 목록을 반환합니다.
+
+- 연구자명 검색/연구 분야 검색 구분 없이 최근 검색한 순서대로 최대 6개 반환
+- 동일 검색어(공백까지 완전 일치)는 1개만 포함됨
+- 칩 클릭 시 해당 검색어로 바로 검색을 실행하면 됨
+""",
+)
+async def get_recent_search_terms(
+    current_user: User = Depends(get_current_user),
+):
+    r = get_redis(_REDIS_DB)
+    raw = r.get(_SEARCH_TERM_KEY.format(user_id=str(current_user.id)))
+    terms: list[str] = json.loads(raw) if raw else []
+    return success_response(
+        data=RecentSearchTermsResponse(terms=terms),
+        message="recent search terms fetched",
+    )
+
+
+def save_search_term(user_id: str, term: str) -> None:
+    """검색 실행 시 호출 — Redis에 최근 검색어 저장 (최대 6건, 완전 일치 중복 제거).
+
+    같은 검색어를 다시 검색하면 기존 항목을 제거하고 맨 앞으로 옮겨(순서만 갱신) 목록에는 항상 1개만 남는다.
+    연구자명 검색/연구 분야 검색 구분 없이 동일한 목록에 쌓인다.
+    """
+    term = term.strip()
+    if not term:
+        return
+    r = get_redis(_REDIS_DB)
+    key = _SEARCH_TERM_KEY.format(user_id=user_id)
+    existing: list[str] = json.loads(r.get(key) or "[]")
+    existing = [t for t in existing if t != term]
+    existing.insert(0, term)
+    r.set(key, json.dumps(existing[:_SEARCH_TERM_LIMIT], ensure_ascii=False), ex=_SEARCH_TERM_TTL)
 
 
 def save_search_history(
