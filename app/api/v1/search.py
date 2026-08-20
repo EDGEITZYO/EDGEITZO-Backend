@@ -20,7 +20,7 @@ from app.core.deps import get_current_user_optional
 from app.core.redis import get_redis
 from app.core.response import success_response
 from app.core.settings import settings
-from app.api.v1.home import save_search_history, save_search_term
+from app.api.v1.home import save_search_history
 from app.langgraph.search_graph import get_graph
 from app.langgraph.search_state import (
     SearchState,
@@ -61,8 +61,6 @@ async def search_papers(
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     result = await search_papers_service(request, db, user_id=current_user.id if current_user else None)
-    if current_user:
-        save_search_term(user_id=str(current_user.id), term=request.query)
     return success_response(
         data=result,
         message="paper search completed",
@@ -348,13 +346,6 @@ def _sse(event_type: str, payload: dict) -> str:
     return f"data: {json.dumps({'type': event_type, **payload}, ensure_ascii=False)}\n\n"
 
 
-def _record_search_term_on_new_session(current_user: Optional[User], request: "ChatRequest") -> None:
-    """홈 검색창에서 새 대화를 시작하는 첫 턴(session_id 없음 + message 있음)에 한해 최근 검색어 저장.
-    이미 진행 중인 세션의 좁히기/확장/자유질문 턴은 새 '검색어 입력'이 아니므로 기록하지 않는다."""
-    if current_user and not request.session_id and request.message:
-        save_search_term(user_id=str(current_user.id), term=request.message)
-
-
 def _record_search_history(current_user: Optional[User], session_id: str, result_state: SearchState) -> None:
     """홈 화면 '최근 탐색 이력'(recent_searches, type='ai')에 반영. 로그인 유저에 한해,
     턴마다(검색/좁히기/확장/필터 무관) 갱신 — save_search_history가 session_id로 기존
@@ -410,8 +401,6 @@ async def chat_search(
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    _record_search_term_on_new_session(current_user, request)
-
     session_id = request.session_id or str(uuid.uuid4())
     state = _load_state(session_id) or _new_state(session_id, request.message)
     state["user_id"] = str(current_user.id) if current_user else ""
@@ -466,8 +455,6 @@ async def stream_chat(
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    _record_search_term_on_new_session(current_user, request)
-
     session_id = request.session_id or str(uuid.uuid4())
 
     async def generate():
