@@ -31,6 +31,7 @@ from app.services.keyword_map_service import (
     recenter_keyword_map,
 )
 from app.services.researcher_service import get_related_researchers
+from app.api.v1.home import save_search_term
 
 router = APIRouter()
 
@@ -88,6 +89,7 @@ async def get_keyword_map(
 
     if user_id:
         await _save_last_anchor(db, user_id, result.anchor)
+        save_search_term(user_id=user_id, term=keyword)
 
     return success_response(data=result, message="keyword map loaded")
 

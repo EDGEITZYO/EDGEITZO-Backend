@@ -71,10 +71,6 @@ class RecordReadRequest(BaseModel):
     search_id: str | None = Field(default=None, description="연결된 탐색 세션 ID (recent_searches 갱신용)")
 
 
-class SaveSearchTermRequest(BaseModel):
-    term: str = Field(..., min_length=1, description="사용자가 검색한 검색어 원문. 연구자명 검색/연구 분야 검색 구분 없이 그대로 전달", example="딥러닝")
-
-
 class RecentSearchTermsResponse(BaseModel):
     terms: List[str] = Field(description="최근 검색어 목록 (최대 6개, 최신 검색순). 동일 검색어(공백까지 완전 일치)는 1개만 포함됨", example=["딥러닝", "홍길동"])
 
@@ -272,31 +268,15 @@ async def record_read(
     return success_response(data={"recorded": True}, message="read recorded")
 
 
-@router.post(
-    "/home/recent-search-terms",
-    response_model=ApiResponse[dict],
-    summary="최근 검색어 저장",
-    description="""검색 실행 시 호출해 최근 검색어를 저장합니다.
-
-- 연구자명 검색/연구 분야 검색 구분 없이 하나의 목록에 저장됩니다.
-- 동일 검색어(공백까지 완전 일치)가 이미 있으면 기존 항목을 지우고 맨 앞으로 옮깁니다 (중복 저장 안 함).
-- 최대 6개까지만 유지되며, 초과되는 오래된 검색어는 잘려나갑니다.
-""",
-)
-async def add_recent_search_term(
-    request: SaveSearchTermRequest,
-    current_user: User = Depends(get_current_user),
-):
-    save_search_term(user_id=str(current_user.id), term=request.term)
-    return success_response(data={"saved": True}, message="recent search term saved")
-
-
 @router.get(
     "/home/recent-search-terms",
     response_model=ApiResponse[RecentSearchTermsResponse],
     summary="최근 검색어 목록 조회",
     description="""홈에서 검색창 진입 시 호출. 검색창 하단에 칩 형태로 노출할 최근 검색어 목록을 반환합니다.
 
+- 저장은 검색 실행 엔드포인트가 로그인 상태일 때 자동으로 처리합니다(별도 저장 API 없음):
+  `POST /search/papers`, `POST /search/chat`·`POST /search/chat/stream`(새 세션 첫 턴만),
+  `GET /keyword-map`(user_id 전달 시).
 - 연구자명 검색/연구 분야 검색 구분 없이 최근 검색한 순서대로 최대 6개 반환
 - 동일 검색어(공백까지 완전 일치)는 1개만 포함됨
 - 칩 클릭 시 해당 검색어로 바로 검색을 실행하면 됨
