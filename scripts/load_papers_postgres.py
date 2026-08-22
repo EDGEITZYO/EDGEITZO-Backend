@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from collections import Counter
 from datetime import datetime, timezone
@@ -38,7 +39,8 @@ if _ENV_PATH.exists():
             os.environ.setdefault(_k, _v)
 
 from app.core.database import AsyncSessionLocal
-from app.models.paper import Paper  # noqa: E402
+from app.models.journal import Journal
+from app.models.paper import Paper
 
 _DEFAULT_JSON = PROJECT_ROOT / "data/parsed/scienceon_enriched.json"
 
@@ -59,6 +61,36 @@ def _normalize_issn(issn_val: Any) -> str | None:
         return None
     cleaned = issn_val[0].replace("-", "").strip()
     return cleaned or None
+
+
+def _issn_key(raw: Any) -> str | None:
+    """어떤 표기의 ISSN이든 papers.issn과 같은 형식(하이픈 없는 8자리)으로 통일.
+    journals 쪽은 p_issn/e_issn이 'XXXX-XXXX', issn 배열은 두 형식이 섞여 있어
+    (KCI 적재분은 하이픈 있음, SJR 적재분은 없음) 룩업 키를 한쪽으로 맞춰야 매칭된다."""
+    if not raw:
+        return None
+    s = str(raw).replace("-", "").replace(" ", "").strip().upper()
+    return s if re.fullmatch(r"[0-9X]{8}", s) else None
+
+
+async def _fetch_issn_to_journal_id() -> dict[str, int]:
+    """journals 전체를 읽어 {ISSN 8자리: journal_id} 룩업 구성.
+
+    적재 시점에 journal_id를 채우기 위한 것 — 예전에는 여기서 무조건 None을 넣고
+    scripts/backfill_journal_fields.py로 나중에 메우는 구조였는데, --reset 재적재가
+    그 백필 결과를 통째로 날려버려 실제로 오랫동안 전량 NULL 상태였다.
+    (2026-06-02 재적재 때 128건이 그렇게 유실됨.) 적재와 동시에 채워야 재발하지 않는다."""
+    lookup: dict[str, int] = {}
+    async with AsyncSessionLocal() as session:
+        rows = (await session.execute(select(Journal))).scalars().all()
+        for j in rows:
+            for candidate in [j.p_issn, j.e_issn, *(j.issn or [])]:
+                key = _issn_key(candidate)
+                # 먼저 등록된 저널을 유지 — 같은 ISSN에 복수 행이 있을 때 순서를 고정해
+                # 재실행 시 결과가 달라지지 않게 한다.
+                if key and key not in lookup:
+                    lookup[key] = j.id
+    return lookup
 
 
 def _safe_str(val: Any, max_len: int) -> str | None:
@@ -96,8 +128,14 @@ def _safe_list(val: Any) -> list[str] | None:
     return result or None
 
 
-def build_records(papers: list[dict]) -> list[dict[str, Any]]:
-    """JSON 논문 리스트 → DB 레코드 리스트. CN/DOI 중복 제거."""
+def build_records(
+    papers: list[dict],
+    issn_to_journal_id: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """JSON 논문 리스트 → DB 레코드 리스트. CN/DOI 중복 제거.
+
+    issn_to_journal_id가 주어지면 ISSN으로 journals FK를 적재 시점에 연결한다."""
+    issn_to_journal_id = issn_to_journal_id or {}
     now = datetime.now(timezone.utc)
     records: list[dict] = []
     seen_cns: set[str] = set()
@@ -120,13 +158,15 @@ def build_records(papers: list[dict]) -> list[dict[str, Any]]:
             else:
                 seen_dois.add(doi)
 
+        issn = _normalize_issn(p.get("ISSN"))
+
         records.append({
             "id": cn,
             "source_type": "scienceon",
             "scienceon_cn": cn,
             "semantic_scholar_id": None,
             "doi": doi,
-            "issn": _normalize_issn(p.get("ISSN")),
+            "issn": issn,
             "title": title,
             "title_en": _safe_str(p.get("Title2"), 1000),
             "abstract": p.get("Abstract") or None,
@@ -138,7 +178,7 @@ def build_records(papers: list[dict]) -> list[dict[str, Any]]:
             "pubdate": _fmt_pubdate(p.get("Pubdate")),
             "paper_type": _classify_paper_type(p.get("DBCode", "")),
             "citation_count": 0,
-            "journal_id": None,
+            "journal_id": issn_to_journal_id.get(_issn_key(issn)),
             "db_code": _safe_str(p.get("DBCode"), 20),
             "source": "knowledge_base",
             "created_at": now,
@@ -152,12 +192,13 @@ def print_stats(records: list[dict]) -> None:
     total = len(records)
     has_issn = sum(1 for r in records if r["issn"])
     has_doi = sum(1 for r in records if r["doi"])
+    has_journal = sum(1 for r in records if r["journal_id"] is not None)
     db_codes = Counter(r["db_code"] for r in records if r["db_code"])
 
     print(f"\n[stats]   총 적재 대상: {total:,}건")
     print(f"          ISSN 보유: {has_issn:,}건 ({has_issn / total * 100:.1f}%)")
     print(f"          DOI 보유:  {has_doi:,}건 ({has_doi / total * 100:.1f}%)")
-    print(f"          journal_id: 전량 NULL (KCI 저널 — SJR 미매칭)")
+    print(f"          journal_id 연결: {has_journal:,}건 (ISSN 보유 {has_issn:,}건 중)")
     print("          db_code별 건수:")
     for code, cnt in sorted(db_codes.items()):
         print(f"            {code}: {cnt:,}")
@@ -242,14 +283,23 @@ def main() -> None:
     papers = data.get("papers", data) if isinstance(data, dict) else data
     print(f"[parsed]  {len(papers):,}건 로드")
 
-    records = build_records(papers)
-    print_stats(records)
-
-    if args.dry_run:
-        print("\n[dry-run] DB 쓰기 스킵")
-        return
-
     async def _run() -> None:
+        # journals 룩업은 DB 조회라 dry-run에서도 필요하다 — 적재 전에 journal_id가
+        # 몇 건이나 연결될지 미리 보여주기 위함. DB가 없으면 경고만 남기고 계속한다.
+        try:
+            issn_to_journal_id = await _fetch_issn_to_journal_id()
+            print(f"[journals] ISSN 룩업 {len(issn_to_journal_id):,}건 구성")
+        except Exception as e:
+            print(f"[warn]    journals 조회 실패 — journal_id 없이 진행: {e}", file=sys.stderr)
+            issn_to_journal_id = {}
+
+        records = build_records(papers, issn_to_journal_id)
+        print_stats(records)
+
+        if args.dry_run:
+            print("\n[dry-run] DB 쓰기 스킵")
+            return
+
         if args.reset:
             deleted = await _reset_papers()
             print(f"[reset]   {deleted:,}건 삭제")
