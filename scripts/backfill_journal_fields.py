@@ -8,6 +8,7 @@ Step 2: papers.journal_id   — papers.issn → journals(p_issn, e_issn) 매칭�
 사용법:
   python scripts/backfill_journal_fields.py
   python scripts/backfill_journal_fields.py --dry-run
+  python scripts/backfill_journal_fields.py --step2-only   # 운영 서버(pandas 없음)에서 journal_id만
 """
 from __future__ import annotations
 
@@ -19,8 +20,6 @@ import re
 import sys
 from pathlib import Path
 from typing import Any
-
-import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -56,6 +55,13 @@ def _normalize_issn(raw: Any) -> str | None:
     return None
 
 
+def _normalize_title(raw: str | None) -> str | None:
+    """저널명 매칭 키. credibility_service._normalize_title과 같은 규칙(케이스폴딩 + 공백 정규화)."""
+    if not raw:
+        return None
+    return " ".join(str(raw).casefold().split()) or None
+
+
 def _issn_to_hyphen(raw: str | None) -> str | None:
     """8자리 숫자 → XXXX-XXXX (papers.issn 포맷 변환)."""
     if not raw:
@@ -66,7 +72,12 @@ def _issn_to_hyphen(raw: str | None) -> str | None:
     return raw if re.fullmatch(r"[\dX]{4}-[\dX]{4}", raw) else None
 
 
-def _load_kci_csv() -> pd.DataFrame:
+def _load_kci_csv():
+    # pandas는 Step 1(journals.kci_field 백필) 전용이라 여기서만 import한다.
+    # 운영 이미지(requirements.txt)에는 pandas가 없어서 최상단 import면 Step 2만
+    # 돌리려 해도 스크립트가 통째로 죽는다 — Step 2는 pandas가 전혀 필요 없다.
+    import pandas as pd
+
     raw_dir = PROJECT_ROOT / "data" / "kci_raw"
     candidates = list(raw_dir.glob("*KCI*.csv")) + list(raw_dir.glob("*kci*.csv"))
     if not candidates:
@@ -89,7 +100,7 @@ def _load_kci_csv() -> pd.DataFrame:
 # Step 1: journals.kci_field 백필
 # ---------------------------------------------------------------------------
 
-async def step1_backfill_kci_field(df: pd.DataFrame, *, dry_run: bool) -> dict[str, int]:
+async def step1_backfill_kci_field(df, *, dry_run: bool) -> dict[str, int]:
     """KCI CSV → journals.kci_field."""
     # ISSN → field 룩업 테이블 구성
     issn_to_field: dict[str, str] = {}
@@ -143,15 +154,32 @@ async def step2_backfill_journal_id(*, dry_run: bool) -> tuple[dict[str, int], l
     unmatched: list[dict] = []
 
     async with AsyncSessionLocal() as session:
-        # journals ISSN → id 룩업
+        # journals ISSN/제목 → id 룩업.
+        # 같은 ISSN에 복수 행이 있으므로(실측 59쌍) 어느 행을 고르는지가 결과를 바꾼다.
+        # 검색 경로(credibility_service._journal_sort_key)와 같은 우선순위로 정렬해
+        # "먼저 등록된 것 유지" 규칙을 적용한다 — 그래야 검색 결과와 상세 페이지가
+        # 같은 저널을 가리키고, 재적재해도 같은 journal_id가 나온다.
         jresult = await session.execute(select(Journal))
+        journals = sorted(
+            jresult.scalars().all(),
+            key=lambda j: (
+                j.sjr_year if j.sjr_year is not None else -1,
+                j.sjr_score if j.sjr_score is not None else -1.0,
+                j.h_index if j.h_index is not None else -1,
+            ),
+            reverse=True,
+        )
+
         issn_to_journal_id: dict[str, int] = {}
-        for j in jresult.scalars().all():
+        title_to_journal_id: dict[str, int] = {}
+        for j in journals:
             for issn in ([j.p_issn, j.e_issn] + (j.issn or [])):
-                if issn:
-                    norm = _normalize_issn(issn)
-                    if norm:
-                        issn_to_journal_id[norm] = j.id
+                norm = _normalize_issn(issn) if issn else None
+                if norm and norm not in issn_to_journal_id:
+                    issn_to_journal_id[norm] = j.id
+            tkey = _normalize_title(j.title)
+            if tkey and tkey not in title_to_journal_id:
+                title_to_journal_id[tkey] = j.id
 
         # JAKO + JAFO 논문 중 journal_id NULL 인 것만
         presult = await session.execute(
@@ -165,6 +193,14 @@ async def step2_backfill_journal_id(*, dry_run: bool) -> tuple[dict[str, int], l
         for p in papers:
             issn_norm = _issn_to_hyphen(p.issn)
             jid = issn_to_journal_id.get(issn_norm) if issn_norm else None
+
+            # ISSN이 없거나 journals에 없는 논문도 저널명이 정확히 일치하면 연결한다.
+            # 검색 경로는 이미 ISSN+제목 양쪽으로 매칭하는데(enrich_items_with_credibility)
+            # 여기만 ISSN 전용이라 연결이 덜 됐었다.
+            if jid is None:
+                tkey = _normalize_title(p.journal_name)
+                if tkey:
+                    jid = title_to_journal_id.get(tkey)
 
             if jid:
                 if not dry_run:
@@ -199,13 +235,16 @@ async def step2_backfill_journal_id(*, dry_run: bool) -> tuple[dict[str, int], l
 # 메인
 # ---------------------------------------------------------------------------
 
-async def run(*, dry_run: bool) -> None:
-    print("=== Step 1: journals.kci_field 백필 ===")
-    df = _load_kci_csv()
-    stats1 = await step1_backfill_kci_field(df, dry_run=dry_run)
-    print(f"  kci_field 업데이트: {stats1['updated']}건")
-    print(f"  이미 동일값:        {stats1['skipped_same']}건")
-    print(f"  ISSN 매칭 실패:     {stats1['no_field']}건")
+async def run(*, dry_run: bool, step2_only: bool = False) -> None:
+    if step2_only:
+        print("=== Step 1 생략 (--step2-only) ===")
+    else:
+        print("=== Step 1: journals.kci_field 백필 ===")
+        df = _load_kci_csv()
+        stats1 = await step1_backfill_kci_field(df, dry_run=dry_run)
+        print(f"  kci_field 업데이트: {stats1['updated']}건")
+        print(f"  이미 동일값:        {stats1['skipped_same']}건")
+        print(f"  ISSN 매칭 실패:     {stats1['no_field']}건")
 
     print("\n=== Step 2: papers.journal_id 백필 ===")
     stats2, unmatched = await step2_backfill_journal_id(dry_run=dry_run)
@@ -231,10 +270,16 @@ async def run(*, dry_run: bool) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="kci_field + journal_id 백필")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--step2-only",
+        action="store_true",
+        help="journals.kci_field 백필(Step 1)을 건너뛰고 papers.journal_id만 채운다. "
+             "Step 1은 pandas + KCI CSV가 필요한데 운영 이미지에는 pandas가 없다.",
+    )
     args = parser.parse_args()
     if args.dry_run:
         print("[dry-run] DB 쓰기 생략\n")
-    asyncio.run(run(dry_run=args.dry_run))
+    asyncio.run(run(dry_run=args.dry_run, step2_only=args.step2_only))
 
 
 if __name__ == "__main__":

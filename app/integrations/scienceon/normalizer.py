@@ -120,6 +120,7 @@ def normalize_scienceon_search_response(parsed: dict) -> list[PaperSearchItem]:
             credibility=calculate_credibility(
                 citation_count=citation_count,
                 journal_name=journal_name,
+                kci_hint=record.get("DBCode") == "JAKO",
             ),
             score=0.0,
         )
