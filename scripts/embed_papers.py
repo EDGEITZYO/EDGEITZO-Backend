@@ -20,8 +20,11 @@ from sentence_transformers import SentenceTransformer
 
 from app.core.settings import settings  # noqa: E402
 
-DEFAULT_INPUT_PATH = _PROJECT_ROOT / "data" / "parsed" / "scienceon_preprocessed.json"
-_FALLBACK_INPUT_PATH = _PROJECT_ROOT / "data" / "parsed" / "scienceon_keywords_normalized.json"
+# 코퍼스 단일 소스. scienceon_preprocessed.json을 1순위로 자동 탐색하던 로직을 없앴다 —
+# 그 파일은 어느 환경에도 생성된 적이 없어 늘 폴백만 탔고, 생성 스크립트
+# (preprocess_corpus.py)가 Abstract를 형태소 어간 + TF-IDF 절삭 토큰 나열로 바꿔놓아
+# 자연어 문장으로 학습된 BGE-m3에는 오히려 해롭다. 전처리본을 쓰려면 --input 으로 명시할 것.
+DEFAULT_INPUT_PATH = _PROJECT_ROOT / "data" / "parsed" / "scienceon_keywords_normalized.json"
 MODEL_NAME = "dragonkue/BGE-m3-ko"
 COLLECTION_NAME = "papers"
 BATCH_SIZE = 100
@@ -92,17 +95,11 @@ def main() -> None:
     parser.add_argument("--reset", action="store_true", help="기존 컬렉션 삭제 후 재생성")
     parser.add_argument("--skip-existing", action="store_true", help="이미 컬렉션에 있는 CN은 건너뜀")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help="ChromaDB upsert 배치 크기")
-    parser.add_argument("--input", default=None, help="입력 JSON 파일 경로 (기본: scienceon_preprocessed.json)")
+    parser.add_argument("--input", default=None, help="입력 JSON 파일 경로 (기본: scienceon_keywords_normalized.json)")
     args = parser.parse_args()
 
-    if args.input:
-        input_path = Path(args.input)
-    elif DEFAULT_INPUT_PATH.exists():
-        input_path = DEFAULT_INPUT_PATH
-        print(f"[전처리 데이터 사용] {input_path.name}")
-    else:
-        input_path = _FALLBACK_INPUT_PATH
-        print(f"[원본 데이터 사용] {input_path.name}")
+    input_path = Path(args.input) if args.input else DEFAULT_INPUT_PATH
+    print(f"[입력] {input_path.name}")
 
     if not input_path.exists():
         print(f"[오류] 입력 파일 없음: {input_path}")
