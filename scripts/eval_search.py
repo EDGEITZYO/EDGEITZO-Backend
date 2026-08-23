@@ -18,67 +18,49 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from dotenv import load_dotenv
 load_dotenv(_PROJECT_ROOT / ".env")
 
-from app.services.search_service import execute_search
+from app.core.database import AsyncSessionLocal
+from app.schemas.search import SearchPapersRequest
+from app.services.search_service import search_papers_service
 
+# 프로덕션과 같은 경로(search_papers_service)를 측정한다.
+# 예전에는 execute_search를 호출했는데, 그쪽은 HyDE 쿼리 확장을 타는 반면
+# 실제 서비스(/search/papers, /search/chat)는 타지 않아 여기서 잰 점수가
+# 서비스 품질과 무관했다. 랭킹 로직을 바꿀 때 이 스크립트로 비교하려면
+# 프로덕션과 같은 함수를 불러야 한다.
 TEST_CASES = [
     {
         "query": "스트레스와 소비 충동성 연관성",
-        "search_params": {
-            "keywords": ["충동구매", "스트레스 대처", "감정 소비"],
-            "scope": "ALL",
-            "pub_year_start": None,
-            "research_purpose": "연구주제탐색",
-            "trust_level": None,
-            "advanced_filters": {},
-        },
-        "relevant_paper_ids": [],  # 테스트에선 실제 paper_id 채울 것
+        "keywords": ["충동구매", "스트레스 대처", "감정 소비"],
+        "pub_year_start": None,
+        "sci_only": False,
+        "relevant_paper_ids": [],  # 정답 paper_id를 채우면 실제 점수가 나온다
     },
     {
         "query": "딥러닝 기반 의료 영상 진단",
-        "search_params": {
-            "keywords": ["딥러닝", "의료영상", "CNN"],
-            "scope": "SCI",
-            "pub_year_start": 2021,
-            "research_purpose": "논문작성참고",
-            "trust_level": None,
-            "advanced_filters": {},
-        },
+        "keywords": ["딥러닝", "의료영상", "CNN"],
+        "pub_year_start": 2021,
+        "sci_only": True,
         "relevant_paper_ids": [],
     },
     {
         "query": "한국어 자연어처리 트랜스포머",
-        "search_params": {
-            "keywords": ["트랜스포머", "한국어 NLP", "BERT"],
-            "scope": "ALL",
-            "pub_year_start": 2021,
-            "research_purpose": "최신트렌드",
-            "trust_level": None,
-            "advanced_filters": {},
-        },
+        "keywords": ["트랜스포머", "한국어 NLP", "BERT"],
+        "pub_year_start": 2021,
+        "sci_only": False,
         "relevant_paper_ids": [],
     },
     {
         "query": "그래프 신경망 추천시스템",
-        "search_params": {
-            "keywords": ["GNN", "추천시스템", "협업 필터링"],
-            "scope": "ALL",
-            "pub_year_start": None,
-            "research_purpose": "연구주제탐색",
-            "trust_level": None,
-            "advanced_filters": {},
-        },
+        "keywords": ["GNN", "추천시스템", "협업 필터링"],
+        "pub_year_start": None,
+        "sci_only": False,
         "relevant_paper_ids": [],
     },
     {
         "query": "강화학습 로봇 제어",
-        "search_params": {
-            "keywords": ["강화학습", "로봇 제어", "정책 학습"],
-            "scope": "SCI",
-            "pub_year_start": 2021,
-            "research_purpose": "랩미팅발표",
-            "trust_level": None,
-            "advanced_filters": {},
-        },
+        "keywords": ["강화학습", "로봇 제어", "정책 학습"],
+        "pub_year_start": 2021,
+        "sci_only": True,
         "relevant_paper_ids": [],
     },
 ]
@@ -113,8 +95,15 @@ async def run_eval():
     for case in TEST_CASES:
         print(f"평가 중: {case['query'][:30]}...", end=" ", flush=True)
         try:
-            result = await execute_search(case["search_params"])
-            ids = [p["paper_id"] for p in result["papers"]]
+            request = SearchPapersRequest(
+                query=case["query"],
+                keywords=case["keywords"],
+                pub_year_start=case["pub_year_start"],
+                sci_only=case["sci_only"],
+            )
+            async with AsyncSessionLocal() as db:
+                result = await search_papers_service(request, db)
+            ids = [item.paper_id for item in result.items]
             rel = case["relevant_paper_ids"]
             rows.append((
                 case["query"][:30],

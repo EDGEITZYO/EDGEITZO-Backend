@@ -73,24 +73,48 @@ def _issn_key(raw: Any) -> str | None:
     return s if re.fullmatch(r"[0-9X]{8}", s) else None
 
 
-async def _fetch_issn_to_journal_id() -> dict[str, int]:
-    """journals 전체를 읽어 {ISSN 8자리: journal_id} 룩업 구성.
+def _title_key(raw: Any) -> str | None:
+    """저널명 매칭 키. credibility_service._normalize_title과 같은 규칙."""
+    if not raw:
+        return None
+    return " ".join(str(raw).casefold().split()) or None
+
+
+async def _fetch_journal_lookups() -> tuple[dict[str, int], dict[str, int]]:
+    """journals 전체를 읽어 (ISSN → journal_id, 저널명 → journal_id) 룩업 구성.
 
     적재 시점에 journal_id를 채우기 위한 것 — 예전에는 여기서 무조건 None을 넣고
     scripts/backfill_journal_fields.py로 나중에 메우는 구조였는데, --reset 재적재가
     그 백필 결과를 통째로 날려버려 실제로 오랫동안 전량 NULL 상태였다.
-    (2026-06-02 재적재 때 128건이 그렇게 유실됨.) 적재와 동시에 채워야 재발하지 않는다."""
-    lookup: dict[str, int] = {}
+    (2026-06-02 재적재 때 128건이 그렇게 유실됨.) 적재와 동시에 채워야 재발하지 않는다.
+
+    같은 ISSN에 복수 행이 있으므로(실측 59쌍) 검색 경로와 같은 우선순위
+    (credibility_service._journal_sort_key: sjr_year → sjr_score → h_index)로 정렬한 뒤
+    먼저 등록된 것을 유지한다. 그래야 검색 결과와 상세 페이지가 같은 저널을 가리키고,
+    재적재해도 같은 journal_id가 재현된다."""
+    issn_lookup: dict[str, int] = {}
+    title_lookup: dict[str, int] = {}
     async with AsyncSessionLocal() as session:
         rows = (await session.execute(select(Journal))).scalars().all()
-        for j in rows:
-            for candidate in [j.p_issn, j.e_issn, *(j.issn or [])]:
-                key = _issn_key(candidate)
-                # 먼저 등록된 저널을 유지 — 같은 ISSN에 복수 행이 있을 때 순서를 고정해
-                # 재실행 시 결과가 달라지지 않게 한다.
-                if key and key not in lookup:
-                    lookup[key] = j.id
-    return lookup
+
+    for j in sorted(
+        rows,
+        key=lambda x: (
+            x.sjr_year if x.sjr_year is not None else -1,
+            x.sjr_score if x.sjr_score is not None else -1.0,
+            x.h_index if x.h_index is not None else -1,
+        ),
+        reverse=True,
+    ):
+        for candidate in [j.p_issn, j.e_issn, *(j.issn or [])]:
+            key = _issn_key(candidate)
+            if key and key not in issn_lookup:
+                issn_lookup[key] = j.id
+        tkey = _title_key(j.title)
+        if tkey and tkey not in title_lookup:
+            title_lookup[tkey] = j.id
+
+    return issn_lookup, title_lookup
 
 
 def _safe_str(val: Any, max_len: int) -> str | None:
@@ -131,11 +155,13 @@ def _safe_list(val: Any) -> list[str] | None:
 def build_records(
     papers: list[dict],
     issn_to_journal_id: dict[str, int] | None = None,
+    title_to_journal_id: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """JSON 논문 리스트 → DB 레코드 리스트. CN/DOI 중복 제거.
 
-    issn_to_journal_id가 주어지면 ISSN으로 journals FK를 적재 시점에 연결한다."""
+    룩업이 주어지면 ISSN → 저널명 순으로 journals FK를 적재 시점에 연결한다."""
     issn_to_journal_id = issn_to_journal_id or {}
+    title_to_journal_id = title_to_journal_id or {}
     now = datetime.now(timezone.utc)
     records: list[dict] = []
     seen_cns: set[str] = set()
@@ -178,7 +204,10 @@ def build_records(
             "pubdate": _fmt_pubdate(p.get("Pubdate")),
             "paper_type": _classify_paper_type(p.get("DBCode", "")),
             "citation_count": 0,
-            "journal_id": issn_to_journal_id.get(_issn_key(issn)),
+            "journal_id": (
+                issn_to_journal_id.get(_issn_key(issn))
+                or title_to_journal_id.get(_title_key(p.get("JournalName")))
+            ),
             "db_code": _safe_str(p.get("DBCode"), 20),
             "source": "knowledge_base",
             "created_at": now,
@@ -287,13 +316,13 @@ def main() -> None:
         # journals 룩업은 DB 조회라 dry-run에서도 필요하다 — 적재 전에 journal_id가
         # 몇 건이나 연결될지 미리 보여주기 위함. DB가 없으면 경고만 남기고 계속한다.
         try:
-            issn_to_journal_id = await _fetch_issn_to_journal_id()
-            print(f"[journals] ISSN 룩업 {len(issn_to_journal_id):,}건 구성")
+            issn_map, title_map = await _fetch_journal_lookups()
+            print(f"[journals] ISSN 룩업 {len(issn_map):,}건 / 저널명 룩업 {len(title_map):,}건 구성")
         except Exception as e:
             print(f"[warn]    journals 조회 실패 — journal_id 없이 진행: {e}", file=sys.stderr)
-            issn_to_journal_id = {}
+            issn_map, title_map = {}, {}
 
-        records = build_records(papers, issn_to_journal_id)
+        records = build_records(papers, issn_map, title_map)
         print_stats(records)
 
         if args.dry_run:

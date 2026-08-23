@@ -73,6 +73,7 @@ async def get_paper_detail(
             citation_count=paper.citation_count,
             journal_name=paper.journal.title if paper.journal else paper.journal_name,
             journal=journal_evidence,
+            kci_hint=paper.db_code == "JAKO",
         )
 
     trust_badge = build_trust_badge(

@@ -56,6 +56,13 @@ def _normalize_issn(raw: Any) -> str | None:
     return None
 
 
+def _normalize_title(raw: str | None) -> str | None:
+    """저널명 매칭 키. credibility_service._normalize_title과 같은 규칙(케이스폴딩 + 공백 정규화)."""
+    if not raw:
+        return None
+    return " ".join(str(raw).casefold().split()) or None
+
+
 def _issn_to_hyphen(raw: str | None) -> str | None:
     """8자리 숫자 → XXXX-XXXX (papers.issn 포맷 변환)."""
     if not raw:
@@ -143,15 +150,32 @@ async def step2_backfill_journal_id(*, dry_run: bool) -> tuple[dict[str, int], l
     unmatched: list[dict] = []
 
     async with AsyncSessionLocal() as session:
-        # journals ISSN → id 룩업
+        # journals ISSN/제목 → id 룩업.
+        # 같은 ISSN에 복수 행이 있으므로(실측 59쌍) 어느 행을 고르는지가 결과를 바꾼다.
+        # 검색 경로(credibility_service._journal_sort_key)와 같은 우선순위로 정렬해
+        # "먼저 등록된 것 유지" 규칙을 적용한다 — 그래야 검색 결과와 상세 페이지가
+        # 같은 저널을 가리키고, 재적재해도 같은 journal_id가 나온다.
         jresult = await session.execute(select(Journal))
+        journals = sorted(
+            jresult.scalars().all(),
+            key=lambda j: (
+                j.sjr_year if j.sjr_year is not None else -1,
+                j.sjr_score if j.sjr_score is not None else -1.0,
+                j.h_index if j.h_index is not None else -1,
+            ),
+            reverse=True,
+        )
+
         issn_to_journal_id: dict[str, int] = {}
-        for j in jresult.scalars().all():
+        title_to_journal_id: dict[str, int] = {}
+        for j in journals:
             for issn in ([j.p_issn, j.e_issn] + (j.issn or [])):
-                if issn:
-                    norm = _normalize_issn(issn)
-                    if norm:
-                        issn_to_journal_id[norm] = j.id
+                norm = _normalize_issn(issn) if issn else None
+                if norm and norm not in issn_to_journal_id:
+                    issn_to_journal_id[norm] = j.id
+            tkey = _normalize_title(j.title)
+            if tkey and tkey not in title_to_journal_id:
+                title_to_journal_id[tkey] = j.id
 
         # JAKO + JAFO 논문 중 journal_id NULL 인 것만
         presult = await session.execute(
@@ -165,6 +189,14 @@ async def step2_backfill_journal_id(*, dry_run: bool) -> tuple[dict[str, int], l
         for p in papers:
             issn_norm = _issn_to_hyphen(p.issn)
             jid = issn_to_journal_id.get(issn_norm) if issn_norm else None
+
+            # ISSN이 없거나 journals에 없는 논문도 저널명이 정확히 일치하면 연결한다.
+            # 검색 경로는 이미 ISSN+제목 양쪽으로 매칭하는데(enrich_items_with_credibility)
+            # 여기만 ISSN 전용이라 연결이 덜 됐었다.
+            if jid is None:
+                tkey = _normalize_title(p.journal_name)
+                if tkey:
+                    jid = title_to_journal_id.get(tkey)
 
             if jid:
                 if not dry_run:
