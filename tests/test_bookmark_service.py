@@ -11,11 +11,11 @@ _USER_ID = uuid.uuid4()
 _PAPER_ID = "TEST_PAPER_001"
 
 
-def _make_db(existing: Bookmark | None = None) -> AsyncMock:
+def _make_db(existing: Bookmark | None = None, selected: Bookmark | None = None) -> AsyncMock:
     """scalar_one_or_none가 existing을 반환하는 mock session."""
     result_mock = MagicMock()
     result_mock.scalar_one_or_none.return_value = existing
-    result_mock.scalar_one.return_value = existing
+    result_mock.scalar_one.return_value = selected if selected is not None else existing
 
     db = AsyncMock()
     db.execute = AsyncMock(return_value=result_mock)
@@ -27,9 +27,11 @@ def _make_db(existing: Bookmark | None = None) -> AsyncMock:
 
 @pytest.mark.asyncio
 async def test_add_bookmark_new():
-    db = _make_db(existing=None)
+    selected = Bookmark(id=uuid.uuid4(), user_id=_USER_ID, paper_id=_PAPER_ID)
+    db = _make_db(existing=None, selected=selected)
     bm = await add_bookmark(db, _USER_ID, _PAPER_ID)
-    db.add.assert_called_once()
+    assert db.execute.await_count == 2
+    db.add.assert_not_called()
     db.commit.assert_awaited_once()
     assert bm.paper_id == _PAPER_ID
     assert bm.user_id == _USER_ID
