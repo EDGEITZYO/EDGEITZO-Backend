@@ -154,6 +154,17 @@ data/parsed/scienceon_keywords_normalized.json
 }]->(:Year)
 ```
 
+### Paper -> Paper (인용관계)
+
+논문 인용관계다. `citing`(인용한 논문) -> `cited`(인용된 논문) 방향 하나만 저장하며, 참고문헌(backward)/피인용(forward)은
+같은 관계를 순방향/역방향으로 조회해서 얻는다. `scripts/load_paper_citations_from_kci.py`가 KCI Open API
+`articleDetail`의 `referenceInfo`를 자체 서비스 코퍼스 내부(양쪽 논문 모두 서비스에 존재하는 경우)에서만 매칭해 적재하므로,
+코퍼스 밖 논문과의 인용관계는 반영되지 않는다.
+
+```text
+(:Paper)-[:CITES]->(:Paper)
+```
+
 ## 제약 조건 및 인덱스
 
 적재 스크립트는 다음 제약 조건과 인덱스를 생성한다.

@@ -16,6 +16,9 @@ from app.services.neo4j_search_service import get_paper_ids_by_keyword
 
 logger = logging.getLogger(__name__)
 
+# 사용자에게 직접 노출되는 자연어 정의 요약은 표현력이 중요해 분류/추출용 기본 모델(Haiku)보다 상위 모델을 씀
+_MODEL = "claude-sonnet-5"
+
 _DEFINITION_SYSTEM_PROMPT = """너는 학술 키워드의 의미를 설명하는 도우미다.
 
 반드시 지켜야 할 규칙:
@@ -47,7 +50,7 @@ async def _summarize_from_abstracts(keyword_text: str, papers: list[Paper]) -> O
     try:
         resp = await chat(
             messages=[{"role": "user", "content": f"[System]\n{_DEFINITION_SYSTEM_PROMPT}\n\n[User]\n{user_prompt}"}],
-            model=settings.llm_default_model,
+            model=_MODEL,
             temperature=0.3,
         )
         text = resp.text.strip()

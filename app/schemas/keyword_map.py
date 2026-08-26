@@ -7,8 +7,8 @@ class KeywordMapNode(BaseModel):
     key: str = Field(..., description="키워드 노드 고유 키. 예: ko:생명공학")
     name_ko: Optional[str] = Field(default=None, description="한글 표시명. 없으면 null")
     name_en: Optional[str] = Field(default=None, description="영문 표시명. 없으면 null")
-    tier: int = Field(..., ge=0, description="anchor=0, 1단계 부모/자녀=1, 2단계 자녀=2, 3단계 자녀(expand로만 생성)=3")
-    side: Literal["anchor", "parent", "child"] = Field(..., description="anchor 기준 좌(parent)/우(child)/중심")
+    tier: int = Field(..., ge=0, description="anchor=0, 1단계 자녀=1, 2단계 자녀=2, 3단계 자녀(expand로만 생성)=3")
+    side: Literal["anchor", "child"] = Field(..., description="anchor 자신(anchor)인지 하위(child)인지")
     paper_count: int = Field(..., ge=0, description="이 키워드 고유 빈도 (연결된 논문 수)")
     is_hub: bool = Field(default=False, description="cross-link 연결 수가 임계값 이상인 노드 여부")
     cross_link_count: int = Field(default=0, ge=0, description="이 노드에 연결된 cross-link 엣지 수")
@@ -26,7 +26,6 @@ class KeywordMapGraphResponse(BaseModel):
     anchor: KeywordMapNode
     nodes: list[KeywordMapNode] = Field(default_factory=list)
     edges: list[KeywordMapEdge] = Field(default_factory=list)
-    has_more_parents: bool = Field(..., description="후보군 내 anchor보다 빈도 높은 후보 존재 여부 (좌측 화살표 활성화)")
     has_more_children: bool = Field(..., description="후보군 내 anchor보다 빈도 낮은 후보 존재 여부 (우측 화살표 노출)")
 
 

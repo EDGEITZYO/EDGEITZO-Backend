@@ -23,7 +23,7 @@ class MypageProfile(BaseModel):
     provider: Optional[str] = Field(None, description="소셜 로그인 제공자. 'kakao' | 'google' | null(이메일 가입)")
     name: Optional[str] = Field(None, description="이름")
     gender: Optional[str] = Field(None, description="성별. '남성' | '여성' | null")
-    age: Optional[str] = Field(None, description="연령대", example="20대")
+    birth_year: Optional[int] = Field(None, description="출생연도", example=2002)
     role: Optional[str] = Field(None, description="역할. '대학원 진학 준비' | '석사과정' | '박사과정' | '석박통합과정' | '교수·연구원' | '대학생' | '기타' | null")
     research_field: Optional[str] = Field(None, description="연구 분야", example="딥러닝")
     purposes: Optional[list[str]] = Field(None, description="사용 목적 목록. '연구 주제 탐색' | '랩미팅/발표 준비' | '논문 작성 참고' | '최신 트렌드 파악' | '연구자 탐색'")
@@ -47,7 +47,7 @@ class MypageResponse(BaseModel):
 class MypageProfileUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, description="변경할 이름")
     gender: Optional[Literal["남성", "여성", "기타"]] = Field(None, description="성별. '남성' | '여성' | '기타' | null('선택 안함' 전달 시 null로 저장)")
-    age: Optional[str] = Field(None, description="연령대", example="20대")
+    birth_year: Optional[int] = Field(None, ge=1900, description="출생연도", example=2002)
     role: Optional[
         Literal[
             "대학원 진학 준비",
@@ -68,6 +68,13 @@ class MypageProfileUpdate(BaseModel):
     def normalize_gender(cls, v: str | None) -> str | None:
         if v == "선택 안함":
             return None
+        return v
+
+    @field_validator("birth_year")
+    @classmethod
+    def validate_birth_year(cls, v: int | None) -> int | None:
+        if v is not None and v > datetime.now().year:
+            raise ValueError("출생연도는 현재 연도보다 클 수 없습니다")
         return v
 
     @field_validator("purposes")

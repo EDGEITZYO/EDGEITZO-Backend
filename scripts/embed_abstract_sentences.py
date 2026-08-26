@@ -29,11 +29,11 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from app.services.chroma_search_service import (
-    _MODEL_NAME,
     _SENTENCE_CACHE_PATH,
     _load_papers,
     _split_sentences,
 )
+from app.services.embedding_model import MODEL_NAME
 
 BATCH_SIZE = 16  # 운영 서버(vCPU 2 / RAM 3.7GB)에서 256이면 스와핑으로 응답 불가 상태까지 감. 실측 확인됨.
 
@@ -56,8 +56,8 @@ def main() -> None:
     total_sentences = sum(len(s) for s in doc_sentences.values())
     print(f"초록 있는 논문 {len(doc_sentences)}건, 총 문장 {total_sentences}개")
 
-    print(f"모델 로딩: {_MODEL_NAME} ...")
-    model = SentenceTransformer(_MODEL_NAME, device="cpu")
+    print(f"모델 로딩: {MODEL_NAME} ...")
+    model = SentenceTransformer(MODEL_NAME, device="cpu")
 
     # chroma_search_service._batch_best_snippets의 기존 실시간 인코딩과 동일하게
     # prefix 없이 인코딩 — 검색 결과의 스니펫 선택 결과가 이 캐시 도입 전후로 달라지지 않도록.

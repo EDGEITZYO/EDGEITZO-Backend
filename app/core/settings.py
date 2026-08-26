@@ -102,12 +102,19 @@ class Settings(BaseSettings):
     # 키워드맵 — 빈도/동시출현 기반 그래프 생성 튜닝값
     keyword_map_candidate_pool_size: int = 40
     keyword_map_max_nodes: int = 25
-    keyword_map_parent_max: int = 4
     keyword_map_child_l1_max: int = 6
     keyword_map_expand_max: int = 3
     keyword_map_hub_cross_link_threshold: int = 3
     keyword_map_cache_ttl_seconds: int = 300
     keyword_map_definition_llm_max_abstracts: int = 5
+
+    # 논문 인용관계(참고문헌/피인용) 그래프 — 자체 코퍼스 내부 CITES 관계 기반
+    paper_citation_max_nodes: int = 100
+    paper_citation_summary_limit: int = 12
+    paper_citation_expand_max: int = 6
+    paper_citation_cache_ttl_seconds: int = 300
+    # 요약 그래프(07-01) 클러스터링 — 1단계 in-service 자식끼리 이 개수 이상 키워드를 공유하면 같은 그룹으로 묶음
+    paper_citation_cluster_min_shared_keywords: int = 2
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

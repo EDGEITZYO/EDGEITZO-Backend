@@ -21,21 +21,25 @@ from typing import Optional
 import chromadb
 import numpy as np
 from rank_bm25 import BM25Okapi
-from sentence_transformers import SentenceTransformer
 
 from app.core.settings import settings
 from app.schemas.search import CredibilityInfo, PaperAuthor, PaperSearchItem
+from app.services.embedding_model import get_bge_model
 
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_PREPROCESSED_PATH = _PROJECT_ROOT / "data" / "parsed" / "scienceon_preprocessed.json"
-_FALLBACK_PATH = _PROJECT_ROOT / "data" / "parsed" / "scienceon_keywords_normalized.json"
+# 코퍼스 단일 소스. 예전에는 scienceon_preprocessed.json을 1순위로 찾고 없으면 이 파일로
+# 폴백했는데, 그 파일은 어느 환경에도 생성된 적이 없어 항상 폴백만 타고 있었다.
+# 생성 스크립트(scripts/preprocess_corpus.py)는 Abstract를 형태소 어간 + TF-IDF 절삭 토큰
+# 나열로 바꿔놓는데, BGE-m3는 자연어 문장으로 학습된 모델이라 그 텍스트로 임베딩하면
+# 검색 품질이 떨어진다. 그래서 자동 탐색을 없애고 정규화 파일을 직접 가리킨다
+# (전처리본을 쓰려면 embed_papers.py --input 으로 명시할 것).
+_PAPERS_PATH = _PROJECT_ROOT / "data" / "parsed" / "scienceon_keywords_normalized.json"
 # scripts/embed_abstract_sentences.py가 생성하는 문장 단위 임베딩 사전계산 캐시.
 # 없으면 _batch_best_snippets가 그 논문에 한해서만 실시간 인코딩으로 폴백함.
 _SENTENCE_CACHE_PATH = _PROJECT_ROOT / "data" / "parsed" / "abstract_sentence_embeddings.pkl"
 
-_MODEL_NAME = "dragonkue/BGE-m3-ko"
 _COLLECTION_NAME = "papers"
 _RRF_K = 60  # RRF 상수 — 값이 클수록 하위 랭크 페널티 완화
 
@@ -69,8 +73,7 @@ def _build_where_clause(
 
 
 def _load_papers() -> tuple[dict[str, dict], list[dict]]:
-    path = _PREPROCESSED_PATH if _PREPROCESSED_PATH.exists() else _FALLBACK_PATH
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(_PAPERS_PATH.read_text(encoding="utf-8"))
     papers: list[dict] = data.get("papers", data) if isinstance(data, dict) else data
     return {p["CN"]: p for p in papers if p.get("CN")}, papers
 
@@ -195,7 +198,7 @@ class ChromaSearchService:
         tokenized = [_tokenize(_paper_to_bm25_text(p)) for p in self._papers]
         self._bm25 = BM25Okapi(tokenized)
 
-        self._model = SentenceTransformer(_MODEL_NAME, device="cpu")
+        self._model = get_bge_model()
         self._sentence_cache = _load_sentence_cache()
 
         chroma_client = chromadb.HttpClient(

@@ -73,6 +73,7 @@ async def get_paper_detail(
             citation_count=paper.citation_count,
             journal_name=paper.journal.title if paper.journal else paper.journal_name,
             journal=journal_evidence,
+            kci_hint=paper.db_code == "JAKO",
         )
 
     trust_badge = build_trust_badge(
@@ -143,8 +144,10 @@ async def get_paper_similar(
     result = []
     for s, p, j in similars:
         trust = None
+        paper_type_str = None
         if p:
             ptype = resolve_paper_type(p.db_code, p.degree)
+            paper_type_str = paper_type_label(ptype)
             trust = build_trust_badge(
                 ptype,
                 journal=_journal_to_evidence(j),
@@ -157,6 +160,7 @@ async def get_paper_similar(
             author=", ".join(p.authors) if p and p.authors else s.author,
             pubyear=p.pubyear if p else s.pubyear,
             material_type=s.material_type,
+            paper_type=paper_type_str,
             in_service=s.internal_paper_id is not None,
             paper_id=s.internal_paper_id,
             journal_name=j.title if j else None,

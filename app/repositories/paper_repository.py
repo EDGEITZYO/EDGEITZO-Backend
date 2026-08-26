@@ -100,6 +100,7 @@ async def get_paper_cards_batch(
             Paper.db_code,
             Paper.degree,
             Journal.sci_indexed,
+            Journal.kci_indexed,
         )
         .outerjoin(Journal, Paper.journal_id == Journal.id)
         .where(Paper.id.in_(paper_ids))
@@ -107,7 +108,10 @@ async def get_paper_cards_batch(
     return {
         row.id: {
             "citation_count": row.citation_count,
-            "kci_registered": row.db_code == "JAKO",
+            # db_code(KCI DB 수집 여부)가 주 신호 — journals.kci_indexed는 마스터 CSV가
+            # KCI 전체를 담고 있지 않아 false가 "미등재"를 뜻하지 않는다. 둘을 OR로 합쳐
+            # 상세 페이지(calculate_credibility의 kci_hint)와 같은 판정을 내도록 맞춘다.
+            "kci_registered": row.db_code == "JAKO" or bool(row.kci_indexed),
             "sci_indexed": bool(row.sci_indexed) if row.sci_indexed is not None else False,
             "degree": row.degree,
         }

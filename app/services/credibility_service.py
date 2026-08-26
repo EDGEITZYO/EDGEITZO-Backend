@@ -78,13 +78,22 @@ def calculate_credibility(
     citation_count: int | None = None,
     journal_name: str | None = None,
     journal: JournalEvidence | None = None,
+    kci_hint: bool | None = None,
 ) -> CredibilityInfo:
+    """kci_hint: 저널 정보와 무관하게 KCI 등재로 볼 근거(현재는 db_code == 'JAKO').
+
+    journals.kci_indexed는 KCI 등재지 마스터 CSV(2,888행) 기준인데 이 CSV가 KCI 전체를
+    담고 있지 않아, false가 "미등재"가 아니라 "CSV에 없음"인 경우가 있다(실측 7건 —
+    Horticultural Science and Technology). db_code가 JAKO면 ScienceON이 KCI DB에서
+    수집했다는 뜻이라 더 완전한 신호이므로, hint는 참일 때만 채택해 정보를 더하기만 한다."""
     quartile = journal.sjr_quartile if journal else None
     quartile_upper = quartile.upper() if quartile else None
     sjr_score = journal.sjr_score if journal else None
     h_index = journal.h_index if journal else None
     sci_indexed = journal.sci_indexed if journal else None
     kci_registered = journal.kci_indexed if journal else None
+    if kci_hint:
+        kci_registered = True
     impact_factor = journal.impact_factor if journal else None
 
     badge: CredibilityBadge = "unknown"
@@ -337,5 +346,6 @@ async def enrich_items_with_credibility(
             citation_count=item.credibility.citation_count,
             journal_name=item.journal_name,
             journal=_journal_to_evidence(best),
+            kci_hint=item.db_code == "JAKO",
         )
     return items

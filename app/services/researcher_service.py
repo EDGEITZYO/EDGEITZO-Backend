@@ -18,7 +18,7 @@ async def get_related_researchers(keyword_key: str, db: AsyncSession, *, limit: 
     rows = (
         await db.execute(
             select(Researcher)
-            .join(ResearcherPaper, ResearcherPaper.researcher_cn == Researcher.cn)
+            .join(ResearcherPaper, ResearcherPaper.researcher_id == Researcher.researcher_id)
             .where(ResearcherPaper.paper_id.in_(paper_ids))
             .distinct()
             .limit(limit)
@@ -27,11 +27,11 @@ async def get_related_researchers(keyword_key: str, db: AsyncSession, *, limit: 
 
     return [
         ResearcherOut(
-            cn=r.cn,
+            cn=r.researcher_id,
             name_ko=r.author_name_kor,
             name_en=r.author_name_eng,
-            institution_ko=r.author_inst_kor,
-            article_count=r.article_cnt,
+            institution_ko=r.institution_current or r.author_inst_kor,
+            article_count=r.total_papers or r.article_cnt,
         )
         for r in rows
     ]
