@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import math
+import time
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
@@ -33,9 +36,9 @@ from app.services.search_service import _apply_sort_order, _SORT_LABELS, _sort_i
 
 logger = logging.getLogger(__name__)
 
-_MODEL = settings.llm_default_model
-# 사용자에게 직접 노출되는 자연어 요약은 표현력이 중요해 분류/추출용 기본 모델(Haiku)보다 상위 모델을 씀
-_SUMMARY_MODEL = "claude-sonnet-5"
+_MODEL = settings.llm_model_fast
+# 사용자에게 직접 노출되는 자연어 요약이라 quality 등급 (settings.llm_model_quality 주석 참고)
+_SUMMARY_MODEL = settings.llm_model_quality
 _kiwi = Kiwi()  # 모듈 로드 시 1회 초기화 (싱글턴)
 
 _KEYWORD_SYSTEM = """학술 키워드·필터 추출기. 사용자 입력에서 연구 키워드와 필터 조건(연도/논문유형/인용수)을 추출해 JSON만 반환. 절대 설명하지 말 것. JSON 외 텍스트 금지."""
@@ -346,14 +349,24 @@ def _top_result_keywords(
 
 async def _build_expand_chips(keywords: list[str], existing_keywords: Optional[list[str]] = None) -> List[ExpandChip]:
     """매칭 키워드별 find_related_keywords 호출 후 합산(sum) 병합, 상위 3개.
+
+    Neo4j 드라이버가 동기 클라이언트라 그대로 await하면 이벤트 루프를 통째로 막는다.
+    (실측: 이 함수와 LLM 요약을 asyncio.gather로 묶어도 6.8초로, 순차 실행 6.6초와 같았다 —
+    Neo4j가 도는 동안 LLM 호출이 시작조차 못 하기 때문.) 스레드로 넘겨 루프를 풀어 준다.
+    같은 이유로, 이 함수가 도는 동안 다른 요청까지 멈추던 문제도 함께 해소된다.
+    """
+    if not keywords:
+        return []
+    return await asyncio.to_thread(_build_expand_chips_sync, keywords, existing_keywords)
+
+
+def _build_expand_chips_sync(keywords: list[str], existing_keywords: Optional[list[str]] = None) -> List[ExpandChip]:
+    """위 함수의 동기 본체. Neo4j 호출은 전부 여기서 일어난다.
     existing_keywords(현재 세션에 이미 반영된 검색 키워드)와 같은 그래프 노드는 후보에서 제외 —
     안 그러면 방금 확장으로 추가한 키워드가 다른 키워드들과 계속 연관도가 높아 다음 턴에도
     똑같이 다시 추천되는 문제가 있었음."""
     from app.core.neo4j_client import get_neo4j_driver
     from app.repositories.graph_repository import GraphRepository
-
-    if not keywords:
-        return []
 
     driver = get_neo4j_driver()
     merged: dict[str, dict] = {}
@@ -394,6 +407,17 @@ async def _build_expand_chips(keywords: list[str], existing_keywords: Optional[l
         )
         for i, item in enumerate(top3)
     ]
+
+
+@contextlib.contextmanager
+def _stage(name: str, timings: dict):
+    """검색 한 턴의 구간별 소요 시간 기록. 어디서 시간이 나가는지 추측하지 않고 보기 위한 것.
+    로그 레벨 INFO로 한 줄 요약이 남는다."""
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        timings[name] = round((time.perf_counter() - t0) * 1000)
 
 
 _SUMMARY_SYSTEM_PROMPT = """너는 논문 검색 결과를 사용자에게 소개하는 문장을 쓰는 도우미다.
@@ -445,6 +469,9 @@ async def _build_summary(
                 {"role": "user", "content": f"[System]\n{_SUMMARY_SYSTEM_PROMPT}\n\n[User]\n{user_prompt}"},
             ],
             model=_SUMMARY_MODEL, temperature=0.9, use_cache=False,
+            # Sonnet 5는 thinking 기본값이 adaptive라, 여기서 만드는 1~2문장에는
+            # 사고 단계가 순수 지연으로만 작용한다. 모델은 그대로 두고 thinking만 끈다.
+            thinking={"type": "disabled"},
         )
         text = resp.text.strip()
         return (text, False) if text else (None, True)
@@ -471,28 +498,32 @@ async def node_response_builder(state: SearchState) -> SearchState:
     # similarity_score/snippet은 사전계산 캐시(scripts/embed_abstract_sentences.py)를 쓰므로
     # 후보 수와 무관하게 빠름 — n_results 생략해 where절 필터를 통과한 전체 후보를 받는다.
     # kci_only/sci_only/paper_type은 뒤에서 전체 후보에 대해 적용된다.
-    items = await svc.search(
-        query=" ".join(filters.get("keywords") or []),
-        pub_year_start=filters.get("pub_year_start"),
-        paper_type=chroma_paper_type,
-        citation_min=filters.get("citation_min"),
-        pub_year_exact=bool(filters.get("pub_year_exact")),
-    )
+    timings: Dict[str, int] = {}
+    with _stage("chroma_search", timings):
+        items = await svc.search(
+            query=" ".join(filters.get("keywords") or []),
+            pub_year_start=filters.get("pub_year_start"),
+            paper_type=chroma_paper_type,
+            citation_min=filters.get("citation_min"),
+            pub_year_exact=bool(filters.get("pub_year_exact")),
+        )
 
     # 칩 엔트로피 계산 전용 lookup
     # (PostgreSQL citation_count는 미매칭 건도 0으로 채워져 있어 엔트로피 계산에 부적합 — 별도 이슈로만 기록)
     ids = [it.paper_id for it in items]
-    citation_lookup = await svc.get_citation_counts(ids)
+    with _stage("citation_lookup", timings):
+        citation_lookup = await svc.get_citation_counts(ids)
 
     # 카드에 노출할 배지는 PostgreSQL enrichment로 별도 채움 (citation_count/kci/sci/SJR 등)
     async with AsyncSessionLocal() as db:
         try:
-            db_extra = await get_paper_cards_batch(db, ids)
-            for it in items:
-                extra = db_extra.get(it.paper_id) or {}
-                it.credibility = CredibilityInfo(badge="unknown", citation_count=extra.get("citation_count"))
-                it.paper_type = paper_type_label(resolve_paper_type(it.db_code, extra.get("degree")))
-            items = await enrich_items_with_credibility(items, db)
+            with _stage("pg_enrichment", timings):
+                db_extra = await get_paper_cards_batch(db, ids)
+                for it in items:
+                    extra = db_extra.get(it.paper_id) or {}
+                    it.credibility = CredibilityInfo(badge="unknown", citation_count=extra.get("citation_count"))
+                    it.paper_type = paper_type_label(resolve_paper_type(it.db_code, extra.get("degree")))
+                items = await enrich_items_with_credibility(items, db)
         except Exception as e:
             logger.warning("검색 결과 신뢰도 enrichment 실패, 배지 없이 진행: %s", e)
 
@@ -531,7 +562,6 @@ async def node_response_builder(state: SearchState) -> SearchState:
         ))
 
     narrow_chips = _build_narrow_chips(result_items, citation_lookup) if total_count > 4 else []
-    expand_chips = await _build_expand_chips(_top_result_keywords(result_items), filters.get("keywords"))
     type_distribution = dict(Counter(
         it["paper_type"] for it in result_items if it.get("paper_type")
     ))
@@ -539,12 +569,25 @@ async def node_response_builder(state: SearchState) -> SearchState:
     # 직접 지정이어도 검색 결과(total_count/keywords/type_distribution)는 매 턴 새로 계산되므로
     # 요약 문장도 항상 최신 값 기준으로 다시 생성해야 한다. (과거엔 여기서 이전 턴 ai_summary를
     # 그대로 재사용해 "문장은 그대로, 건수는 새 값"으로 어긋나는 버그가 있었음)
-    ai_summary, summary_failed = await _build_summary(
-        topic=state.get("user_query", ""),
-        total_count=total_count,
-        keywords=filters.get("keywords") or [],
-        type_distribution=type_distribution,
-        sort_order=state.get("sort_order") or "relevance",
+    # 확장 칩(Neo4j)과 요약 문장(LLM)은 서로의 결과를 쓰지 않는다. 순차로 돌리면
+    # 2.5초 + 4.1초가 그대로 더해지는데, 함께 돌리면 느린 쪽 하나로 끝난다.
+    with _stage("chips_and_summary", timings):
+        expand_chips, (ai_summary, summary_failed) = await asyncio.gather(
+            _build_expand_chips(_top_result_keywords(result_items), filters.get("keywords")),
+            _build_summary(
+                topic=state.get("user_query", ""),
+                total_count=total_count,
+                keywords=filters.get("keywords") or [],
+                type_distribution=type_distribution,
+                sort_order=state.get("sort_order") or "relevance",
+            ),
+        )
+
+    logger.info(
+        "검색 턴 소요(ms) 총%d | %s | 결과 %d건",
+        sum(timings.values()),
+        " ".join(f"{k}={v}" for k, v in timings.items()),
+        total_count,
     )
 
     threshold = settings.search_broad_result_threshold

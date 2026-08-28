@@ -94,3 +94,63 @@ class SearchParamsDoc(BaseModel):
     research_purpose: str = Field(description="연구 목적. '연구주제탐색' | '논문작성참고' | '랩미팅발표' | '최신트렌드'", example="연구주제탐색")
     trust_level: Optional[str] = Field(None, description="신뢰도 필터. 현재 항상 null", example=None)
     advanced_filters: Dict[str, Any] = Field(default_factory=dict, description="고급 필터. 예: {'extra': '한국 저자만'}", example={"extra": "한국 저자만"})
+
+
+# ── 논문 선정 사유 (명세 02-11) ────────────────────────────────────────
+
+
+class SelectionReasonRequest(BaseModel):
+    """지금 화면에 보이는 논문들의 선정 사유를 요청한다.
+
+    '상위 N건'이 아니라 '뷰포트에 들어온 것' 기준으로 보내야 한다 — 정렬을 바꾸거나
+    필터를 걸면 상위 목록이 통째로 달라지므로, 상위 N건으로 미리 만들어두면 화면에는
+    사유가 있는 카드와 없는 카드가 섞이게 된다.
+    """
+
+    keywords: list[str] = Field(
+        ...,
+        min_length=1,
+        description="이번 검색의 키워드 목록. 캐시 키가 되므로 검색에 쓴 값과 같아야 함 "
+                    "(자연어 검색은 `filters.keywords`, 단순 검색은 요청 시 보낸 keywords 또는 query)",
+    )
+    paper_ids: list[str] = Field(
+        ...,
+        min_length=1,
+        # 서버의 동시 생성 수(settings.selection_reason_concurrency)와 같은 값으로 맞춘다.
+        # 예전엔 30이었는데, 그러면 30건 요청이 10건씩 3라운드로 쪼개져 소요가 그대로 3배가
+        # 됐다(4초 → 12초). 게다가 그 30건 중 실제로 화면에 보이는 건 앞부분뿐이라,
+        # 안 보이는 카드를 만드느라 보이는 카드가 늦게 채워졌다.
+        # 더 필요하면 두 번 부르는 편이 낫다 — 먼저 온 10건이 먼저 화면에 채워진다.
+        max_length=10,
+        description="사유가 필요한 논문 ID. 한 번에 최대 10건 — 화면에 보이는 만큼만 보낼 것. "
+                    "더 필요하면 여러 번 나눠 호출할 것(한 번에 몰아 보내면 서버가 어차피 "
+                    "10건씩 쪼개 처리해 그만큼 느려진다)",
+    )
+
+
+class SelectionReasonItem(BaseModel):
+    paper_id: str = Field(description="논문 고유 ID")
+    reason: Optional[str] = Field(
+        None,
+        description="선정 사유 본문 (공백 포함 150~200자, 3문장). 드물게 220자까지 나올 수 있다 "
+                    "— 상한을 몇 자 넘었다고 문장을 잘라내면 3번째 문장이 통째로 사라지므로 "
+                    "그대로 내보낸다. 레이아웃은 220자 기준으로 잡을 것. "
+                    "초록이 없거나 생성에 실패하면 null — 이때 프런트는 사유 영역을 비우거나 숨긴다",
+    )
+    highlight_start: Optional[int] = Field(
+        None,
+        description="강조할 구절의 `reason` 내 시작 위치(0-based, 파이썬 문자열 인덱스 = 코드포인트 단위). "
+                    "강조 구절을 특정하지 못하면 null이며, 이때도 `reason`은 정상",
+    )
+    highlight_end: Optional[int] = Field(
+        None, description="강조할 구절의 끝 위치(exclusive). `reason[highlight_start:highlight_end]`가 강조 대상"
+    )
+    cached: bool = Field(
+        False, description="true면 기존에 만들어둔 것을 재사용 (LLM 호출 없음)"
+    )
+
+
+class SelectionReasonResponse(BaseModel):
+    items: list[SelectionReasonItem] = Field(
+        description="요청한 paper_ids 순서와 무관. 사유를 만들지 못한 논문도 reason=null로 포함됨"
+    )
