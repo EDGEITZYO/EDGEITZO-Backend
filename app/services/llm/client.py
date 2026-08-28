@@ -3,6 +3,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import date
+from typing import Optional
 
 from app.core.redis import get_redis
 from app.core.settings import settings
@@ -24,7 +25,7 @@ class LLMBudgetExceededError(Exception):
 # 모델별 단가 (USD per 1M tokens) — 확정 모델 결정 후 갱신
 _PRICING: dict[str, dict[str, float]] = {
     "claude-sonnet-4-5": {"input": 3.0, "output": 15.0},
-    "claude-sonnet-5": {"input": 3.0, "output": 15.0},
+    "claude-sonnet-5": {"input": 2.0, "output": 10.0},
     "claude-haiku-4-5": {"input": 1.0, "output": 5.0},
 }
 
@@ -39,35 +40,84 @@ class LLMResponse:
     cached: bool
 
 
-def _cache_key(model: str, messages: list[dict], temperature: float, max_tokens: int) -> str:
-    payload = json.dumps(
-        {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens},
-        sort_keys=True,
-    )
+def _cache_key(
+    model: str,
+    messages: list[dict],
+    temperature: float,
+    max_tokens: int,
+    thinking: Optional[dict] = None,
+) -> str:
+    body: dict = {
+        "model": model, "messages": messages,
+        "temperature": temperature, "max_tokens": max_tokens,
+    }
+    # thinking 미지정 호출은 기존 캐시 키를 그대로 유지해야 하므로 지정됐을 때만 넣는다
+    if thinking is not None:
+        body["thinking"] = thinking
+    payload = json.dumps(body, sort_keys=True)
     return f"llm:{model}:{hashlib.sha256(payload.encode()).hexdigest()}"
 
 
+# 단가표에 없는 모델을 만났을 때 쓰는 값. Sonnet 4.5 단가라 대개 실제보다 비싸게 잡힌다 —
+# 예산이 실제보다 빨리 닳는 쪽이라 과금 위험은 없지만, 조용히 틀리면 안 된다(아래 경고 참고).
+_DEFAULT_PRICING = {"input": 3.0, "output": 15.0}
+
+
+def _resolve_pricing(model: str) -> dict[str, float]:
+    """모델 ID → 단가. 날짜 꼬리가 붙은 ID도 받아준다.
+
+    예전에는 _PRICING.get(model, 기본값)으로 끝냈는데, .env에 날짜가 붙은
+    'claude-haiku-4-5-20251001'이 들어 있어 표와 안 맞았다. 그래서 Haiku 호출이 전부
+    기본 단가($3/$15)로 기록돼 실제(1/5)의 3배로 집계됐고, 아무 신호도 없어 한동안
+    아무도 몰랐다. 접두로 흡수하고, 그래도 못 찾으면 반드시 경고를 남긴다.
+    """
+    if model in _PRICING:
+        return _PRICING[model]
+    for known, pricing in _PRICING.items():
+        if model.startswith(known):
+            return pricing
+    logger.warning(
+        "단가표에 없는 모델 '%s' — 기본 단가로 집계한다. 예산 카운터가 부정확해지므로 "
+        "_PRICING에 추가할 것", model,
+    )
+    return _DEFAULT_PRICING
+
+
 def _calc_cost_micro_usd(model: str, input_tokens: int, output_tokens: int) -> int:
-    pricing = _PRICING.get(model, {"input": 3.0, "output": 15.0})
+    pricing = _resolve_pricing(model)
     cost_usd = (input_tokens * pricing["input"] + output_tokens * pricing["output"]) / 1_000_000
     return int(cost_usd * 1_000_000)
 
 
-# Sonnet 5 이상(Opus 5, Fable 5 등)은 temperature/top_p/top_k를 완전히 거부함(400) — 이 모델들엔 안 보냄
-_NO_SAMPLING_PARAMS_MODELS = {"claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-mythos-5"}
+# Sonnet 5 이상(Opus 5, Fable 5 등)은 temperature/top_p/top_k를 완전히 거부함(400) — 이 모델들엔 안 보냄.
+# 단가표와 같은 이유로 접두 비교한다: 날짜 꼬리가 붙은 ID면 정확 일치가 빗나가 파라미터를
+# 그대로 보내고 400을 맞는다.
+_NO_SAMPLING_PARAMS_MODELS = ("claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-mythos-5")
+
+
+def _rejects_sampling_params(model: str) -> bool:
+    return model.startswith(_NO_SAMPLING_PARAMS_MODELS)
 
 
 async def _call_claude(
-    messages: list[dict], model: str, temperature: float, max_tokens: int
+    messages: list[dict],
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    thinking: Optional[dict] = None,
 ) -> tuple[str, int, int]:
     import anthropic
     client = anthropic.AsyncAnthropic(
         api_key=settings.anthropic_api_key,
         timeout=settings.llm_timeout_seconds,
     )
-    sampling_kwargs = {} if model in _NO_SAMPLING_PARAMS_MODELS else {"temperature": temperature}
+    sampling_kwargs = {} if _rejects_sampling_params(model) else {"temperature": temperature}
+    # Sonnet 5는 thinking 기본값이 adaptive라, 1~2문장짜리 짧은 산출물에는 순수 오버헤드가 된다.
+    # {"type": "disabled"}를 명시하면 모델 품질은 그대로 두고 사고 단계만 끌 수 있다.
+    thinking_kwargs = {"thinking": thinking} if thinking is not None else {}
     resp = await client.messages.create(
-        model=model, max_tokens=max_tokens, messages=messages, **sampling_kwargs
+        model=model, max_tokens=max_tokens, messages=messages,
+        **sampling_kwargs, **thinking_kwargs,
     )
     if resp.stop_reason == "max_tokens":
         logger.warning(
@@ -88,10 +138,14 @@ async def chat(
     temperature: float = 0.7,
     max_tokens: int = 1000,
     use_cache: bool = True,
+    thinking: Optional[dict] = None,
 ) -> LLMResponse:
-    """LLM 호출 — 비용 한도 체크 → 캐시 조회 → API 호출 → 비용 누적 → 캐시 저장"""
+    """LLM 호출 — 비용 한도 체크 → 캐시 조회 → API 호출 → 비용 누적 → 캐시 저장
+
+    thinking: None이면 모델 기본값(Sonnet 5는 adaptive). 짧은 산출물에는
+    {"type": "disabled"}로 사고 단계를 꺼서 지연을 줄인다."""
     r = get_redis(_DB)
-    cache_key = _cache_key(model, messages, temperature, max_tokens)
+    cache_key = _cache_key(model, messages, temperature, max_tokens, thinking)
 
     # 1. 비용 한도 체크 (하드 차단)
     current = int(r.get(_COST_KEY_TOTAL) or 0)
@@ -107,7 +161,9 @@ async def chat(
             return LLMResponse(cached=True, **json.loads(hit))
 
     # 3. API 호출
-    text, input_tokens, output_tokens = await _call_claude(messages, model, temperature, max_tokens)
+    text, input_tokens, output_tokens = await _call_claude(
+        messages, model, temperature, max_tokens, thinking
+    )
 
     # 4. 비용 계산 + 누적 (실패해도 호출 결과는 반환)
     cost_micro = _calc_cost_micro_usd(model, input_tokens, output_tokens)
