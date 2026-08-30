@@ -1,15 +1,25 @@
 """코퍼스 밖(in_service=false) 논문의 상세 조회.
 
 인용관계/참고문헌 그래프의 노드 중 자체 코퍼스에 없는 논문은 papers 테이블에 적재돼 있지 않아
-상세페이지로 갈 수 없었다. 여기서는 적재 없이, 노드를 클릭한 시점에 KCI/OpenAlex에서 상세를
-받아와 채운다. 외부 호출이 실패해도 paper_citation_external_refs에 이미 있는 서지정보만으로
-응답은 항상 성립한다(enriched=false).
+상세페이지로 갈 수 없었다. 여기서는 저장된 서지정보에 초록·링크를 얹어 돌려준다. 외부 조회가
+실패해도 서지정보만으로 응답은 항상 성립한다(enriched=false).
 
-경로별 실측 커버리지(2026-08-30, 참고문헌 577건·상세 60건 표본):
-  - ART… (KCI arti-id 보유, 전체의 약 11%) → KCI articleDetail, 초록 96.7% / 키워드 98.3%
-  - W…   (OpenAlex id)                     → OpenAlex, 초록 59.1% (전부 영문)
-  - DOI 보유 REF… (약 20%)                 → OpenAlex DOI 조회, 매칭 100% / 그중 초록 62.5%
-  - DOI 없는 REF… (약 69%)                 → 조회 수단 없음. 제목검색은 오매칭 위험이 커서 쓰지 않음
+조회 순서:
+  1. scripts/enrich_paper_citation_external_refs.py로 **사전 적재된 값**이 있으면 그대로 쓴다
+     (외부 호출 0회, 1ms 미만). 대부분의 요청이 여기서 끝난다.
+  2. 아직 적재 전인 행만 클릭 시점에 KCI/OpenAlex를 부른다(실측 p90 354ms).
+
+경로별 구성비와 전수 실측 커버리지(2026-08-31, 참고문헌 17,230건 전수):
+  - ART… (KCI arti-id 보유, 14.6%)  → KCI articleDetail        초록 97.3% / 키워드 97%
+  - DOI 보유(REF…/W…, 18.4%)        → OpenAlex 단건 → S2 폴백   초록 75.3%
+  - DOI 없는 REF… (66.9%)           → Crossref로 DOI 역추적 후 위와 동일
+     예전엔 "조회 수단 없음"으로 포기하던 구간이다. 제목뿐 아니라 저널·연도·제1저자가 함께
+     있어서 Crossref query.bibliographic로 DOI를 되찾을 수 있다. 검증은 Crossref가 주는
+     score가 아니라 제목 유사도 0.85로 한다 — score는 "Faculty Opinions recommendation of…"
+     류의 추천 레코드를 걸러내지 못했다.
+
+초록 출처가 s2_tldr이면 사람이 쓴 초록이 아니라 AllenAI 모델이 생성한 한 줄 요약이다.
+enrich_source로 구분되며, 화면에서 초록과 다르게 표기해야 한다.
 """
 
 from __future__ import annotations
@@ -81,6 +91,15 @@ async def _load_stored_rows(db: AsyncSession, external_id: str) -> list[PaperCit
     return list(result.scalars().all())
 
 
+# 사전 적재(scripts/enrich_paper_citation_external_refs.py)로 채워지는 필드.
+# 이 값들이 있으면 외부 API를 부르지 않고 그대로 응답한다.
+_ENRICHED_FIELDS = (
+    "abstract", "abstract_lang", "abstract_source", "title_en", "keywords", "resolved_doi",
+    "external_url", "pdf_url", "citation_count", "publisher", "issn", "is_open_access",
+    "kci_registered", "enrich_status",
+)
+
+
 def _merge_stored(rows: list[PaperCitationExternalRef]) -> dict[str, Any]:
     """같은 external_id가 여러 source_cn 아래에 있을 수 있고 행마다 채워진 필드가 다르다.
     필드별로 값이 있는 첫 행을 채택해 가장 완전한 하나로 합친다."""
@@ -88,6 +107,7 @@ def _merge_stored(rows: list[PaperCitationExternalRef]) -> dict[str, Any]:
         "title": None, "authors": None, "journal": None, "doi": None,
         "pubyear": None, "external_source": None,
     }
+    merged.update({field: None for field in _ENRICHED_FIELDS})
     for row in rows:
         for field in merged:
             if merged[field] is None:
@@ -95,6 +115,37 @@ def _merge_stored(rows: list[PaperCitationExternalRef]) -> dict[str, Any]:
                 if value:
                     merged[field] = value
     return merged
+
+
+def _detail_from_stored(external_id: str, stored: dict[str, Any]) -> PaperCitationExternalDetail:
+    """사전 적재된 값만으로 상세를 만든다. 외부 호출이 없어 1ms 미만이다.
+
+    abstract_source가 's2_tldr'이면 초록이 아니라 AllenAI 모델이 논문 본문에서 뽑은 한 줄
+    요약이다. 값 자체는 abstract 필드로 내려가지만 enrich_source로 출처가 구분되므로,
+    프런트는 그때 "요약 (Semantic Scholar 자동 생성)"처럼 초록과 다르게 표기해야 한다."""
+    doi = _normalize_doi(stored.get("resolved_doi") or stored.get("doi"))
+    return PaperCitationExternalDetail(
+        key=external_id,
+        in_service=False,
+        title=stored.get("title"),
+        title_en=stored.get("title_en"),
+        authors=list(stored["authors"]) if stored.get("authors") else None,
+        journal_name=stored.get("journal"),
+        pub_year=stored.get("pubyear"),
+        doi=doi,
+        abstract=stored.get("abstract"),
+        abstract_lang=stored.get("abstract_lang"),
+        keywords=list(stored["keywords"]) if stored.get("keywords") else None,
+        citation_count=stored.get("citation_count"),
+        kci_registered=stored.get("kci_registered"),
+        external_url=stored.get("external_url") or (f"https://doi.org/{doi}" if doi else None),
+        pdf_url=stored.get("pdf_url"),
+        issn=stored.get("issn"),
+        publisher=stored.get("publisher"),
+        is_open_access=stored.get("is_open_access"),
+        enriched=bool(stored.get("abstract")),
+        enrich_source=stored.get("abstract_source"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +356,17 @@ def _cache_key(external_id: str) -> str:
     return f"paper_citation:external_detail:{external_id}"
 
 
+def _cache_detail(external_id: str, detail: PaperCitationExternalDetail) -> None:
+    try:
+        get_redis(_REDIS_DB).set(
+            _cache_key(external_id),
+            detail.model_dump_json(),
+            ex=settings.paper_citation_external_detail_cache_ttl_seconds,
+        )
+    except Exception:
+        logger.warning("외부 논문 상세 캐시 저장 실패", exc_info=True)
+
+
 async def get_external_paper_detail(external_id: str, db: AsyncSession) -> PaperCitationExternalDetail:
     """그래프의 in_service=false 노드를 클릭했을 때 쓰는 상세 조회."""
     try:
@@ -322,6 +384,17 @@ async def get_external_paper_detail(external_id: str, db: AsyncSession) -> Paper
         )
     stored = _merge_stored(rows)
 
+    # 사전 적재가 끝난 행이면 외부 호출 없이 바로 응답한다(실측 p90 354ms → 1ms 미만).
+    # enrich_status가 'no_abstract'/'no_match'여도 그건 "찾아봤지만 없었다"는 결론이므로
+    # 재조회하지 않는다 — 매칭 안 되는 건의 상당수는 EU 법령·정부보고서처럼 애초에
+    # 논문이 아니라서 다시 물어도 결과가 같다. 갱신이 필요하면 백필 스크립트를
+    # --retry-failed로 다시 돌린다.
+    if stored.get("enrich_status"):
+        detail = _detail_from_stored(external_id, stored)
+        _cache_detail(external_id, detail)
+        return detail
+
+    # 아직 적재 전인 행만 기존의 실시간 조회로 폴백한다.
     try:
         enriched = await _enrich(external_id, stored)
     except asyncio.TimeoutError:
@@ -355,13 +428,5 @@ async def get_external_paper_detail(external_id: str, db: AsyncSession) -> Paper
         enrich_source=enriched.get("enrich_source"),
     )
 
-    try:
-        get_redis(_REDIS_DB).set(
-            _cache_key(external_id),
-            detail.model_dump_json(),
-            ex=settings.paper_citation_external_detail_cache_ttl_seconds,
-        )
-    except Exception:
-        logger.warning("외부 논문 상세 캐시 저장 실패", exc_info=True)
-
+    _cache_detail(external_id, detail)
     return detail

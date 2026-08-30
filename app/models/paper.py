@@ -91,6 +91,30 @@ class PaperCitationExternalRef(Base):
     pubyear = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=True)
 
+    # --- 사전 적재된 상세 정보 (scripts/enrich_paper_citation_external_refs.py) ---
+    # 노드 클릭 시 외부 API를 부르지 않고 여기서 바로 응답하기 위한 컬럼들.
+    # enrich_status가 null이면 아직 적재 전이라 서비스가 실시간 조회로 폴백한다.
+    abstract = Column(Text, nullable=True)
+    abstract_lang = Column(String(2), nullable=True)
+    # 'kci' | 'openalex' | 's2' | 's2_tldr' — s2_tldr은 사람이 쓴 초록이 아니라
+    # AllenAI 모델이 생성한 요약이므로 화면에서 초록과 구분해 표시해야 한다.
+    abstract_source = Column(String(20), nullable=True)
+    title_en = Column(String(1000), nullable=True)
+    keywords = Column(ARRAY(String(200)), nullable=True)
+    # KCI가 준 doi와 구분한다 — 이쪽은 Crossref 제목유사도 매칭으로 얻은 추정값
+    resolved_doi = Column(String(200), nullable=True)
+    external_url = Column(String(1000), nullable=True)
+    pdf_url = Column(String(1000), nullable=True)
+    citation_count = Column(Integer, nullable=True)
+    publisher = Column(String(500), nullable=True)
+    issn = Column(String(50), nullable=True)
+    is_open_access = Column(Boolean, nullable=True)
+    kci_registered = Column(Boolean, nullable=True)
+    # 'ok' | 'no_abstract' | 'no_match' | 'error'. null이면 미적재
+    enrich_status = Column(String(20), nullable=True)
+    enriched_at = Column(DateTime(timezone=True), nullable=True)
+
     __table_args__ = (
         Index("ix_paper_citation_external_refs_source_direction", "source_cn", "direction"),
+        Index("ix_paper_citation_external_refs_external_id", "external_id"),
     )

@@ -34,3 +34,8 @@ jobs:
 
             # 5. 정상 확인 후 안 쓰는 이미지 정리 (backup은 태그 있어서 대상 제외됨)
             docker image prune -f
+
+            # 6. 빌드 캐시 정리. image prune은 캐시를 안 건드려서 배포마다 쌓이기만 했다
+            #    (2026-08-31 기준 12.05GB 누적, 디스크의 절반). 최근 7일치는 다음 빌드
+            #    속도를 위해 남긴다.
+            docker builder prune -f --filter until=168h
