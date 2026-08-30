@@ -186,8 +186,11 @@ class PaperCitationExternalDetail(BaseModel):
     doi: Optional[str] = Field(default=None, description="DOI (도메인 접두어 없는 형태)")
     abstract: Optional[str] = Field(
         default=None,
-        description="초록. 외부 조회가 성공하고 그쪽에 초록이 있을 때만 채워진다. "
-        "ART…는 KCI에서 약 97%, W…/DOI는 OpenAlex에서 약 60% 제공되며, DOI 없는 REF…는 항상 null",
+        description="초록. 사전 적재된 값이 있으면 그대로, 없으면 클릭 시점 외부 조회로 채운다.\n\n"
+        "`enrich_source`가 `s2_tldr`이면 이 값은 초록이 아니라 AI 생성 요약이므로 "
+        "화면 표기를 달리해야 한다.\n\n"
+        "전수 실측 제공률(2026-08-31, 참고문헌 17,230건): `ART…` 96.7%, DOI 보유 75.4%, "
+        "DOI 없는 `REF…` 56.4%. 전체로는 65.8%이며 그중 12.8%p는 초록이 아닌 tldr이다",
     )
     abstract_lang: Optional[Literal["ko", "en"]] = Field(
         default=None, description="초록 언어. 한글이 일정량 이상이면 'ko', 아니면 'en'. 초록이 없으면 null"
@@ -212,8 +215,13 @@ class PaperCitationExternalDetail(BaseModel):
     enriched: bool = Field(
         ..., description="외부 상세 조회 성공 여부. false면 저장된 서지정보만 있는 응답"
     )
-    enrich_source: Optional[Literal["kci", "openalex"]] = Field(
-        default=None, description="상세를 가져온 출처. enriched=false면 null"
+    enrich_source: Optional[Literal["kci", "openalex", "s2", "s2_tldr"]] = Field(
+        default=None,
+        description="초록/요약을 가져온 출처. enriched=false면 null.\n\n"
+        "- `kci` / `openalex` / `s2` — 사람이 쓴 **초록** 원문\n"
+        "- `s2_tldr` — 초록이 아니라 AllenAI가 논문 본문에서 생성한 **한 줄 요약**이다. "
+        "화면에서 초록과 같게 보이면 안 되며 '요약 (Semantic Scholar 자동 생성)'처럼 "
+        "출처를 밝혀 구분 표기해야 한다",
     )
 
     model_config = {

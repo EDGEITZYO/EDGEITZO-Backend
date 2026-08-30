@@ -1,6 +1,15 @@
 .venv
+.venv1
+venv/
 .env
 __pycache__
 *.pyc
 .git
 prototype/
+# 런타임 코드(app/)는 data/를 읽지 않는다. app 컨테이너는 ./data를 볼륨으로 마운트하므로
+# 이미지 안 사본은 어차피 가려진다 — 로컬 빌드에서 200MB를 그냥 버리고 있었다.
+data/
+# scp 목적지에 ':~/'를 빠뜨리면 'ubuntu@1.2.3.4' 같은 로컬 사본이 생긴다(.gitignore에도 동일 규칙).
+*@*.*.*.*
+.idea/
+.pytest_cache/
