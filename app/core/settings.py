@@ -147,6 +147,13 @@ class Settings(BaseSettings):
     # 요약 그래프(07-01) 클러스터링 — 1단계 in-service 자식끼리 이 개수 이상 키워드를 공유하면 같은 그룹으로 묶음
     paper_citation_cluster_min_shared_keywords: int = 2
 
+    # 코퍼스 밖(in_service=false) 노드 상세 — 클릭 시 KCI/OpenAlex에서 그때그때 받아와 채운다.
+    # 적재하지 않고 조회 시점에 붙이므로 캐시 TTL을 길게 잡는다(서지정보는 거의 안 바뀜).
+    paper_citation_external_detail_cache_ttl_seconds: int = 86400
+    paper_citation_external_fetch_timeout_seconds: float = 8.0
+    # OpenAlex polite pool용 연락처. 비어 있으면 익명 요청(속도 제한이 더 빡빡함)
+    openalex_mailto: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

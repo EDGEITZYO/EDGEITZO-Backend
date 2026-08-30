@@ -7,7 +7,11 @@ from app.schemas.paper import PaperCardTrustBadge
 
 class PaperCitationNode(BaseModel):
     key: str = Field(..., description="그래프 내 고유 키. in_service=true면 papers.id와 동일, false면 외부 소스 고유 ID")
-    in_service: bool = Field(..., description="서비스 코퍼스 수록 여부. true면 paper_id로 상세페이지 이동 가능")
+    in_service: bool = Field(
+        ...,
+        description="서비스 코퍼스 수록 여부. 모든 노드는 클릭 가능하며 이 값으로 이동할 상세만 갈라진다 — "
+        "true면 paper_id로 일반 상세페이지, false면 key로 GET /papers/citation-graph/external/{key}",
+    )
     paper_id: Optional[str] = Field(default=None, description="in_service=true일 때 서비스 DB의 논문 ID. false면 null")
     title: Optional[str] = Field(default=None, description="논문 제목. 없으면 null")
     title_en: Optional[str] = Field(default=None, description="영문 제목. 없으면 null")
@@ -162,6 +166,98 @@ class PaperCitationGraphResponse(BaseModel):
         description="현재 그래프에 표시 중인 모든 노드(center 제외)에 대응하는 카드 목록. "
         "노드 개수와 항상 1:1 대응 (in_service=false 노드도 간소화된 카드로 포함)",
     )
+
+
+class PaperCitationExternalDetail(BaseModel):
+    """코퍼스 밖(in_service=false) 노드를 클릭했을 때의 상세. papers 테이블에 적재된 논문이
+    아니므로 PaperDetailResponse와 필드가 다르다 — 신뢰도 계산, 북마크, 유사논문, 원문 링크가
+    없고 초록/키워드는 외부 조회가 성공했을 때만 채워진다.
+
+    `enriched=false`면 저장된 서지정보(제목/저자/저널/연도/DOI)만 있는 상태다. 프론트는 이
+    경우를 정상 응답으로 처리해야 하며, 초록·키워드 영역은 비워두거나 안내 문구로 대체한다."""
+
+    key: str = Field(..., description="PaperCitationNode.key와 동일 (ART…/REF…/W… 등 외부 ID)")
+    in_service: bool = Field(default=False, description="항상 false. 이 엔드포인트는 코퍼스 밖 논문 전용")
+    title: Optional[str] = Field(default=None, description="논문 제목. 저장된 서지정보가 있으면 거의 항상 채워짐")
+    title_en: Optional[str] = Field(default=None, description="영문 제목. 외부 조회 성공 시에만")
+    authors: Optional[list[str]] = Field(default=None, description="저자 목록")
+    journal_name: Optional[str] = Field(default=None, description="학술지명")
+    pub_year: Optional[int] = Field(default=None, description="발행 연도")
+    doi: Optional[str] = Field(default=None, description="DOI (도메인 접두어 없는 형태)")
+    abstract: Optional[str] = Field(
+        default=None,
+        description="초록. 외부 조회가 성공하고 그쪽에 초록이 있을 때만 채워진다. "
+        "ART…는 KCI에서 약 97%, W…/DOI는 OpenAlex에서 약 60% 제공되며, DOI 없는 REF…는 항상 null",
+    )
+    abstract_lang: Optional[Literal["ko", "en"]] = Field(
+        default=None, description="초록 언어. 한글이 일정량 이상이면 'ko', 아니면 'en'. 초록이 없으면 null"
+    )
+    keywords: Optional[list[str]] = Field(default=None, description="키워드. KCI 경로에서만 대체로 채워짐")
+    citation_count: Optional[int] = Field(default=None, description="피인용 수 (KCI 또는 OpenAlex 기준)")
+    kci_registered: Optional[bool] = Field(default=None, description="KCI 등재 여부. 확인 불가면 null")
+    issn: Optional[str] = Field(default=None, description="학술지 ISSN. OpenAlex 경로 약 96%, KCI 경로는 대체로 제공")
+    publisher: Optional[str] = Field(default=None, description="발행처. OpenAlex 경로 약 95%, KCI 경로는 학회명")
+    is_open_access: Optional[bool] = Field(
+        default=None, description="오픈액세스 여부. OpenAlex 경로에서만 판정되며(약 53%가 true), 그 외에는 null"
+    )
+    external_url: Optional[str] = Field(
+        default=None,
+        description="논문으로 이동하는 링크. KCI 경로는 KCI 논문 페이지, OpenAlex 경로는 "
+        "OA 원문 > 출판사 랜딩 > DOI 순으로 고른다. 저장된 DOI만 있고 외부 조회에 실패한 경우 "
+        "doi.org 링크로 대체된다. 셋 다 없으면 null",
+    )
+    pdf_url: Optional[str] = Field(
+        default=None, description="원문 PDF 직링크. OpenAlex 경로에서 약 38%만 제공되고 KCI 경로는 항상 null"
+    )
+    enriched: bool = Field(
+        ..., description="외부 상세 조회 성공 여부. false면 저장된 서지정보만 있는 응답"
+    )
+    enrich_source: Optional[Literal["kci", "openalex"]] = Field(
+        default=None, description="상세를 가져온 출처. enriched=false면 null"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "key": "ART001560354",
+                    "in_service": False,
+                    "title": "기후변화에 대응한 농업생명공학의 기회와 도전",
+                    "title_en": "Agricultural biotechnology: Opportunities and challenges associated with climate change",
+                    "authors": ["장안철", "최지영", "이신우"],
+                    "journal_name": "Journal of Plant Biotechnology",
+                    "pub_year": 2011,
+                    "doi": None,
+                    "abstract": "Considering that the world population is expected to total 9 billion by 2050...",
+                    "abstract_lang": "en",
+                    "keywords": ["agriculture", "crop", "biotechnology"],
+                    "citation_count": 4,
+                    "kci_registered": True,
+                    "external_url": "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART001560354",
+                    "enriched": True,
+                    "enrich_source": "kci",
+                },
+                {
+                    "key": "REF025243630",
+                    "in_service": False,
+                    "title": "Stress-induced rearrangement of Fusarium retrotransposon sequences",
+                    "title_en": None,
+                    "authors": ["Anaya N"],
+                    "journal_name": "Mol Genl Genet",
+                    "pub_year": 1996,
+                    "doi": None,
+                    "abstract": None,
+                    "abstract_lang": None,
+                    "keywords": None,
+                    "citation_count": None,
+                    "kci_registered": None,
+                    "external_url": None,
+                    "enriched": False,
+                    "enrich_source": None,
+                },
+            ]
+        }
+    }
 
 
 class PaperCitationExpandRequest(BaseModel):
