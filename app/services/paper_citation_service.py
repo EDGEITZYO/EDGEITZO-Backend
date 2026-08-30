@@ -349,15 +349,21 @@ async def get_citation_graph(cn: str, direction: Direction, db: AsyncSession) ->
     nodes: list[PaperCitationNode] = [partial.center, *partial.nodes]
     edges: list[PaperCitationEdge] = list(partial.edges)
 
+    # 코퍼스 안 논문이 external_refs에 섞여 들어온 행은 repository의 anti-join이 이미 걸러내지만,
+    # 화면에 놓인 key를 한 번 더 넘겨 어떤 경우에도 같은 key가 두 노드로 생기지 않게 한다.
+    placed_keys = [n.key for n in nodes]
+
     remaining = settings.paper_citation_summary_limit - len(partial.nodes)
     external_refs: list[PaperCitationExternalRef] = []
     if remaining > 0:
-        external_refs = await paper_citation_repository.get_external_refs(db, cn, direction, limit=remaining)
+        external_refs = await paper_citation_repository.get_external_refs(
+            db, cn, direction, limit=remaining, excluded_ids=placed_keys
+        )
         for ref in external_refs:
             nodes.append(_node_from_external(ref, tier=1, side="child"))
             edges.append(_citation_edge_for(direction, cn, ref.external_id))
 
-    excluded_ext_ids = [r.external_id for r in external_refs]
+    excluded_ext_ids = placed_keys + [r.external_id for r in external_refs]
     has_more_external = (
         await paper_citation_repository.count_remaining_external_refs(db, cn, direction, excluded_ids=excluded_ext_ids)
     ) > 0
@@ -458,17 +464,22 @@ async def expand_citation_node(
     nodes: list[PaperCitationNode] = list(partial.nodes)
     edges: list[PaperCitationEdge] = list(partial.edges)
 
+    # excluded(기존 화면 노드)에 더해, 이번 확장으로 방금 붙은 in-service 노드도 제외해야
+    # 같은 논문이 외부 노드로 한 번 더 들어오지 않는다.
+    fresh_keys = [n.key for n in partial.nodes]
+    ext_excluded = list(excluded) + fresh_keys
+
     remaining_after_in_service = min(settings.paper_citation_expand_max, remaining_capacity) - len(partial.nodes)
     external_refs: list[PaperCitationExternalRef] = []
     if remaining_after_in_service > 0:
         external_refs = await paper_citation_repository.get_external_refs(
-            db, node_key, direction, limit=remaining_after_in_service, excluded_ids=list(excluded)
+            db, node_key, direction, limit=remaining_after_in_service, excluded_ids=ext_excluded
         )
         for ref in external_refs:
             nodes.append(_node_from_external(ref, tier=new_tier, side="child"))
             edges.append(_citation_edge_for(direction, node_key, ref.external_id))
 
-    excluded_ext_ids = list(excluded) + [r.external_id for r in external_refs]
+    excluded_ext_ids = ext_excluded + [r.external_id for r in external_refs]
     has_more_external = (
         await paper_citation_repository.count_remaining_external_refs(db, node_key, direction, excluded_ids=excluded_ext_ids)
     ) > 0

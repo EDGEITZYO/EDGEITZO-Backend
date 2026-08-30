@@ -156,9 +156,17 @@ async def _load_targets(limit: int | None) -> list[tuple[str, str]]:
 
 
 async def _load_own_art_ids() -> set[str]:
+    """코퍼스 내부 판별용 id 집합. KCI 논문은 papers.id 자체가 art_id인 경우가 많아 kci_art_id만
+    보면 누락되고, 그러면 코퍼스 안 논문이 외부 참고문헌으로도 적재돼 인용관계 그래프에서
+    같은 논문이 in_service=true/false 두 노드로 중복 생성된다."""
     async with AsyncSessionLocal() as session:
-        result = await session.execute(text("SELECT kci_art_id FROM papers WHERE kci_art_id IS NOT NULL"))
-        return {r[0] for r in result.fetchall()}
+        result = await session.execute(text("SELECT id, kci_art_id FROM papers"))
+        own: set[str] = set()
+        for paper_id, kci_art_id in result.fetchall():
+            own.add(paper_id)
+            if kci_art_id:
+                own.add(kci_art_id)
+        return own
 
 
 _INSERT_BATCH_SIZE = 1000  # 컬럼 10개 * 1000 = 10,000 파라미터 (Postgres 한도 32,767 여유있게 하회)
@@ -214,7 +222,7 @@ async def main() -> None:
             refs = await fetch_references(client, art_id)
             total_refs += len(refs)
 
-            external_refs = [r for r in refs if r["arti_id"] not in own_art_ids]
+            external_refs = [r for r in refs if r["external_id"] not in own_art_ids]
             total_external += len(external_refs)
 
             rows_for_cn = [
