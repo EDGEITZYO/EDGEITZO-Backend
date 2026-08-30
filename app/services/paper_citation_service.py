@@ -163,15 +163,6 @@ def _build_in_service_part_sync(cn: str, direction: Direction, limit: int) -> Op
         for node, n in zip(nodes, neighbors):
             node.has_more = repo.has_more_citation_neighbors(n["cn"], direction=direction, excluded_cns=list(placed))
 
-        # 07-04: 화면에 놓인 노드끼리 이미 실제 인용관계가 있으면(트리 엣지 외에도) 노드는
-        # 새로 안 만들고 엣지만 추가 — 예: 1차 자식 A가 다른 1차 자식 B를 실제로 인용하는 경우.
-        existing_pairs = {(e.source, e.target) for e in edges}
-        for rel in repo.find_citation_relations_among(list(placed)):
-            pair = (rel["citing"], rel["cited"])
-            if pair not in existing_pairs:
-                edges.append(PaperCitationEdge(source=rel["citing"], target=rel["cited"]))
-                existing_pairs.add(pair)
-
         # 07-01: 요약 그래프의 1단계 자식끼리 키워드 공유 기반 클러스터링 (expand로 추가된
         # 노드에는 적용 안 함 — 명세가 요약 그래프에만 요구).
         _assign_keyword_clusters(repo, nodes)
@@ -416,19 +407,6 @@ def _build_in_service_expand_sync(
             node.has_more = repo.has_more_citation_neighbors(c["cn"], direction=direction, excluded_cns=list(full_excluded))
 
         parent_has_more_in_service = repo.has_more_citation_neighbors(node_key, direction=direction, excluded_cns=list(full_excluded))
-
-        # 07-04: 이번에 새로 나온 노드가, 화면에 이미 있던 다른 노드(또는 서로)와 실제 인용관계가
-        # 있으면 노드는 새로 안 만들고 엣지만 추가. 이미 있던 노드끼리의 쌍은 그 노드들이 각각
-        # 추가되던 시점에 이미 처리됐다고 보고 재검사하지 않음 — fresh_cns가 한쪽에 걸린 쌍만 검사.
-        existing_pairs = {(e.source, e.target) for e in edges}
-        context_cns = list(full_excluded | {node_key})
-        for rel in repo.find_citation_relations_among(context_cns):
-            if rel["citing"] not in fresh_cns and rel["cited"] not in fresh_cns:
-                continue
-            pair = (rel["citing"], rel["cited"])
-            if pair not in existing_pairs:
-                edges.append(PaperCitationEdge(source=rel["citing"], target=rel["cited"]))
-                existing_pairs.add(pair)
 
         return _InServiceExpandPartial(nodes=nodes, edges=edges, parent_has_more_in_service=parent_has_more_in_service)
     finally:

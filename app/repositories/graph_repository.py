@@ -496,19 +496,6 @@ class GraphRepository:
 
         return bool(record["has_more"]) if record else False
 
-    def find_citation_relations_among(self, cns: list[str]) -> list[dict[str, Any]]:
-        """cns 집합 내부에서 실제로 존재하는 모든 CITES 관계 조회"""
-        if not cns:
-            return []
-        query = """
-        MATCH (a:Paper)-[:CITES]->(b:Paper)
-        WHERE a.cn IN $cns AND b.cn IN $cns
-        RETURN a.cn AS citing, b.cn AS cited
-        """
-        with self.driver.session() as session:
-            records = list(session.run(query, cns=cns))
-        return [{"citing": r["citing"], "cited": r["cited"]} for r in records]
-
     def find_keyword_overlap_pairs(self, cns: list[str], *, min_shared: int) -> list[dict[str, Any]]:
         """cns 집합 내부에서 키워드를 min_shared개 이상 공유하는 논문 쌍 조회 (07-01 클러스터링용)."""
         if len(cns) < 2:
