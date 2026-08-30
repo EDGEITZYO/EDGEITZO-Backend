@@ -174,7 +174,15 @@ async def main() -> None:
         targets = targets[: args.limit]
 
     own_dois = await _load_own_dois()
-    print(f"=== 대상 논문 {len(targets)}건 (피인용 1건 이상) | 코퍼스 내부 doi {len(own_dois)}건 ===")
+    # DOI만으로 걸러내면 DOI 없는 코퍼스 내부 논문이 W… 키의 외부 노드로 또 적재돼, 그래프에서
+    # 같은 논문이 키만 다른 노드 2개로 보인다. OpenAlex id로도 함께 판별한다.
+    own_openalex_ids = {
+        v["openalex_id"] for v in oa_citations.values() if v.get("openalex_id")
+    }
+    print(
+        f"=== 대상 논문 {len(targets)}건 (피인용 1건 이상) | 코퍼스 내부 doi {len(own_dois)}건, "
+        f"openalex id {len(own_openalex_ids)}건 ==="
+    )
 
     checkpoint = _load_checkpoint()
     total_citing = 0
@@ -194,7 +202,13 @@ async def main() -> None:
                 continue
 
             total_citing += len(citing)
-            external = [c for c in citing if c["external_id"] and not (c["doi"] and c["doi"].lower() in own_dois)]
+            external = [
+                c
+                for c in citing
+                if c["external_id"]
+                and c["external_id"] not in own_openalex_ids
+                and not (c["doi"] and c["doi"].lower() in own_dois)
+            ]
             total_external += len(external)
 
             rows_for_cn = [

@@ -1,3 +1,6 @@
+import logging
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -5,7 +8,11 @@ from app.core.database import get_db
 from app.core.response import success_response
 from app.integrations.crossref.client import get_references as crossref_get_references
 from app.integrations.scienceon.client import ScienceOnClient
-from app.integrations.scienceon.parser import ScienceOnReference, parse_cited_references
+from app.integrations.scienceon.parser import (
+    ScienceOnApiError,
+    ScienceOnReference,
+    parse_cited_references,
+)
 from app.repositories.paper_repository import (
     get_paper_meta,
     get_paper_with_journal,
@@ -23,6 +30,8 @@ from app.services.credibility_service import (
     paper_type_label,
     resolve_paper_type,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/papers", tags=["Paper"])
 
@@ -177,15 +186,17 @@ async def get_paper_similar(
     responses={
         404: {"model": ApiErrorResponse},
         500: {"model": ApiErrorResponse},
+        502: {"model": ApiErrorResponse},
     },
     summary="참고문헌 조회",
     description=(
         "논문의 참고문헌 목록을 반환합니다.\n\n"
-        "- JAKO 논문 → ScienceON browse API (CitedDocumentInfo)\n"
-        "- JAFO 논문(DOI 보유) → CrossRef API\n"
+        "- JAKO 논문 → ScienceON browse API (CitedDocumentInfo). `CitedDOI`로 서비스 DB 매칭\n"
+        "- JAFO 논문(DOI 보유) → CrossRef API. DOI로 서비스 DB 매칭\n"
         "- DIKO 논문(학위논문) → 참고문헌 미제공, 빈 리스트\n"
-        "- `in_service: true` — 서비스 papers 테이블에 있는 논문\n"
-        "- `in_service: false` — 서비스 외 논문"
+        "- `in_service: true` — 서비스 papers 테이블에 있는 논문 (`paper_id`로 상세 이동 가능)\n"
+        "- `in_service: false` — 서비스 외 논문\n\n"
+        "**502** — 외부 제공처(ScienceON) 호출 실패. 참고문헌이 실제로 없는 경우(빈 리스트)와 구분됩니다"
     ),
 )
 async def get_paper_references(
@@ -202,9 +213,17 @@ async def get_paper_references(
 
     # ── JAKO: ScienceON browse CitedDocumentInfo ──────────────────────────
     if db_code == "JAKO":
-        xml = await _scienceon.browse_article(paper_id)
-        refs = parse_cited_references(xml)
-        return _build_scienceon_response(refs)
+        try:
+            xml = await _scienceon.browse_article(paper_id)
+            refs = parse_cited_references(xml)
+        except (httpx.HTTPError, ScienceOnApiError) as exc:
+            # 토큰 만료·호출 한도 초과를 "참고문헌 0건"으로 내려보내지 않는다
+            logger.warning("ScienceON 참고문헌 조회 실패 (paper_id=%s): %s", paper_id, exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="참고문헌 제공처(ScienceON) 호출에 실패했습니다",
+            ) from exc
+        return await _build_scienceon_response(db, refs)
 
     # ── JAFO / 기타: CrossRef (DOI 보유 시) ──────────────────────────────
     if doi:
@@ -246,18 +265,41 @@ async def get_paper_references(
     return success_response(data=[], message="ok")
 
 
-def _build_scienceon_response(refs: list[ScienceOnReference]) -> dict:
-    result = [
-        ReferenceResponse(
-            doi=ref.doi,
-            title=ref.title,
-            authors=ref.authors or None,
-            year=ref.year,
-            journal=ref.journal,
-            in_service=False,
-            paper_id=None,
-            unstructured=None,
-        )
-        for ref in refs
-    ]
+async def _build_scienceon_response(db: AsyncSession, refs: list[ScienceOnReference]) -> dict:
+    """ScienceON 참고문헌을 서비스 DB와 매칭해 in_service를 판정한다 (CrossRef 경로와 동일 규칙).
+
+    ScienceON 응답의 CitedCn은 논문 CN이 아니라 참고문헌 항목 일련번호라 쓸 수 없어
+    CitedDOI가 유일한 매칭 키다. DOI 없는 참고문헌은 항상 in_service=false가 된다.
+    """
+    bare_dois = [normalize_doi(ref.doi) for ref in refs if ref.doi]
+    papers_by_doi = await get_papers_by_dois_batch(db, bare_dois)
+
+    result: list[ReferenceResponse] = []
+    for ref in refs:
+        bare_doi = normalize_doi(ref.doi) if ref.doi else None
+        matched = papers_by_doi.get(bare_doi) if bare_doi else None
+
+        if matched:
+            result.append(ReferenceResponse(
+                doi=normalize_doi(matched.doi) if matched.doi else bare_doi,
+                title=matched.title,
+                authors=list(matched.authors or []) or None,
+                year=matched.pubyear,
+                journal=matched.journal_name or ref.journal,
+                in_service=True,
+                paper_id=matched.id,
+                unstructured=None,
+            ))
+        else:
+            result.append(ReferenceResponse(
+                doi=bare_doi,
+                title=ref.title,
+                authors=ref.authors or None,
+                year=ref.year,
+                journal=ref.journal,
+                in_service=False,
+                paper_id=None,
+                unstructured=None,
+            ))
+
     return success_response(data=result, message="ok")

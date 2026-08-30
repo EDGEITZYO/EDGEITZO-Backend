@@ -17,7 +17,10 @@ Postgres에 이미 저장된 embedding 컬럼을 그대로 밀어넣는다.
 사용법:
   python scripts/sync_researchers_to_chroma.py --dry-run
   python scripts/sync_researchers_to_chroma.py
-  python scripts/sync_researchers_to_chroma.py --reset   # 컬렉션 삭제 후 재생성
+  python scripts/sync_researchers_to_chroma.py --reset   # (거의 불필요) 컬렉션 삭제 후 재생성
+
+재실행해도 안전하다 — id 기준 upsert라 중복이 안 생기고,
+Postgres에서 사라진 항목은 자동으로 정리한다.
 """
 from __future__ import annotations
 
@@ -116,7 +119,20 @@ def main() -> None:
         )
         print(f"  upserted {min(start + len(chunk), len(rows)):,}/{len(rows):,}")
 
-    print(f"[done]     '{COLLECTION_NAME}' 컬렉션 {collection.count():,}건")
+    # upsert는 추가·갱신만 하고 삭제는 안 한다. 병합·정리로 연구자가 줄면
+    # Postgres에 없는 id가 Chroma에 남아, 검색 결과에 사라진 사람이 계속 뜬다.
+    # --reset으로 통째로 지우는 대신 없어진 것만 골라 지운다(중간에 실패해도 안전).
+    live = {r[0] for r in rows}
+    stale = [i for i in collection.get(include=[])["ids"] if i not in live]
+    if stale:
+        collection.delete(ids=stale)
+        print(f"[정리]     Postgres에 없는 항목 {len(stale):,}건 삭제")
+
+    total = collection.count()
+    print(f"[done]     '{COLLECTION_NAME}' 컬렉션 {total:,}건")
+    if total != len(rows):
+        print(f"[경고]     Postgres {len(rows):,}건과 다릅니다 — 확인이 필요합니다", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

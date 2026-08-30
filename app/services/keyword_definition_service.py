@@ -16,8 +16,8 @@ from app.services.neo4j_search_service import get_paper_ids_by_keyword
 
 logger = logging.getLogger(__name__)
 
-# 사용자에게 직접 노출되는 자연어 정의 요약은 표현력이 중요해 분류/추출용 기본 모델(Haiku)보다 상위 모델을 씀
-_MODEL = "claude-sonnet-5"
+# 사용자에게 직접 노출되는 자연어 정의 요약이라 quality 등급 (settings.llm_model_quality 주석 참고)
+_MODEL = settings.llm_model_quality
 
 _DEFINITION_SYSTEM_PROMPT = """너는 학술 키워드의 의미를 설명하는 도우미다.
 

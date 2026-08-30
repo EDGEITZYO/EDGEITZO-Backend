@@ -151,7 +151,10 @@ class PaperCitationGraphResponse(BaseModel):
     nodes: list[PaperCitationNode] = Field(default_factory=list, description="center를 포함한 전체 노드 목록")
     edges: list[PaperCitationEdge] = Field(
         default_factory=list,
-        description="direction=reference면 source=center/target=child, direction=citing이면 반대(source=child/target=center)",
+        description="center와 각 자식 노드를 잇는 방사형 엣지만 포함된다. "
+        "direction=reference면 source=center/target=child, direction=citing이면 반대(source=child/target=center) — "
+        "즉 reference에서는 모든 source가, citing에서는 모든 target이 center 하나로 통일된다. "
+        "자식 노드끼리 잇는 엣지는 내려가지 않으므로, 프론트는 엣지의 center가 아닌 쪽 key만 보고 배치하면 된다",
     )
     has_more: bool = Field(..., description="center 기준으로 이번 응답에 다 담지 못한 후보가 더 있는지 여부 (화살표 노출용)")
     papers: list[PaperCitationCard] = Field(

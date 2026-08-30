@@ -30,8 +30,16 @@ from app.langgraph.search_state import (
 )
 from app.models.user import User
 from app.schemas.common import ApiErrorResponse, ApiResponse
-from app.schemas.search import PaperSearchItem, SearchPapersRequest, SearchPapersResponse
+from app.schemas.search import (
+    PaperSearchItem,
+    SearchPapersRequest,
+    SearchPapersResponse,
+    SelectionReasonItem,
+    SelectionReasonRequest,
+    SelectionReasonResponse,
+)
 from app.services.search_service import search_papers_service
+from app.services.selection_reason_service import get_or_create_reasons
 
 router = APIRouter()
 
@@ -65,6 +73,85 @@ async def search_papers(
         data=result,
         message="paper search completed",
         meta={"size": request.size, "count": len(result.items)},
+    )
+
+
+# ── 논문 선정 사유 (명세 02-11) ────────────────────────────────────────
+
+
+async def _fetch_reason_sources(db: AsyncSession, paper_ids: list[str]) -> dict[str, dict]:
+    """선정 사유 생성에 필요한 제목·초록만 조회. 초록이 없는 논문은 애초에 근거가 없어 제외."""
+    from sqlalchemy import select as _select
+
+    from app.models.paper import Paper
+
+    if not paper_ids:
+        return {}
+    rows = await db.execute(
+        _select(Paper.id, Paper.title, Paper.title_en, Paper.abstract, Paper.abstract_en)
+        .where(Paper.id.in_(paper_ids))
+    )
+    out: dict[str, dict] = {}
+    for pid, title, title_en, abstract, abstract_en in rows:
+        text = abstract or abstract_en
+        if not text or not text.strip():
+            continue
+        out[pid] = {"title": title or title_en or pid, "abstract": text}
+    return out
+
+
+@router.post(
+    "/search/selection-reasons",
+    response_model=ApiResponse[SelectionReasonResponse],
+    responses={422: {"model": ApiErrorResponse}, 500: {"model": ApiErrorResponse}},
+    summary="논문 선정 사유 조회/생성",
+    description="""검색 결과 카드에 노출할 「논문 선정 이유」를 반환합니다 (초록 대체).
+
+**호출 시점** — 카드가 화면에 그려진 뒤, **뷰포트에 들어온 논문 ID만** 모아서 호출하세요.
+상위 N건을 미리 요청하면 정렬·필터 변경 시 상위 목록이 통째로 바뀌어, 화면에 사유가 있는
+카드와 없는 카드가 섞이게 됩니다.
+
+**한 번에 최대 10건** — 서버가 10건씩 동시 생성하므로, 그보다 많이 보내면 라운드가 나뉘어
+그만큼 느려집니다(20건 = 2배). 더 필요하면 10건씩 나눠 호출하세요 — 먼저 응답된 배치부터
+화면에 채울 수 있어 체감도 빠릅니다.
+
+**재사용** — `(논문, 키워드)` 조합으로 영구 저장됩니다. 필터·정렬 변경은 키워드를 바꾸지
+않으므로, 정렬을 되돌리거나 필터를 풀면 이전에 만든 사유가 그대로 재사용됩니다(`cached=true`,
+LLM 호출 없음). 새로 올라온 논문만 생성되므로 추가 호출 비용이 작습니다.
+
+**하이라이트** — `highlight_start`/`highlight_end`는 `reason` 문자열의 인덱스입니다.
+`reason[highlight_start:highlight_end]`가 강조 대상 구절이며, null이면 강조 없이 본문만
+그리면 됩니다(본문 자체는 정상).
+
+**부분 실패** — 초록이 없거나 생성에 실패한 논문은 `reason=null`로 함께 반환됩니다.
+LLM 예산이 소진된 경우에도 500이 아니라 `reason=null`로 내려가며, 검색 기능 자체는 계속 동작합니다.
+""",
+)
+async def selection_reasons(
+    request: SelectionReasonRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    paper_ids = list(dict.fromkeys(request.paper_ids))  # 순서 유지 중복 제거
+    sources = await _fetch_reason_sources(db, paper_ids)
+
+    reasons = await get_or_create_reasons(db, keywords=request.keywords, papers=sources)
+
+    items = [
+        SelectionReasonItem(
+            paper_id=pid,
+            reason=r.reason if r else None,
+            highlight_start=r.highlight_start if r else None,
+            highlight_end=r.highlight_end if r else None,
+            cached=bool(r and r.cached),
+        )
+        for pid, r in ((p, reasons.get(p)) for p in paper_ids)
+    ]
+    generated = sum(1 for i in items if i.reason and not i.cached)
+    return success_response(
+        data=SelectionReasonResponse(items=items),
+        message="selection reasons resolved",
+        meta={"requested": len(paper_ids), "generated": generated,
+              "cached": sum(1 for i in items if i.cached)},
     )
 
 
@@ -431,6 +518,53 @@ async def chat_search(
     return success_response(data=_to_chat_response(session_id, result_state), message="chat processed")
 
 
+async def _collect_selection_reasons(result_state: SearchState) -> list[str]:
+    """`done` 직후, 첫 화면에 보이는 논문들의 선정 사유를 논문별 이벤트로 흘린다.
+
+    스크롤·정렬 변경으로 새로 보이는 논문은 프런트가 POST /search/selection-reasons로
+    따로 받아간다 — 여기서 전체를 만들면 비용이 감당되지 않고, 만들어봐야 대부분 화면에
+    안 보인다.
+    """
+    from app.core.database import AsyncSessionLocal
+
+    items = list(result_state.get("result_items") or [])
+    if not items:
+        return []
+    keywords = list((result_state.get("filters") or {}).get("keywords") or [])
+    if not keywords:
+        return []
+
+    head = [it.get("paper_id") for it in items[: settings.search_selection_reason_initial_count]]
+    head = [pid for pid in head if pid]
+    if not head:
+        return []
+
+    try:
+        # 그래프 실행에 쓰인 세션과 분리한다 — 스트리밍 제너레이터는 요청 스코프보다
+        # 오래 살아서, 요청 세션을 여기서 다시 쓰면 이미 닫힌 세션을 만질 수 있다.
+        async with AsyncSessionLocal() as db:
+            sources = await _fetch_reason_sources(db, head)
+            reasons = await get_or_create_reasons(db, keywords=keywords, papers=sources)
+    except Exception:
+        # 사유는 부가 정보다. 실패해도 이미 나간 카드(done)는 유효하므로 조용히 끝낸다.
+        logger.warning("SSE 선정 사유 생성 실패", exc_info=True)
+        return []
+
+    frames: list[str] = []
+    for pid in head:
+        r = reasons.get(pid)
+        if r is None:
+            continue
+        frames.append(_sse("selection_reason", {
+            "paper_id": pid,
+            "reason": r.reason,
+            "highlight_start": r.highlight_start,
+            "highlight_end": r.highlight_end,
+            "cached": r.cached,
+        }))
+    return frames
+
+
 @router.post(
     "/search/chat/stream",
     summary="자연어 검색 — SSE 스트리밍",
@@ -499,13 +633,23 @@ async def stream_chat(
             yield _sse("papers_found", {"count": result_state.get("total_count", 0)})
             yield _sse("fetching", {})
 
+            # 선정 사유 생성을 먼저 걸어두고 타이핑을 흘린다. 둘은 서로 무관한데
+            # 순서대로 두면 타이핑이 끝날 때까지 생성이 시작조차 안 해, 연출 시간
+            # (2자×40ms, 요약 길이에 따라 2~3초)이 그대로 총 소요에 더해진다.
+            reason_task = asyncio.ensure_future(_collect_selection_reasons(result_state))
+
             ai_summary = result_state.get("ai_summary") or ""
             for i in range(0, len(ai_summary), settings.sse_chunk_size):
                 yield _sse("token", {"text": ai_summary[i:i + settings.sse_chunk_size]})
                 await asyncio.sleep(settings.sse_chunk_delay_seconds)
 
             response = _to_chat_response(session_id, result_state)
+            # 카드를 먼저 내보낸다. 선정 사유를 여기서 기다리면 사유 생성이 끝날 때까지
+            # 카드가 화면에 아예 안 뜬다(초기 10건이면 수 초). 사유는 아래에서 뒤따라 흘린다.
             yield _sse("done", response.model_dump())
+
+            for frame in await reason_task:
+                yield frame
 
         except Exception:
             logger.exception("SSE 스트리밍 오류 session_id=%s", session_id)

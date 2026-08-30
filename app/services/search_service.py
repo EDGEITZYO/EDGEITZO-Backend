@@ -67,7 +67,7 @@ async def expand_query_for_embedding(query: str) -> str:
                     f"초록만 반환 (제목, 설명, 따옴표 없이):"
                 ),
             }],
-            model=settings.llm_default_model,
+            model=settings.llm_model_fast,
             temperature=0.3,
         )
         hypothetical = resp.text.strip()
