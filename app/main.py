@@ -18,6 +18,7 @@ from app.api.v1.keyword_search import router as keyword_search_router
 from app.api.v1.mypage import router as mypage_router
 from app.api.v1.paper import router as paper_router
 from app.api.v1.paper_citation import router as paper_citation_router
+from app.api.v1.researcher import router as researcher_router
 from app.api.v1.saved import router as saved_router
 from app.api.v1.scienceon import router as scienceon_router
 from app.api.v1.search import router as search_router
@@ -88,6 +89,7 @@ app.include_router(keyword_search_router, prefix="/api/v1", tags=["KeywordSearch
 app.include_router(mypage_router, prefix="/api/v1", tags=["Mypage"])
 app.include_router(paper_router, prefix="/api/v1", tags=["Paper"])
 app.include_router(paper_citation_router, prefix="/api/v1", tags=["PaperCitation"])
+app.include_router(researcher_router, prefix="/api/v1", tags=["Researcher"])
 app.include_router(saved_router, prefix="/api/v1", tags=["Saved"])
 app.include_router(scienceon_router, prefix="/api/v1", tags=["ScienceON"])
 app.include_router(search_router, prefix="/api/v1", tags=["Search"])
