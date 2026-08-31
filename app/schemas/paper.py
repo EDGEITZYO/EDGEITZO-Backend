@@ -11,7 +11,7 @@ class PaperCardTrustBadge(BaseModel):
     kci: Optional[bool] = Field(None, description="KCI 등재 여부. papers.db_code='JAKO'이면 true", example=True)
     sci: Optional[bool] = Field(None, description="SCI 계열 등재 여부. journals.sci_indexed 기준. 현재 미수집으로 대부분 false", example=False)
     citation_count: Optional[int] = Field(None, description="인용 수. papers.citation_count 기준. null이면 미집계", example=15)
-    degree_type: Optional[str] = Field(None, description="학위 구분. '박사 학위 논문' | '석사 학위 논문' | null. 학위논문 유형 배지로 활용", example=None)
+    degree_type: Optional[str] = Field(None, description="학위 구분. '박사학위 논문' | '석사학위 논문' | '학위논문'(학위 구분 미상) | null. 학위논문(DIKO)만 채워지며 저널은 항상 null. 상세페이지용 TrustBadge.degree_type('박사'|'석사')과 값 집합이 다르니 주의", example=None)
 
 
 class PaperCardResponse(BaseModel):
@@ -114,7 +114,7 @@ class PaperDetailResponse(BaseModel):
     keywords_ko: Optional[list[str]] = Field(None, description="한국어 키워드")
     keywords_en: Optional[list[str]] = Field(None, description="영문 키워드")
     published_at: Optional[str] = Field(None, description="발행일 (ISO8601). pubdate 우선, 없으면 '{year}-01-01'")
-    paper_type: Optional[str] = Field(None, description="논문 유형. '박사학위 논문' | '석사학위 논문' | '학술 저널' | null")
+    paper_type: Optional[str] = Field(None, description="논문 유형. '박사학위 논문' | '석사학위 논문' | '학위논문'(DIKO인데 학위 구분 미상) | '학술 저널' | null")
     journal_name: Optional[str] = Field(None, description="학술지명. 없으면 null")
     doi: Optional[str] = Field(None, description="DOI. 없으면 null")
     citation_count: Optional[int] = Field(None, description="인용 수. 없으면 null")

@@ -580,8 +580,25 @@ async def _collect_selection_reasons(result_state: SearchState) -> list[str]:
 5. `fetching` — 논문 상세/요약 가져오는 중
 6. `token` — `ai_summary` 청크 스트리밍 (서버 chunking)
 7. `done` — 최종 상태 전체 (`ChatResponse`와 동일 필드)
+8. `selection_reason` — 첫 화면 상위 10건의 「논문 선정 이유」. `done` **이후**에 이어서 전송됨
 
 `error` — 예외/타임아웃 시 `done` 없이 스트림 즉시 종료.
+
+**`selection_reason` 처리 방법** — 이 이벤트 때문에 별도로 `POST /search/selection-reasons`를
+호출할 필요가 없습니다. 초기 10건은 이 스트림으로 내려옵니다.
+
+```json
+{"paper_id": "...", "reason": "...", "highlight_start": 12, "highlight_end": 31, "cached": true}
+```
+
+- `done`의 `result_items`에는 사유 필드가 없습니다. `paper_id`로 매칭해 카드에 채우세요.
+- **10건이 한 번에 도착합니다.** 생성이 전부 끝난 뒤 프레임이 일괄 전송되므로, 카드마다
+  하나씩 순차적으로 채워지지 않습니다. `done` 시점에 사유 자리를 스켈레톤으로 잡아두고
+  이 이벤트가 오면 한꺼번에 채우면 됩니다.
+- 소요 시간: 이미 생성된 조합이면 `done` 직후 거의 즉시, 새로 생성하면 5~8초 정도.
+  (요약 타이핑과 병렬로 미리 시작하므로 `done` 시점엔 이미 진행 중입니다)
+- `reason` 생성에 실패한 논문은 이벤트가 오지 않습니다 — 10건보다 적게 올 수 있습니다.
+- 스크롤·정렬·필터로 **새로 보이게 된** 논문만 `POST /search/selection-reasons`로 받아가세요.
 """,
 )
 async def stream_chat(

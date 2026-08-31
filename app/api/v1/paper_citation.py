@@ -32,10 +32,12 @@ router = APIRouter()
 - 노드 상한(요약 12개) 안에서 자체 서비스 코퍼스 안팎을 가리지 않고 실제 인용관계를 채웁니다.
   **모든 노드가 클릭 가능하며**, `in_service`로 이동할 상세만 갈라집니다 —
   `true`면 `paper_id`로 일반 상세페이지, `false`면 `key`로
-  `GET /papers/citation-graph/external/{external_id}`. 후자는 적재 없이 클릭 시점에 KCI/OpenAlex에서
-  받아오므로 초록/키워드가 없을 수 있습니다(`enriched=false`)
+  `GET /papers/citation-graph/external/{external_id}`. 후자는 서지정보·초록·링크가 **사전 적재돼 있어**
+  대부분 외부 호출 없이 즉시 응답합니다. 다만 초록 제공률이 전체 65.8%라 없을 수 있습니다(`enriched=false`)
 - 1단계(직접 인용관계)까지만 반환. 2단계 이상은 각 노드의 `expand`로 조회 (단, `in_service=false` 노드는
   `has_more`가 항상 false라 확장 불가)
+- `cluster_id`: 1단계 in-service 자식끼리 키워드를 2개 이상 공유하면 같은 정수값이 부여됩니다
+  (같은 값끼리 묶어서 표시). center·외부 노드·expand로 추가된 노드는 항상 null
 - 관계 데이터가 없으면 `nodes`가 빈 배열로 반환됨 (프론트에서 "표시할 참고문헌 관계가 없어요" 안내 처리)
 """,
 )
