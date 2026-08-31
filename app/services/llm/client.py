@@ -89,9 +89,19 @@ def _calc_cost_micro_usd(model: str, input_tokens: int, output_tokens: int) -> i
     return int(cost_usd * 1_000_000)
 
 
-# Sonnet 5 이상(Opus 5, Fable 5 등)은 temperature/top_p/top_k를 완전히 거부함(400) — 이 모델들엔 안 보냄.
-# 단가표와 같은 이유로 접두 비교한다: 날짜 꼬리가 붙은 ID면 정확 일치가 빗나가 파라미터를
-# 그대로 보내고 400을 맞는다.
+# 샘플링 파라미터는 두 겹으로 막혀 있어 둘 다 다뤄야 한다.
+#
+# 1) 모델: Sonnet 5 이상(Opus 5, Fable 5 등)은 temperature/top_p/top_k를 거부한다(400).
+# 2) SDK: anthropic 1.2.0이 messages.create() 시그니처에서 이 셋을 아예 제거했다.
+#    그래서 이름있는 인자로 넘기면 모델과 무관하게 TypeError가 난다 —
+#    "AsyncMessages.create() got an unexpected keyword argument 'temperature'".
+#    Haiku 4.5는 API가 여전히 temperature를 받으므로, 값을 유지하려면 extra_body로 보내야 한다.
+#
+# 이 구분이 중요한 이유: 예전엔 모델 목록만 맞으면 됐지만, 이제 목록에 없는 모델(haiku 등)도
+# 이름있는 인자로는 못 넘긴다. 실제로 이것 때문에 키워드 추출이 전량 실패해 검색이
+# 질의와 무관한 결과를 돌려줬다.
+#
+# 단가표와 같은 이유로 접두 비교한다: 날짜 꼬리가 붙은 ID면 정확 일치가 빗나간다.
 _NO_SAMPLING_PARAMS_MODELS = ("claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-mythos-5")
 
 
@@ -111,7 +121,10 @@ async def _call_claude(
         api_key=settings.anthropic_api_key,
         timeout=settings.llm_timeout_seconds,
     )
-    sampling_kwargs = {} if _rejects_sampling_params(model) else {"temperature": temperature}
+    # 이름있는 인자가 아니라 extra_body로 보낸다 (위 주석 2번 참고).
+    sampling_kwargs = (
+        {} if _rejects_sampling_params(model) else {"extra_body": {"temperature": temperature}}
+    )
     # Sonnet 5는 thinking 기본값이 adaptive라, 1~2문장짜리 짧은 산출물에는 순수 오버헤드가 된다.
     # {"type": "disabled"}를 명시하면 모델 품질은 그대로 두고 사고 단계만 끌 수 있다.
     thinking_kwargs = {"thinking": thinking} if thinking is not None else {}
