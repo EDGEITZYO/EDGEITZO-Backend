@@ -52,7 +52,7 @@ _scienceon = ScienceOnClient()
         "- `abstract` / `abstract_en` — 한국어·영문 초록\n"
         "- `keywords_ko` / `keywords_en` — 한국어·영문 키워드\n"
         "- `published_at` — pubdate 우선, 없으면 `{pubyear}-01-01`, 둘 다 없으면 null\n"
-        "- `paper_type` — `'박사 학위 논문'` | `'석사 학위 논문'` | `'학술 저널'` | null\n"
+        "- `paper_type` — `'박사학위 논문'` | `'석사학위 논문'` | `'학위논문'`(학위 구분 미상) | `'학술 저널'` | null\n"
         "- `journal_name` — 학술지명. 학위논문·학회는 null일 수 있음\n"
         "- `degree` / `affiliation` — 학위논문 전용. 저널·학회는 null\n"
         "- `fulltext_flag` — 원문 제공 여부. 없으면 null\n"
@@ -191,12 +191,18 @@ async def get_paper_similar(
     summary="참고문헌 조회",
     description=(
         "논문의 참고문헌 목록을 반환합니다.\n\n"
-        "- JAKO 논문 → ScienceON browse API (CitedDocumentInfo). `CitedDOI`로 서비스 DB 매칭\n"
-        "- JAFO 논문(DOI 보유) → CrossRef API. DOI로 서비스 DB 매칭\n"
-        "- DIKO 논문(학위논문) → 참고문헌 미제공, 빈 리스트\n"
+        "**조회 경로** (db_code가 아니라 아래 순서로 분기합니다)\n"
+        "- `db_code = JAKO` → ScienceON browse API (CitedDocumentInfo). `CitedDOI`로만 서비스 DB 매칭 "
+        "(ScienceON의 `CitedCn`은 논문 CN이 아니라 항목 일련번호라 쓸 수 없음 — DOI 없는 참고문헌은 항상 `in_service=false`)\n"
+        "- 그 외 논문 중 **DOI 보유** → CrossRef API. DOI로 서비스 DB 매칭 (JAFO가 대부분이지만 db_code로 거르지 않음)\n"
+        "- 그 외 (DOI 없음, DIKO 학위논문 등) → 빈 리스트\n\n"
+        "**응답 필드**\n"
         "- `in_service: true` — 서비스 papers 테이블에 있는 논문 (`paper_id`로 상세 이동 가능)\n"
-        "- `in_service: false` — 서비스 외 논문\n\n"
-        "**502** — 외부 제공처(ScienceON) 호출 실패. 참고문헌이 실제로 없는 경우(빈 리스트)와 구분됩니다"
+        "- `in_service: false` — 서비스 외 논문\n"
+        "- `unstructured` — CrossRef 경로에서만 채워지는 원문 인용 문자열. ScienceON 경로는 항상 null\n\n"
+        "**502** — ScienceON(JAKO 경로) 호출 실패에만 해당합니다. 참고문헌이 실제로 없는 경우(빈 리스트)와 구분하기 위한 것입니다.\n"
+        "⚠️ CrossRef 경로는 호출이 실패해도 502가 아니라 **빈 리스트**로 반환되므로, 프론트에서 "
+        "\'참고문헌 없음\'과 구분할 수 없습니다"
     ),
 )
 async def get_paper_references(

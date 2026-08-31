@@ -53,8 +53,9 @@ router = APIRouter(prefix="/bookmarks", tags=["Bookmark"])
         "- `kci` (bool | null): KCI 등재 여부\n"
         "- `sci` (bool | null): SCI 등재 여부\n"
         "- `citation_count` (int | null): 인용 수\n"
-        "- `degree_type` (str | null): 학위 유형. `'박사 학위 논문'` | `'석사 학위 논문'` | null (학위논문에만 존재)\n\n"
-        "**`degree_type` 값 범위**: DIKO 코드(학위논문) 논문만 채워짐. 학술 저널은 항상 null"
+        "- `degree_type` (str | null): 학위 유형. `'박사학위 논문'` | `'석사학위 논문'` | `'학위논문'`(학위 구분 미상) | null\n\n"
+        "**`degree_type` 값 범위**: DIKO 코드(학위논문) 논문만 채워짐. 학술 저널은 항상 null. "
+        "논문 상세(`GET /papers/{paper_id}`)의 `trust_badge.degree_type`은 `'박사'` | `'석사'`로 값 집합이 다름"
     ),
 )
 async def list_bookmarks(
