@@ -23,11 +23,11 @@ from app.core.redis import get_redis
 from app.services.llm.client import (
     LLMBudgetExceededError,
     LLMResponse,
-    _COST_KEY_TOTAL,
+    _monthly_key,
     _DB,
     _cache_key,
     get_remaining_budget,
-    get_total_cost,
+    get_monthly_cost,
 )
 
 _MODEL = "claude-haiku-4-5"
@@ -35,11 +35,12 @@ _MESSAGES = [{"role": "user", "content": "budget test"}]
 
 
 def _reset_cost(r, value: float = 0.0) -> None:
-    r.set(_COST_KEY_TOTAL, int(value * 1_000_000))
+    """차단 기준은 이번 달 카운터다 — 평생 누적이 아니라 이쪽을 세팅해야 한다."""
+    r.set(_monthly_key(), int(value * 1_000_000))
 
 
 async def test_budget_exceeded() -> bool:
-    """30.0 USD 세팅 → chat() 호출 시 LLMBudgetExceededError 발생 확인"""
+    """이번 달 30.0 USD 세팅 → chat() 호출 시 LLMBudgetExceededError 발생 확인"""
     r = get_redis(_DB)
     _reset_cost(r, 30.0)
 
@@ -79,16 +80,16 @@ async def test_cache_hit() -> bool:
 
 
 async def test_reset_and_budget() -> bool:
-    """0으로 리셋 후 누적/잔여 예산 확인"""
+    """0으로 리셋 후 이번 달 사용액/잔여 예산 확인"""
     r = get_redis(_DB)
     _reset_cost(r, 0.0)
 
-    total = await get_total_cost()
+    total = await get_monthly_cost()
     remaining = await get_remaining_budget()
 
     ok = total == 0.0
     status = "PASS" if ok else "FAIL"
-    print(f"{status} [리셋]: 누적=${total:.4f}, 잔여=${remaining:.4f}")
+    print(f"{status} [리셋]: 이번달=${total:.4f}, 잔여=${remaining:.4f}")
     return ok
 
 

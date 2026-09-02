@@ -88,7 +88,20 @@ class Settings(BaseSettings):
     # llm/client.py의 단가표·파라미터 예외 목록이 접두 매칭으로 흡수해야 하는 부담이 된다.
     llm_model_fast: str = "claude-haiku-4-5"
     llm_model_quality: str = "claude-sonnet-5"
-    llm_budget_total_usd: float = 40.0
+    # LLM 비용 상한 — **한 달치**다. 예전에는 평생 누적 총액이었는데, 실제 과금은 달마다
+    # 다시 계산되는 구조라 코드가 현실과 어긋나 있었다. 누적 카운터는 리셋 API를 사람이
+    # 부르기 전까지 줄지 않으므로, 이번 달 예산이 멀쩡히 남아 있어도 지난 몇 달 누적이
+    # 상한을 넘은 순간부터 모든 LLM 호출이 영구히 차단됐다.
+    #
+    # 이 값은 청구서 사본이 아니라 우리 앱의 지출 가드다. 실제 결제일과 맞출 필요가 없고
+    # (그건 매달 달라진다고 한다), 달력 월 기준으로 1일에 자동 회복된다.
+    #
+    # 이름은 바뀌었지만 기존 LLM_BUDGET_TOTAL_USD도 그대로 받는다 — .env.example과
+    # 배포 환경에 그 이름으로 들어가 있어서, 갈아끼우면 조용히 기본값으로 돌아간다.
+    llm_budget_monthly_usd: float = Field(
+        default=40.0,
+        validation_alias=AliasChoices("LLM_BUDGET_MONTHLY_USD", "LLM_BUDGET_TOTAL_USD"),
+    )
     llm_timeout_seconds: int = 120
     # SDK가 429·5xx·연결 오류를 자체 백오프로 재시도하는 횟수. SDK 기본값과 같은 2지만,
     # 기본값에 기대면 버전이 바뀔 때 조용히 달라진다 — 명시해서 고정한다.
