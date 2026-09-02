@@ -8,7 +8,13 @@ from app.core.redis import get_redis
 from app.core.redis_client import get_redis_client
 from app.core.response import success_response
 from app.core.settings import settings
-from app.services.llm.client import get_remaining_budget, get_total_cost, reset_cost
+from app.services.llm.client import (
+    get_monthly_cost,
+    get_remaining_budget,
+    get_total_cost,
+    next_reset_date,
+    reset_cost,
+)
 
 router = APIRouter()
 
@@ -74,12 +80,25 @@ async def health_check():
 
 @router.get("/health/llm-cost")
 async def llm_cost():
-    """LLM 누적 비용 및 잔여 예산 조회"""
+    """LLM 비용·잔여 예산 조회.
+
+    차단 기준은 `monthly_cost_usd`다. 이게 `budget_limit_usd`에 닿으면 모든 LLM 기능이
+    (선정 사유·AI 요약·키워드 추출) 조용히 멈추므로, 사유가 전부 null로 내려온다면 여기부터
+    확인할 것. `next_reset_date`에 저절로 회복된다.
+
+    `total_cost_usd`는 평생 누적으로 관측용이며 차단과 무관하다.
+    """
+    monthly = await get_monthly_cost()
+    limit = settings.llm_budget_monthly_usd
     return success_response(
         data={
-            "total_cost_usd": await get_total_cost(),
+            "monthly_cost_usd": monthly,
             "remaining_budget_usd": await get_remaining_budget(),
-            "budget_limit_usd": settings.llm_budget_total_usd,
+            "budget_limit_usd": limit,
+            "usage_ratio": round(monthly / limit, 4) if limit else None,
+            "exhausted": monthly >= limit,
+            "next_reset_date": next_reset_date().isoformat(),
+            "total_cost_usd": await get_total_cost(),  # 평생 누적 (관측용)
         },
         message="LLM 비용 조회 완료",
     )
@@ -87,9 +106,16 @@ async def llm_cost():
 
 @router.post("/health/llm-cost/reset")
 async def reset_llm_cost():
-    """LLM 누적 비용 초기화 — API 키 교체 시 호출"""
+    """이번 달 LLM 비용 카운터 초기화 — 한도에 걸린 걸 즉시 풀어야 할 때.
+
+    다음 달 1일이면 저절로 풀리므로 평소엔 부를 일이 없다. 평생 누적(total_cost_usd)은
+    별개의 기록이라 지우지 않는다.
+    """
     await reset_cost()
-    return success_response(data={"reset": True}, message="LLM 누적 비용 초기화 완료")
+    return success_response(
+        data={"reset": True, "monthly_cost_usd": await get_monthly_cost()},
+        message="이번 달 LLM 비용 카운터 초기화 완료",
+    )
 
 
 @router.post("/health/recent-searches/reset")

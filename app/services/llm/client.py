@@ -14,14 +14,29 @@ logger = logging.getLogger(__name__)
 _DB = 6
 _CACHE_TTL = 86400  # 24시간
 
+# 평생 누적. **차단에는 쓰지 않는다** — 관측용이다("지금까지 총 얼마 썼나").
+# 예전에는 이 값으로 차단했는데, 줄어들 일이 없으니 상한을 넘는 순간 기능이 영구히
+# 죽었다. 실제 과금은 달마다 다시 계산되므로 이번 달 예산이 남아 있어도 막혔다.
 _COST_KEY_TOTAL = "llm:cost:total:edgeitzo"
+# 차단 기준. 달이 바뀌면 키가 바뀌므로 1일에 저절로 회복된다.
+_COST_KEY_MONTHLY_PREFIX = "llm:cost:monthly"
 _COST_KEY_DAILY_PREFIX = "llm:cost:daily"
 
-_BUDGET_MICRO_USD = int(settings.llm_budget_total_usd * 1_000_000)
+# 지난달 키를 영원히 남겨둘 이유가 없다. 두 달이면 회고용으로 충분하다.
+_MONTHLY_TTL = 86400 * 70
+
+_BUDGET_MICRO_USD = int(settings.llm_budget_monthly_usd * 1_000_000)
+
+
+def _monthly_key(today: Optional[date] = None) -> str:
+    return f"{_COST_KEY_MONTHLY_PREFIX}:{(today or date.today()):%Y-%m}"
 
 
 class LLMBudgetExceededError(Exception):
-    """누적 비용이 한도에 도달했을 때 발생 — API 호출 자체를 차단"""
+    """이번 달 비용이 한도에 도달했을 때 발생 — API 호출 자체를 차단.
+
+    다음 달 1일에 저절로 풀린다. 당장 풀어야 하면 POST /health/llm-cost/reset.
+    """
 
 # 모델별 단가 (USD per 1M tokens) — 확정 모델 결정 후 갱신
 _PRICING: dict[str, dict[str, float]] = {
@@ -47,6 +62,7 @@ def _cache_key(
     temperature: float,
     max_tokens: int,
     thinking: Optional[dict] = None,
+    system: Optional[str] = None,
 ) -> str:
     body: dict = {
         "model": model, "messages": messages,
@@ -55,6 +71,10 @@ def _cache_key(
     # thinking 미지정 호출은 기존 캐시 키를 그대로 유지해야 하므로 지정됐을 때만 넣는다
     if thinking is not None:
         body["thinking"] = thinking
+    # system도 같은 이유로 지정됐을 때만. 넣지 않으면 지시문이 다른 두 호출이 같은 키를
+    # 갖게 되어 엉뚱한 답이 재사용된다 — messages만으로는 구분이 안 된다.
+    if system is not None:
+        body["system"] = system
     payload = json.dumps(body, sort_keys=True)
     return f"llm:{model}:{hashlib.sha256(payload.encode()).hexdigest()}"
 
@@ -158,6 +178,8 @@ async def _call_claude(
     temperature: float,
     max_tokens: int,
     thinking: Optional[dict] = None,
+    system: Optional[str] = None,
+    cache_system: bool = False,
 ) -> tuple[str, int, int]:
     client = _client()
     # 이름있는 인자가 아니라 extra_body로 보낸다 (위 주석 2번 참고).
@@ -167,9 +189,25 @@ async def _call_claude(
     # Sonnet 5는 thinking 기본값이 adaptive라, 1~2문장짜리 짧은 산출물에는 순수 오버헤드가 된다.
     # {"type": "disabled"}를 명시하면 모델 품질은 그대로 두고 사고 단계만 끌 수 있다.
     thinking_kwargs = {"thinking": thinking} if thinking is not None else {}
+
+    # system을 별도 필드로 보내야 프롬프트 캐싱을 걸 수 있다. 지시문을 user 메시지 앞에
+    # 이어붙이면 내용은 같아도 캐시 breakpoint를 붙일 자리가 없다.
+    system_kwargs: dict = {}
+    if system:
+        block: dict = {"type": "text", "text": system}
+        if cache_system:
+            # 같은 지시문이 호출마다 그대로 반복될 때만 켠다. 선정 사유는 한 검색에
+            # 20호출이 몇 초 안에 나가므로 1회 쓰기 + 19회 읽기가 된다.
+            #
+            # 주의 — 캐시에는 최소 길이가 있고 모델마다 다르다(Sonnet 5는 1,024토큰).
+            # 그보다 짧으면 에러 없이 그냥 캐시가 안 걸린다. 지시문을 크게 줄이게 되면
+            # 이 플래그가 조용히 무의미해지므로 그때 다시 재 볼 것.
+            block["cache_control"] = {"type": "ephemeral"}
+        system_kwargs["system"] = [block]
+
     resp = await client.messages.create(
         model=model, max_tokens=max_tokens, messages=messages,
-        **sampling_kwargs, **thinking_kwargs,
+        **system_kwargs, **sampling_kwargs, **thinking_kwargs,
     )
     if resp.stop_reason == "max_tokens":
         logger.warning(
@@ -191,19 +229,34 @@ async def chat(
     max_tokens: int = 1000,
     use_cache: bool = True,
     thinking: Optional[dict] = None,
+    system: Optional[str] = None,
+    cache_system: bool = False,
 ) -> LLMResponse:
-    """LLM 호출 — 비용 한도 체크 → 캐시 조회 → API 호출 → 비용 누적 → 캐시 저장
+    """LLM 호출 — 이번 달 한도 체크 → 캐시 조회 → API 호출 → 비용 누적 → 캐시 저장
 
     thinking: None이면 모델 기본값(Sonnet 5는 adaptive). 짧은 산출물에는
-    {"type": "disabled"}로 사고 단계를 꺼서 지연을 줄인다."""
-    r = get_redis(_DB)
-    cache_key = _cache_key(model, messages, temperature, max_tokens, thinking)
+    {"type": "disabled"}로 사고 단계를 꺼서 지연을 줄인다.
 
-    # 1. 비용 한도 체크 (하드 차단)
-    current = int(r.get(_COST_KEY_TOTAL) or 0)
+    system: 지시문. user 메시지에 이어붙이지 말고 이쪽으로 넘기면 프롬프트 캐싱을 걸 수 있다.
+    cache_system: 그 지시문이 호출마다 동일할 때 켠다(입력 비용 대폭 절감).
+
+    ※ use_cache(Redis 응답 캐시)와 cache_system(Anthropic 프롬프트 캐시)은 다른 것이다.
+      전자는 같은 질문의 답을 통째로 재사용하고, 후자는 매번 새 답을 받되 프롬프트의
+      공통 앞부분만 서버에 재사용시킨다. 그래서 둘은 동시에 켜고 끌 수 있다 —
+      선정 사유는 use_cache=False(매번 다른 뽑기가 필요) + cache_system=True다.
+    """
+    r = get_redis(_DB)
+    cache_key = _cache_key(model, messages, temperature, max_tokens, thinking, system)
+
+    # 1. 비용 한도 체크 (하드 차단) — 기준은 **이번 달** 사용액이다.
+    #    평생 누적으로 막던 시절에는 한 번 넘으면 사람이 리셋을 부르기 전까지 영구히
+    #    죽었다. 실제 과금은 달마다 다시 계산되므로 코드가 현실과 어긋나 있었다.
+    monthly_key = _monthly_key()
+    current = int(r.get(monthly_key) or 0)
     if current >= _BUDGET_MICRO_USD:
         raise LLMBudgetExceededError(
-            f"누적 비용 한도 초과: ${current / 1_000_000:.4f} / ${settings.llm_budget_total_usd}"
+            f"이번 달 비용 한도 초과: ${current / 1_000_000:.4f} / "
+            f"${settings.llm_budget_monthly_usd} (다음 달 1일 자동 회복)"
         )
 
     # 2. 캐시 조회
@@ -214,13 +267,15 @@ async def chat(
 
     # 3. API 호출
     text, input_tokens, output_tokens = await _call_claude(
-        messages, model, temperature, max_tokens, thinking
+        messages, model, temperature, max_tokens, thinking, system, cache_system
     )
 
     # 4. 비용 계산 + 누적 (실패해도 호출 결과는 반환)
     cost_micro = _calc_cost_micro_usd(model, input_tokens, output_tokens)
     try:
-        r.incrby(_COST_KEY_TOTAL, cost_micro)
+        r.incrby(_COST_KEY_TOTAL, cost_micro)      # 관측용(평생)
+        r.incrby(monthly_key, cost_micro)          # 차단 기준(이번 달)
+        r.expire(monthly_key, _MONTHLY_TTL)
         daily_key = f"{_COST_KEY_DAILY_PREFIX}:{date.today().isoformat()}"
         r.incrby(daily_key, cost_micro)
         r.expire(daily_key, 86400 * 7)
@@ -243,16 +298,31 @@ async def chat(
 
 
 async def get_total_cost() -> float:
-    """누적 비용 조회 (USD)"""
+    """평생 누적 비용 조회 (USD) — 관측용. 차단에는 쓰이지 않는다."""
     return int(get_redis(_DB).get(_COST_KEY_TOTAL) or 0) / 1_000_000
 
 
+async def get_monthly_cost() -> float:
+    """이번 달 사용액 조회 (USD) — 차단 기준이 되는 값."""
+    return int(get_redis(_DB).get(_monthly_key()) or 0) / 1_000_000
+
+
 async def get_remaining_budget() -> float:
-    """잔여 예산 조회 (USD)"""
-    return settings.llm_budget_total_usd - await get_total_cost()
+    """이번 달 잔여 예산 조회 (USD). 음수가 되지 않게 0에서 자른다."""
+    return max(0.0, settings.llm_budget_monthly_usd - await get_monthly_cost())
+
+
+def next_reset_date(today: Optional[date] = None) -> date:
+    """이번 달 카운터가 리셋되는 날 = 다음 달 1일."""
+    d = today or date.today()
+    return date(d.year + (d.month == 12), (d.month % 12) + 1, 1)
 
 
 async def reset_cost() -> None:
-    """누적 비용 카운터 초기화 — API 키 교체 시 호출"""
-    r = get_redis(_DB)
-    r.set(_COST_KEY_TOTAL, 0)
+    """비용 카운터 초기화.
+
+    이번 달 카운터만 0으로 만든다 — 차단을 즉시 푸는 것이 이 API의 용도이고, 평생 누적은
+    "지금까지 총 얼마 썼나"라는 별개의 사실이라 지우면 그 기록이 사라진다.
+    (다음 달 1일이면 저절로 풀리므로 평소엔 부를 일이 없다.)
+    """
+    get_redis(_DB).set(_monthly_key(), 0)

@@ -301,11 +301,19 @@ async def _draw_one(
     None(파싱 실패)도 재시도 대상이다 — 같은 프롬프트라도 다시 뽑으면 형식을 지킬 수 있다.
     """
     resp = await chat(
-        messages=[{
-            "role": "user",
-            "content": f"[System]\n{_system_prompt()}\n\n[User]\n"
-                       f"{_build_user_prompt(keywords, title, abstract)}",
-        }],
+        messages=[{"role": "user", "content": _build_user_prompt(keywords, title, abstract)}],
+        # 지시문을 user 메시지 앞에 이어붙이던 것을 system 필드로 옮겼다. 내용은 한 글자도
+        # 안 바뀌었고, 옮긴 이유는 캐시 breakpoint를 붙일 자리가 필요해서다.
+        #
+        # 실측: 입력 2,318토큰 중 1,368(59%)이 이 지시문이고 호출마다 완전히 동일하다.
+        # 한 검색이 20호출을 몇 초 안에 던지므로 1회 쓰기 + 19회 읽기가 되어, 검색 1회
+        # 비용이 $0.131 → $0.084 (약 35% 절감)가 된다. 프롬프트도 모델도 그대로라
+        # 품질에는 영향이 없다.
+        #
+        # PROMPT_VERSION은 올리지 않는다 — 지시문 텍스트가 그대로라 기존 캐시 행이
+        # 여전히 유효하고, 올리면 이미 만들어둔 사유를 전부 돈 주고 다시 만들게 된다.
+        system=_system_prompt(),
+        cache_system=True,
         model=_MODEL,
         max_tokens=1500,
         # 실측: adaptive를 켜두면 한 건이 thinking에만 4,000토큰을 쓰고 max_tokens에
