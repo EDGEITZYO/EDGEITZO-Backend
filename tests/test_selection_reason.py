@@ -3,6 +3,10 @@
 마커 방식을 쓰는 이유가 "본문과 강조 구절이 어긋날 수 없다"는 것이므로,
 파싱 결과가 항상 본문의 실제 부분 문자열이라는 점을 중심으로 검증한다.
 """
+import pytest
+
+from app.core.settings import settings
+from app.services import selection_reason_service as srv
 from app.services.selection_reason_service import (
     _assemble,
     _assemble_ex,
@@ -14,6 +18,7 @@ from app.services.selection_reason_service import (
     _HIGHLIGHT_MAX,
     _parse_markers,
     build_keyword_key,
+    is_retryable,
     normalize_keyword,
 )
 
@@ -268,3 +273,148 @@ def test_프롬프트가_지시한_30자는_상한_안에_있다():
     """프롬프트는 30자를 지시하고 코드는 40자에서 막는다 — 지시를 지킨 출력이
     가드에 걸리는 일은 없어야 한다."""
     assert 30 < _HIGHLIGHT_MAX
+
+
+# ── 재시도 — 초록이 있으면 사유는 반드시 나와야 한다 ─────────────────────────
+
+
+class _Resp:
+    """chat()이 돌려주는 객체 중 이 코드가 쓰는 건 .text 하나뿐이다."""
+
+    def __init__(self, text: str):
+        self.text = text
+
+
+_OK_JSON = '{"s1": "첫 문장입니다.", "s2": "둘째 문장입니다.", "s3": "셋째에 적합해요."}'
+
+
+def _patch_chat(monkeypatch, side_effects):
+    """chat()을 호출 순서대로 side_effects를 소비하는 가짜로 바꾼다.
+
+    항목이 예외면 raise, 문자열이면 그것을 응답 본문으로 돌려준다. 마지막 항목은 소진되지
+    않고 남아, 그 뒤의 호출은 전부 같은 결과를 낸다. 호출 인자 목록을 돌려주므로
+    "몇 번 불렀나"를 그대로 검증할 수 있다.
+    """
+    calls = []
+    seq = list(side_effects)
+
+    async def fake_chat(**kwargs):
+        calls.append(kwargs)
+        item = seq.pop(0) if len(seq) > 1 else seq[0]
+        if isinstance(item, BaseException):
+            raise item
+        return _Resp(item)
+
+    monkeypatch.setattr(srv, "chat", fake_chat)
+    # 백오프를 0으로 만들어 테스트가 실제로 기다리지 않게 한다
+    monkeypatch.setattr(settings, "selection_reason_retry_base_seconds", 0.0)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_일시적_오류를_재시도해서_결국_만들어낸다(monkeypatch):
+    """이 수정의 핵심 — 429 한 번에 사유가 영영 없어지면 안 된다.
+
+    Best-of-2는 N개를 **동시에** 던지므로 첫 라운드 2개가 함께 죽는다. 병렬 N이 장애를
+    막아주지 못한다는 것이 재시도가 필요한 이유 그 자체다.
+    """
+    monkeypatch.setattr(settings, "selection_reason_best_of", 2)
+    monkeypatch.setattr(settings, "selection_reason_max_attempts", 3)
+    calls = _patch_chat(monkeypatch, [
+        RuntimeError("429"), RuntimeError("429"),  # 1차: 병렬 2개가 함께 실패
+        _OK_JSON,                                  # 2차: 성공
+    ])
+
+    result = await srv._generate_one(["항산화"], "제목", "초록입니다." * 20)
+
+    assert result is not None, "재시도했으면 사유가 나왔어야 한다"
+    assert result.reason
+    assert len(calls) == 3, "1차 병렬 2회 + 재시도 1회"
+
+
+@pytest.mark.asyncio
+async def test_재시도는_뽑기를_1회만_한다(monkeypatch):
+    """재시도의 목적은 '가장 좋은 것 고르기'가 아니라 '무엇이든 건지기'다.
+    429가 나는 와중에 N개를 또 던지면 상황을 악화시킨다."""
+    monkeypatch.setattr(settings, "selection_reason_best_of", 3)
+    monkeypatch.setattr(settings, "selection_reason_max_attempts", 2)
+    calls = _patch_chat(monkeypatch, [
+        RuntimeError("x"), RuntimeError("x"), RuntimeError("x"),
+        _OK_JSON,
+    ])
+
+    assert await srv._generate_one(["항산화"], "제목", "초록") is not None
+    assert len(calls) == 4, "1차 3회 + 재시도 1회 — 재시도를 N배로 늘리지 않는다"
+
+
+@pytest.mark.asyncio
+async def test_파싱_실패도_재시도_대상이다(monkeypatch):
+    """형식을 안 지킨 응답은 예외가 아니라 None으로 온다. 같은 프롬프트라도 다시 뽑으면
+    형식을 지킬 수 있으므로 이것도 재시도해야 한다."""
+    monkeypatch.setattr(settings, "selection_reason_best_of", 1)
+    monkeypatch.setattr(settings, "selection_reason_max_attempts", 2)
+    calls = _patch_chat(monkeypatch, ["{", _OK_JSON])
+
+    assert await srv._generate_one(["항산화"], "제목", "초록") is not None
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_재시도해도_소용없는_오류는_즉시_포기한다(monkeypatch):
+    """400은 몇 번을 던져도 같은 답이 온다. 재시도는 장애를 가리고 예산만 태운다."""
+    monkeypatch.setattr(settings, "selection_reason_best_of", 1)
+    monkeypatch.setattr(settings, "selection_reason_max_attempts", 5)
+    monkeypatch.setattr(srv, "is_retryable", lambda e: False)
+    calls = _patch_chat(monkeypatch, [RuntimeError("400 bad request"), _OK_JSON])
+
+    assert await srv._generate_one(["항산화"], "제목", "초록") is None
+    assert len(calls) == 1, "재시도하지 않아야 한다"
+
+
+@pytest.mark.asyncio
+async def test_예산_소진은_재시도하지_않고_위로_올린다(monkeypatch):
+    """예산은 시간이 지나도 안 돌아온다 — 사람이 올려주기 전까지는 같은 결과다.
+    배치 전체를 멈출 수 있게 예외를 그대로 올린다."""
+    monkeypatch.setattr(settings, "selection_reason_best_of", 2)
+    monkeypatch.setattr(settings, "selection_reason_max_attempts", 3)
+    calls = _patch_chat(monkeypatch, [srv.LLMBudgetExceededError("한도 초과")])
+
+    with pytest.raises(srv.LLMBudgetExceededError):
+        await srv._generate_one(["항산화"], "제목", "초록")
+    assert len(calls) == 2, "1차 병렬 2회에서 끝 — 재시도하지 않는다"
+
+
+@pytest.mark.asyncio
+async def test_끝내_실패하면_None이고_시도_횟수를_지킨다(monkeypatch):
+    """못 만들면 None. 카드는 초록으로 뜨고 검색 자체는 계속 동작해야 한다."""
+    monkeypatch.setattr(settings, "selection_reason_best_of", 1)
+    monkeypatch.setattr(settings, "selection_reason_max_attempts", 3)
+    calls = _patch_chat(monkeypatch, [RuntimeError("x")])
+
+    assert await srv._generate_one(["항산화"], "제목", "초록") is None
+    assert len(calls) == 3, "설정한 횟수만큼만 시도한다 — 무한 재시도는 안 된다"
+
+
+# ── 오류 분류 ────────────────────────────────────────────────────────────────
+
+
+def test_예산_소진은_재시도_대상이_아니다():
+    assert is_retryable(srv.LLMBudgetExceededError("x")) is False
+
+
+def test_클라이언트_오류는_재시도_대상이_아니다():
+    """400·401·403·404 — 우리 코드나 키가 틀린 것이라 다시 던져도 같다."""
+    import anthropic
+
+    for cls in (anthropic.BadRequestError, anthropic.AuthenticationError,
+                anthropic.PermissionDeniedError, anthropic.NotFoundError):
+        # __init__은 httpx Response를 요구하는데 그 타입이 SDK 버전마다 달라진다
+        # (1.x는 httpx2). isinstance 판정만 보는 함수이므로 __init__을 건너뛴다.
+        assert is_retryable(cls.__new__(cls)) is False, cls.__name__
+
+
+def test_그_밖의_오류는_재시도한다():
+    """429·5xx·타임아웃·연결 오류, 그리고 분류가 안 되는 것까지 — 기본값은 재시도다.
+    사유가 없는 것보다 한 번 더 던져보는 쪽이 낫다."""
+    assert is_retryable(RuntimeError("overloaded")) is True
+    assert is_retryable(TimeoutError()) is True

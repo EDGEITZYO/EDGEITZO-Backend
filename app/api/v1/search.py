@@ -80,7 +80,16 @@ async def search_papers(
 
 
 async def _fetch_reason_sources(db: AsyncSession, paper_ids: list[str]) -> dict[str, dict]:
-    """선정 사유 생성에 필요한 제목·초록만 조회. 초록이 없는 논문은 애초에 근거가 없어 제외."""
+    """선정 사유 생성에 필요한 제목·초록만 조회.
+
+    초록이 없는 논문도 빈 초록으로 담아 돌려준다. 예전에는 여기서 걸러 냈는데, 그러면
+    "초록이 없어서 못 만듦"과 "생성에 실패함"이 호출부에서 똑같이 '사유 없음'으로 보인다.
+    둘은 대응이 정반대다(데이터 보강 vs 버그 추적). 거르는 건 실제로 생성을 시도하는
+    쪽(get_or_create_reasons)이 하고, 거기서 이유를 stats에 남긴다.
+
+    조회 결과에 아예 없는 ID는 papers 테이블에 없는 논문이다 — 이것도 빠뜨리면 안 되는
+    신호라 호출부가 키 차집합으로 알아볼 수 있게 그대로 둔다.
+    """
     from sqlalchemy import select as _select
 
     from app.models.paper import Paper
@@ -93,9 +102,7 @@ async def _fetch_reason_sources(db: AsyncSession, paper_ids: list[str]) -> dict[
     )
     out: dict[str, dict] = {}
     for pid, title, title_en, abstract, abstract_en in rows:
-        text = abstract or abstract_en
-        if not text or not text.strip():
-            continue
+        text = abstract or abstract_en or ""
         out[pid] = {"title": title or title_en or pid, "abstract": text}
     return out
 
@@ -125,6 +132,15 @@ LLM 호출 없음). 새로 올라온 논문만 생성되므로 추가 호출 비
 
 **부분 실패** — 초록이 없거나 생성에 실패한 논문은 `reason=null`로 함께 반환됩니다.
 LLM 예산이 소진된 경우에도 500이 아니라 `reason=null`로 내려가며, 검색 기능 자체는 계속 동작합니다.
+
+**`reason=null`의 이유는 `meta`에 담겨 옵니다** — 셋은 화면에서 다르게 다뤄야 합니다.
+- `meta.no_abstract` — 초록이 없어 근거가 없는 논문. 코퍼스 1,000건 중 1건뿐이라 사실상
+  나오지 않습니다. 나오면 초록 대체 UI를 보여주세요.
+- `meta.not_found` — papers 테이블에 없는 ID. 코퍼스 밖 논문을 보냈다는 뜻입니다.
+- `meta.failed` — 초록이 있는데 생성에 실패한 것. **이건 서버 버그 신호입니다.**
+  일시적 오류는 서버가 이미 재시도하므로 여기 남는 건 재시도로도 못 살린 건들입니다.
+- `meta.budget_exceeded` — LLM 예산 소진. `true`면 이후 모든 요청이 사유 없이 내려가며,
+  운영자가 예산을 올려야 복구됩니다(`GET /health/llm-cost`로 확인).
 """,
 )
 async def selection_reasons(
@@ -134,7 +150,10 @@ async def selection_reasons(
     paper_ids = list(dict.fromkeys(request.paper_ids))  # 순서 유지 중복 제거
     sources = await _fetch_reason_sources(db, paper_ids)
 
-    reasons = await get_or_create_reasons(db, keywords=request.keywords, papers=sources)
+    stats: dict = {}
+    reasons = await get_or_create_reasons(
+        db, keywords=request.keywords, papers=sources, stats=stats
+    )
 
     items = [
         SelectionReasonItem(
@@ -147,11 +166,20 @@ async def selection_reasons(
         for pid, r in ((p, reasons.get(p)) for p in paper_ids)
     ]
     generated = sum(1 for i in items if i.reason and not i.cached)
+    # reason=null의 이유를 meta로 함께 내린다. 프런트가 "초록이 없어서 없는 것"과
+    # "만들었어야 하는데 실패한 것"을 구분해 표시할 수 있어야 하고, 후자가 0이 아니면
+    # 그건 고쳐야 할 버그라는 신호다.
     return success_response(
         data=SelectionReasonResponse(items=items),
         message="selection reasons resolved",
-        meta={"requested": len(paper_ids), "generated": generated,
-              "cached": sum(1 for i in items if i.cached)},
+        meta={
+            "requested": len(paper_ids), "generated": generated,
+            "cached": sum(1 for i in items if i.cached),
+            "no_abstract": stats.get("no_abstract") or [],
+            "not_found": [pid for pid in paper_ids if pid not in sources],
+            "failed": stats.get("failed") or [],
+            "budget_exceeded": bool(stats.get("budget_exceeded")),
+        },
     )
 
 
@@ -532,6 +560,9 @@ async def _collect_selection_reasons(result_state: SearchState) -> list[str]:
         return []
     keywords = list((result_state.get("filters") or {}).get("keywords") or [])
     if not keywords:
+        # 키워드 추출이 죽으면 여기가 조용히 비고 사유가 통째로 사라진다 — 실제로 그런
+        # 장애가 있었다(b0d9173). 원인이 위쪽인데 증상은 여기서 보이므로 흔적을 남긴다.
+        logger.warning("선정 사유 생략 — filters.keywords가 비어 있음 (키워드 추출 실패 의심)")
         return []
 
     head = [it.get("paper_id") for it in items[: settings.search_selection_reason_initial_count]]
@@ -539,16 +570,27 @@ async def _collect_selection_reasons(result_state: SearchState) -> list[str]:
     if not head:
         return []
 
+    stats: dict = {}
     try:
         # 그래프 실행에 쓰인 세션과 분리한다 — 스트리밍 제너레이터는 요청 스코프보다
         # 오래 살아서, 요청 세션을 여기서 다시 쓰면 이미 닫힌 세션을 만질 수 있다.
         async with AsyncSessionLocal() as db:
             sources = await _fetch_reason_sources(db, head)
-            reasons = await get_or_create_reasons(db, keywords=keywords, papers=sources)
+            reasons = await get_or_create_reasons(
+                db, keywords=keywords, papers=sources, stats=stats
+            )
     except Exception:
         # 사유는 부가 정보다. 실패해도 이미 나간 카드(done)는 유효하므로 조용히 끝낸다.
         logger.warning("SSE 선정 사유 생성 실패", exc_info=True)
         return []
+
+    # 초록이 있는데 못 만든 건 이 기능의 실패다. SSE에는 사유 없는 논문의 이벤트가 아예
+    # 안 나가 프런트에서는 그냥 '없음'으로 보이므로, 서버 로그에라도 남겨야 추적이 된다.
+    if stats.get("failed"):
+        logger.warning(
+            "선정 사유 생성 실패 %d/%d건 (paper_ids=%s)",
+            len(stats["failed"]), len(head), stats["failed"],
+        )
 
     frames: list[str] = []
     for pid in head:

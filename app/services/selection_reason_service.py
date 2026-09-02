@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import settings
 from app.models.paper_selection_reason import PaperSelectionReason
-from app.services.llm.client import LLMBudgetExceededError, chat
+from app.services.llm.client import LLMBudgetExceededError, chat, is_retryable
 
 logger = logging.getLogger(__name__)
 
@@ -291,28 +292,29 @@ def _system_prompt() -> str:
 async def _draw_one(
     keywords: list[str], title: str, abstract: str
 ) -> Optional[tuple[str, Optional[int], Optional[int], bool]]:
-    """LLM 1회 호출 → (본문, 강조시작, 강조끝, 완결여부). 실패하면 None."""
-    try:
-        resp = await chat(
-            messages=[{
-                "role": "user",
-                "content": f"[System]\n{_system_prompt()}\n\n[User]\n"
-                           f"{_build_user_prompt(keywords, title, abstract)}",
-            }],
-            model=_MODEL,
-            max_tokens=1500,
-            # 실측: adaptive를 켜두면 한 건이 thinking에만 4,000토큰을 쓰고 max_tokens에
-            # 걸려 text 블록 없이 끝났다(전량 실패). 비용도 3배가 된다.
-            thinking={"type": "disabled"},
-            # Best-of-N은 같은 프롬프트를 여러 번 던져 서로 다른 후보를 얻는 방식이라,
-            # 응답 캐시가 켜져 있으면 N개가 전부 같은 값이 되어 의미가 없어진다.
-            use_cache=False,
-        )
-    except LLMBudgetExceededError:
-        raise
-    except Exception:
-        logger.warning("선정 사유 생성 실패 (title=%s)", title[:40], exc_info=True)
-        return None
+    """LLM 1회 호출 → (본문, 강조시작, 강조끝, 완결여부).
+
+    파싱까지 실패하면 None. **API 예외는 삼키지 않고 그대로 올린다** — 재시도할지 말지는
+    호출부(_generate_one)가 예외 종류를 보고 정해야 하는데, 여기서 None으로 뭉개면 그
+    구분이 사라진다. 예전에는 여기서 전부 삼켰고, 그래서 429 한 번에 사유가 영영 없었다.
+
+    None(파싱 실패)도 재시도 대상이다 — 같은 프롬프트라도 다시 뽑으면 형식을 지킬 수 있다.
+    """
+    resp = await chat(
+        messages=[{
+            "role": "user",
+            "content": f"[System]\n{_system_prompt()}\n\n[User]\n"
+                       f"{_build_user_prompt(keywords, title, abstract)}",
+        }],
+        model=_MODEL,
+        max_tokens=1500,
+        # 실측: adaptive를 켜두면 한 건이 thinking에만 4,000토큰을 쓰고 max_tokens에
+        # 걸려 text 블록 없이 끝났다(전량 실패). 비용도 3배가 된다.
+        thinking={"type": "disabled"},
+        # Best-of-N은 같은 프롬프트를 여러 번 던져 서로 다른 후보를 얻는 방식이라,
+        # 응답 캐시가 켜져 있으면 N개가 전부 같은 값이 되어 의미가 없어진다.
+        use_cache=False,
+    )
 
     sentences = _extract_sentences(resp.text.strip())
     if not sentences:
@@ -350,8 +352,14 @@ def _pick_best(candidates: list[tuple[str, Optional[int], Optional[int], bool]])
     return min(candidates, key=lambda c: (complete_first(c), abs(len(c[0]) - center)))
 
 
-async def _generate_one(keywords: list[str], title: str, abstract: str) -> Optional[SelectionReason]:
-    """Best-of-N — 같은 프롬프트를 N번 **동시에** 던지고 코드가 가장 좋은 후보를 고른다.
+async def _draw_batch(
+    keywords: list[str], title: str, abstract: str, n: int
+) -> SelectionReason | tuple[None, list[BaseException]]:
+    """Best-of-N 한 라운드 — 같은 프롬프트를 N번 **동시에** 던지고 가장 좋은 후보를 고른다.
+
+    성공하면 SelectionReason, 한 개도 못 건지면 (None, 이번 라운드에서 난 예외들).
+    예외를 같이 돌려주는 이유는 호출부가 "다시 시도해 볼 만한 실패인가"를 판단해야 하기
+    때문이다 — 400을 세 번 던지는 것은 재시도가 아니라 낭비다.
 
     앞서 쓰던 "결과를 보고 되먹여 다시 쓰게 하는" 순차 재시도보다 나은 이유는 두 가지다.
 
@@ -363,29 +371,82 @@ async def _generate_one(keywords: list[str], title: str, abstract: str) -> Optio
 
     채점자가 학습된 reward model이 아니라 len()이라 정확하고 공짜라는 점에서, 이 문제는
     Best-of-N이 특히 잘 듣는 형태다.
+
+    다만 이건 **품질**을 고르는 장치다. 장애를 막는 것은 호출부의 순차 재시도가 한다.
     """
-    n = max(1, settings.selection_reason_best_of)
     draws = await asyncio.gather(*(
         _draw_one(keywords, title, abstract) for _ in range(n)
     ), return_exceptions=True)
 
-    candidates = []
+    candidates: list[tuple[str, Optional[int], Optional[int], bool]] = []
+    errors: list[BaseException] = []
     for d in draws:
         if isinstance(d, LLMBudgetExceededError):
             raise d
-        if isinstance(d, BaseException) or d is None:
+        if isinstance(d, BaseException):
+            errors.append(d)
+            continue
+        if d is None:  # 파싱 실패 — 다시 뽑으면 달라질 수 있다
             continue
         candidates.append(d)
 
-    if not candidates:
-        return None
+    if candidates:
+        body, hl_start, hl_end, _ = _pick_best(candidates)
+        return SelectionReason(
+            paper_id="", reason=body,
+            highlight_start=hl_start, highlight_end=hl_end,
+            char_count=len(body), cached=False,
+        )
+    return None, errors
 
-    body, hl_start, hl_end, _ = _pick_best(candidates)
-    return SelectionReason(
-        paper_id="", reason=body,
-        highlight_start=hl_start, highlight_end=hl_end,
-        char_count=len(body), cached=False,
-    )
+
+async def _generate_one(keywords: list[str], title: str, abstract: str) -> Optional[SelectionReason]:
+    """초록이 있으면 사유를 만들어 낸다. 한 번도 못 건지면 간격을 두고 다시 시도한다.
+
+    왜 병렬 Best-of-N만으로는 부족한가 — N개를 **동시에** 던지기 때문이다. 429·과부하·
+    타임아웃은 그 순간 전체에 걸리므로 N개가 사이좋게 같이 죽는다. 즉 병렬 N은 품질을
+    고르는 장치지 장애를 막는 장치가 아니다. 장애를 막으려면 시간을 띄워야 한다.
+
+    재시도 뽑기는 1회다. 이 단계의 목적은 "가장 좋은 것 고르기"가 아니라 "무엇이든
+    건지기"이고, 429가 나는 와중에 N개를 또 던지면 상황을 악화시킨다.
+
+    재시도하지 않는 두 가지:
+      · 예산 소진 — 시간이 지나도 안 돌아온다. 즉시 위로 올려 배치 전체를 멈춘다.
+      · 400/401/403/404 — 몇 번을 던져도 같은 답이 온다. 재시도는 장애를 가릴 뿐이다.
+    """
+    attempts = max(1, settings.selection_reason_max_attempts)
+    base = settings.selection_reason_retry_base_seconds
+
+    for attempt in range(attempts):
+        if attempt:
+            # 지수 백오프 + 지터. 지터가 없으면 같은 순간 실패한 동시 호출 10~20개가
+            # 다시 같은 순간에 몰려 429를 그대로 재현한다.
+            delay = base * (2 ** (attempt - 1))
+            await asyncio.sleep(delay + random.uniform(0, delay / 2))
+
+        n = 1 if attempt else max(1, settings.selection_reason_best_of)
+        result = await _draw_batch(keywords, title, abstract, n)
+        if isinstance(result, SelectionReason):
+            if attempt:
+                logger.info("선정 사유 재시도 %d회째에 성공 (title=%s)", attempt + 1, title[:40])
+            return result
+
+        _, errors = result
+        fatal = next((e for e in errors if not is_retryable(e)), None)
+        if fatal is not None:
+            logger.error(
+                "선정 사유 생성 불가 — 재시도해도 같은 결과인 오류 (title=%s)",
+                title[:40], exc_info=fatal,
+            )
+            return None
+        if attempt == attempts - 1:
+            logger.warning(
+                "선정 사유 생성 실패 — %d회 시도 모두 실패 (title=%s)",
+                attempts, title[:40],
+                exc_info=errors[0] if errors else None,
+            )
+
+    return None
 
 
 async def get_or_create_reasons(
@@ -394,13 +455,25 @@ async def get_or_create_reasons(
     keywords: list[str],
     papers: dict[str, dict],
     concurrency: Optional[int] = None,
+    stats: Optional[dict] = None,
 ) -> dict[str, SelectionReason]:
     """캐시에 있으면 그대로, 없는 것만 생성해서 저장한다.
 
     papers: {paper_id: {"title": ..., "abstract": ...}} — 지금 화면에 보이는 논문들.
     "상위 N건"이 아니라 "보이는 것" 기준으로 호출하면 정렬·필터를 어떻게 바꿔도
     화면에 사유가 있는 카드와 없는 카드가 섞이지 않는다.
+
+    stats: 넘기면 왜 빠졌는지를 채워 준다 — {"no_abstract": [...], "failed": [...],
+    "budget_exceeded": bool, "no_keyword": bool}. 반환값만 보면 "사유 없음"이 초록이
+    없어서인지 생성에 실패해서인지 예산이 말라서인지 구분이 안 되는데, 셋은 대응이 전혀
+    다르다(각각 데이터 보강 / 버그 / 예산 증액). 반환 타입을 바꾸지 않으려고 out-param으로 둔다.
     """
+    if stats is not None:
+        stats.setdefault("no_abstract", [])
+        stats.setdefault("failed", [])
+        stats.setdefault("budget_exceeded", False)
+        stats.setdefault("no_keyword", False)
+
     if not papers:
         return {}
     # 화면에 보이는 만큼(기본 10건)을 한 라운드에 끝내야 스켈레톤이 두 번 나눠 채워지지 않는다.
@@ -408,6 +481,11 @@ async def get_or_create_reasons(
 
     keyword_key = build_keyword_key(keywords)
     if not keyword_key:
+        # 키워드가 정규화 후 통째로 사라진 경우("논문", "연구" 같은 것만 넘어온 경우).
+        # 조용히 빈 dict를 돌려주면 화면 전체가 사유 없이 뜨는데 원인을 알 길이 없다.
+        logger.warning("선정 사유 건너뜀 — 정규화 후 남는 키워드가 없음 (원본=%s)", keywords)
+        if stats is not None:
+            stats["no_keyword"] = True
         return {}
 
     paper_ids = list(papers.keys())
@@ -426,10 +504,16 @@ async def get_or_create_reasons(
             char_count=row.char_count, cached=True,
         )
 
-    missing = [
-        pid for pid in paper_ids
-        if pid not in out and (papers[pid].get("abstract") or "").strip()
-    ]
+    missing = []
+    for pid in paper_ids:
+        if pid in out:
+            continue
+        if not (papers[pid].get("abstract") or "").strip():
+            # 근거가 없으니 만들 수 없다. 실패가 아니라 데이터 결손이다 — 구분해서 남긴다.
+            if stats is not None:
+                stats["no_abstract"].append(pid)
+            continue
+        missing.append(pid)
     if not missing:
         return out
 
@@ -445,19 +529,26 @@ async def get_or_create_reasons(
                 r = await _generate_one(
                     keywords, papers[pid].get("title") or pid, papers[pid]["abstract"]
                 )
-            except LLMBudgetExceededError:
+            except LLMBudgetExceededError as e:
                 # 예산이 마르면 남은 건 시도하지 않는다. 사유 없이 카드만 뜨는 건
                 # 허용되는 열화지만, 검색 자체가 죽는 건 아니어야 한다.
+                #
+                # error 레벨인 이유: 이건 일시적 실패가 아니라 사람이 예산을 올려주기
+                # 전까지 기능이 영구히 죽는 상태다. warning으로 두면 로그에 묻힌다.
                 budget_hit = True
-                logger.warning("LLM 예산 소진 — 선정 사유 생성 중단")
+                logger.error("LLM 예산 소진 — 선정 사유 생성 전면 중단: %s", e)
                 return pid, None
             return pid, r
 
     results = await asyncio.gather(*(one(p) for p in missing))
+    if stats is not None:
+        stats["budget_exceeded"] = budget_hit
 
     to_store = []
     for pid, r in results:
         if r is None:
+            if stats is not None and not budget_hit:
+                stats["failed"].append(pid)
             continue
         r.paper_id = pid
         out[pid] = r
