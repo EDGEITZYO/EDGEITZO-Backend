@@ -3,6 +3,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import date
+from functools import lru_cache
 from typing import Optional
 
 from app.core.redis import get_redis
@@ -109,6 +110,48 @@ def _rejects_sampling_params(model: str) -> bool:
     return model.startswith(_NO_SAMPLING_PARAMS_MODELS)
 
 
+@lru_cache(maxsize=1)
+def _client():
+    """AsyncAnthropic 하나를 재사용한다.
+
+    예전에는 호출마다 새로 만들었다. 선정 사유는 한 검색에 동시 호출이 10~20개씩 나가는데,
+    그때마다 클라이언트가 새로 생기면 커넥션 풀도 매번 새로 생겨 TCP·TLS 핸드셰이크를
+    처음부터 다시 한다. 연결 오류가 늘어나는 것도 여기서 온다.
+
+    max_retries를 명시하는 이유: SDK가 429·5xx·연결 오류를 자체 백오프로 재시도해 주는데,
+    그 기본값(2)에 기대면 SDK 버전이 바뀔 때 조용히 달라진다. anthropic은 requirements.txt에
+    핀이 없어 배포마다 최신이 깔린다 — 실제로 1.2.0에서 temperature 인자가 사라져 검색이
+    통째로 죽은 적이 있다(b0d9173). 기본값에 의존하지 않는다.
+    """
+    import anthropic
+    return anthropic.AsyncAnthropic(
+        api_key=settings.anthropic_api_key,
+        timeout=settings.llm_timeout_seconds,
+        max_retries=settings.llm_max_retries,
+    )
+
+
+def is_retryable(exc: BaseException) -> bool:
+    """이 예외를 다시 시도해 볼 만한가.
+
+    호출부(선정 사유 등)가 anthropic을 직접 import하지 않고도 재시도를 판단할 수 있게
+    여기서 answer한다 — 예외 타입을 아는 곳은 이 모듈뿐이다.
+
+    SDK가 이미 429·5xx·연결 오류를 재시도한 뒤라 여기까지 온 건 "SDK 재시도까지 소진"을
+    뜻한다. 그래도 초 단위로 띄워 다시 던지면 살아나는 경우가 있어 재시도 대상으로 둔다.
+    반대로 400·401·403·404는 몇 번을 던져도 같은 답이 오므로 즉시 포기한다 —
+    이건 우리 코드나 키가 잘못된 것이고, 재시도는 장애를 가릴 뿐이다.
+    """
+    import anthropic
+
+    if isinstance(exc, LLMBudgetExceededError):
+        return False  # 예산은 시간이 지나도 안 돌아온다. 사람이 올려줘야 한다.
+    if isinstance(exc, (anthropic.BadRequestError, anthropic.AuthenticationError,
+                        anthropic.PermissionDeniedError, anthropic.NotFoundError)):
+        return False
+    return True
+
+
 async def _call_claude(
     messages: list[dict],
     model: str,
@@ -116,11 +159,7 @@ async def _call_claude(
     max_tokens: int,
     thinking: Optional[dict] = None,
 ) -> tuple[str, int, int]:
-    import anthropic
-    client = anthropic.AsyncAnthropic(
-        api_key=settings.anthropic_api_key,
-        timeout=settings.llm_timeout_seconds,
-    )
+    client = _client()
     # 이름있는 인자가 아니라 extra_body로 보낸다 (위 주석 2번 참고).
     sampling_kwargs = (
         {} if _rejects_sampling_params(model) else {"extra_body": {"temperature": temperature}}

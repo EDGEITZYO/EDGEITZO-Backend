@@ -90,6 +90,13 @@ class Settings(BaseSettings):
     llm_model_quality: str = "claude-sonnet-5"
     llm_budget_total_usd: float = 40.0
     llm_timeout_seconds: int = 120
+    # SDK가 429·5xx·연결 오류를 자체 백오프로 재시도하는 횟수. SDK 기본값과 같은 2지만,
+    # 기본값에 기대면 버전이 바뀔 때 조용히 달라진다 — 명시해서 고정한다.
+    #
+    # 올리지 말 것. 선정 사유에는 이 위로 간격을 둔 재시도가 한 겹 더 있어서
+    # (selection_reason_max_attempts), 둘이 곱해진다 — 지금도 장애 시 논문 1건당 최대
+    # 12회다. 여기를 키우면 429가 난 서버를 우리가 더 두들기는 꼴이 된다.
+    llm_max_retries: int = 2
     graph_timeout_seconds: int = 300
 
     # CrossRef polite mode
@@ -104,6 +111,18 @@ class Settings(BaseSettings):
     # N개를 병렬로 던지므로 지연은 1회 호출과 거의 같고, 비용만 N배에 가까워진다.
     # 실측(23건): 순차 재시도 적중 26%·14초·$0.0111 vs Best-of-2 적중 43%·8초·$0.0123.
     selection_reason_best_of: int = 2
+    # 초록이 있는데도 사유가 안 나오는 것은 이 기능의 실패다. Best-of-N은 N개를 **동시에**
+    # 던지므로 429·과부하·타임아웃처럼 순간적인 장애에는 N개가 함께 죽는다 — 병렬 N은
+    # 품질을 고르는 장치지 장애를 막는 장치가 아니다. 그래서 "한 번도 못 건졌다"일 때만
+    # 간격을 두고 순차로 다시 시도한다(첫 시도 포함 횟수).
+    #
+    # 재시도는 뽑기를 1회만 한다. 이 단계의 목적은 "가장 좋은 것을 고르기"가 아니라
+    # "무엇이든 건지기"이고, 429가 나는 중에 N개를 또 던지면 상황을 악화시킨다.
+    selection_reason_max_attempts: int = 3
+    # 재시도 간격의 기준값. 시도마다 2배로 늘어나고 지터가 붙는다(0.5 → 1 → 2초).
+    # SDK의 즉시 백오프와 달리 여기는 초 단위로 띄워야 의미가 있다 — 같은 순간에 몰린
+    # 동시 호출 10~20개가 흩어질 시간을 주는 게 목적이다.
+    selection_reason_retry_base_seconds: float = 0.5
     # 선정 사유 길이 정책 — 명세가 무엇을 요구하느냐에 맞춰 고른다.
     #   "center"    : 목표 구간 한가운데(175자)를 겨냥. 명세가 "150~200자"처럼 범위일 때.
     #                 실측 20건: 준수 90%, 중앙값 176자, 실제 135~195자.
