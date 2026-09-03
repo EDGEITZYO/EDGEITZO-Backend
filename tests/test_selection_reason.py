@@ -418,3 +418,121 @@ def test_그_밖의_오류는_재시도한다():
     사유가 없는 것보다 한 번 더 던져보는 쪽이 낫다."""
     assert is_retryable(RuntimeError("overloaded")) is True
     assert is_retryable(TimeoutError()) is True
+
+
+def test_안전_거부는_재시도_대상이_아니다():
+    """같은 모델로는 몇 번을 던져도 같은 거부가 온다(실측 3논문×6회=18회 전부).
+    살릴 방법은 재시도가 아니라 모델 교체다."""
+    assert is_retryable(srv.LLMRefusalError("거부")) is False
+
+
+# ── 안전 거부 — 상위 모델이 거부하면 대체 모델로 살린다 ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_상위모델이_거부하면_대체모델로_살린다(monkeypatch):
+    """실제로 나온 장애 — 바이오에어로졸·병원체 주제 학위논문에서 Sonnet 5가 거부해
+    한 검색 결과 10건 중 3건의 reason이 통째로 null로 내려갔다.
+
+    거부는 모델마다 판정이 달라, 같은 논문을 Haiku로 던지면 정상 생성된다.
+    """
+    monkeypatch.setattr(settings, "selection_reason_best_of", 2)
+    monkeypatch.setattr(settings, "selection_reason_max_attempts", 3)
+    calls = _patch_chat(monkeypatch, [
+        srv.LLMRefusalError("거부"), srv.LLMRefusalError("거부"),  # 1차: 상위 모델 2개 다 거부
+        _OK_JSON,                                                  # 대체 모델은 통과
+    ])
+
+    result = await srv._generate_one(["바이오에어로졸"], "제목", "초록")
+
+    assert result is not None, "대체 모델로 살렸어야 한다"
+    assert len(calls) == 4, "1차 병렬 2회 + 대체 모델 병렬 2회"
+    assert calls[0]["model"] == srv._MODEL
+    assert calls[-1]["model"] == srv._FALLBACK_MODEL
+
+
+@pytest.mark.asyncio
+async def test_대체모델도_Best_of_N으로_뽑는다(monkeypatch):
+    """위쪽 재시도(n=1)와 규칙이 다르다 — 거부는 부하 문제가 아니라 대체 모델이 멀쩡하므로
+    뽑기를 아낄 이유가 없다. Haiku는 길이·문장수 준수율이 낮아 1회만 뽑으면 3문장 중
+    1~2문장만 남는 결과가 자주 나온다."""
+    monkeypatch.setattr(settings, "selection_reason_best_of", 3)
+    monkeypatch.setattr(settings, "selection_reason_max_attempts", 3)
+    calls = _patch_chat(monkeypatch, [
+        srv.LLMRefusalError("거부"), srv.LLMRefusalError("거부"), srv.LLMRefusalError("거부"),
+        _OK_JSON,
+    ])
+
+    assert await srv._generate_one(["항산화"], "제목", "초록") is not None
+    fb_calls = [c for c in calls if c["model"] == srv._FALLBACK_MODEL]
+    assert len(fb_calls) == 3, "대체 모델도 best_of만큼 뽑아야 한다"
+
+
+@pytest.mark.asyncio
+async def test_대체모델_뽑기중_하나만_성공해도_살린다(monkeypatch):
+    """Best-of-N의 목적 그대로 — 대체 모델 뽑기 하나가 실패해도 나머지로 사유가 나온다."""
+    monkeypatch.setattr(settings, "selection_reason_best_of", 2)
+    monkeypatch.setattr(settings, "selection_reason_max_attempts", 3)
+
+    calls = []
+    seq = [srv.LLMRefusalError("거부"), srv.LLMRefusalError("거부"),  # 상위 모델
+           RuntimeError("타임아웃"), _OK_JSON]                        # 대체 모델: 1실패 1성공
+
+    async def fake_chat(**kwargs):
+        calls.append(kwargs)
+        item = seq.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return _Resp(item)
+
+    monkeypatch.setattr(srv, "chat", fake_chat)
+    monkeypatch.setattr(settings, "selection_reason_retry_base_seconds", 0.0)
+
+    assert await srv._generate_one(["항산화"], "제목", "초록") is not None
+    assert len(calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_거부는_백오프_재시도를_돌지_않는다(monkeypatch):
+    """같은 모델로 다시 던지는 건 지연과 비용만 늘린다 — 곧바로 모델을 바꿔야 한다."""
+    monkeypatch.setattr(settings, "selection_reason_best_of", 1)
+    monkeypatch.setattr(settings, "selection_reason_max_attempts", 5)
+    calls = _patch_chat(monkeypatch, [srv.LLMRefusalError("거부"), _OK_JSON])
+
+    assert await srv._generate_one(["항산화"], "제목", "초록") is not None
+    assert len(calls) == 2, "상위 모델 1회 + 대체 모델 1회 — 같은 모델 재시도는 없다"
+
+
+@pytest.mark.asyncio
+async def test_두_모델이_모두_거부하면_예외를_올린다(monkeypatch):
+    """이건 버그가 아니라 '이 논문은 못 만든다'이다. 호출부가 meta.failed(버그 신호)와
+    갈라 기록할 수 있게 None이 아니라 예외로 구분해 올린다."""
+    monkeypatch.setattr(settings, "selection_reason_best_of", 1)
+    monkeypatch.setattr(settings, "selection_reason_max_attempts", 3)
+    calls = _patch_chat(monkeypatch, [srv.LLMRefusalError("거부")])
+
+    with pytest.raises(srv.LLMRefusalError):
+        await srv._generate_one(["항산화"], "제목", "초록")
+    assert len(calls) == 2, "상위 1회 + 대체 1회에서 끝"
+
+
+@pytest.mark.asyncio
+async def test_한쪽만_거부하면_성공한_뽑기를_쓴다(monkeypatch):
+    """Best-of-N 중 하나만 거부된 경우 — 건진 후보가 있으면 대체 모델을 부를 이유가 없다."""
+    monkeypatch.setattr(settings, "selection_reason_best_of", 2)
+    monkeypatch.setattr(settings, "selection_reason_max_attempts", 3)
+
+    calls = []
+    seq = [srv.LLMRefusalError("거부"), _OK_JSON]
+
+    async def fake_chat(**kwargs):
+        calls.append(kwargs)
+        item = seq.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return _Resp(item)
+
+    monkeypatch.setattr(srv, "chat", fake_chat)
+
+    assert await srv._generate_one(["항산화"], "제목", "초록") is not None
+    assert len(calls) == 2, "대체 모델을 부르지 않아야 한다"
