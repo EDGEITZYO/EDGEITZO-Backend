@@ -38,6 +38,23 @@ class LLMBudgetExceededError(Exception):
     다음 달 1일에 저절로 풀린다. 당장 풀어야 하면 POST /health/llm-cost/reset.
     """
 
+
+class LLMRefusalError(Exception):
+    """모델이 안전 정책상 응답을 거부했을 때(`stop_reason == "refusal"`).
+
+    text 블록이 아예 없이 끝나므로 겉보기 증상은 "응답에 text가 없음"과 같지만, 원인도
+    대응도 전혀 다르다. 그래서 일반 ValueError와 구분해 따로 던진다.
+
+    ★ **같은 모델로 다시 던지면 100% 같은 답이 온다.** 실측: 문제 논문 3건 × 6회 =
+      18회 전부 refusal. 일시적 오류가 아니므로 재시도 대상이 아니다(is_retryable=False).
+      백오프를 넣어 4번 던져 봤자 지연과 비용만 늘고 결과는 같다.
+
+    ★ 반면 **모델을 바꾸면 통과하는 경우가 많다.** 거부 판정은 모델마다 다르다 —
+      실측에서 Sonnet 5가 거부한 논문(바이오에어로졸·병원체 검출 주제의 학위논문)을
+      Haiku 4.5는 3건 × 3회 전부 정상 생성했다. 그래서 호출부가 이 예외를 잡아
+      다른 모델로 한 번 더 시도하는 것이 유효한 대응이다.
+    """
+
 # 모델별 단가 (USD per 1M tokens) — 확정 모델 결정 후 갱신
 _PRICING: dict[str, dict[str, float]] = {
     "claude-sonnet-4-5": {"input": 3.0, "output": 15.0},
@@ -166,6 +183,10 @@ def is_retryable(exc: BaseException) -> bool:
 
     if isinstance(exc, LLMBudgetExceededError):
         return False  # 예산은 시간이 지나도 안 돌아온다. 사람이 올려줘야 한다.
+    if isinstance(exc, LLMRefusalError):
+        # 거부 판정은 (모델, 프롬프트)의 함수라 같은 모델로는 몇 번을 던져도 같다.
+        # 살리려면 재시도가 아니라 **다른 모델**로 바꿔야 한다 — LLMRefusalError 참고.
+        return False
     if isinstance(exc, (anthropic.BadRequestError, anthropic.AuthenticationError,
                         anthropic.PermissionDeniedError, anthropic.NotFoundError)):
         return False
@@ -214,6 +235,11 @@ async def _call_claude(
             "LLM 응답이 max_tokens(%d)에 걸려 중간에 잘림 — model=%s output_tokens=%d",
             max_tokens, model, resp.usage.output_tokens,
         )
+    # 안전 정책상 거부. text 블록 없이 끝나는 건 아래 ValueError와 같지만, 재시도해도
+    # 소용없고 모델을 바꾸면 통과한다는 점이 달라 호출부가 구분할 수 있어야 한다.
+    if resp.stop_reason == "refusal":
+        raise LLMRefusalError(f"모델이 응답을 거부함 (model={model})")
+
     # 위 모델들은 기본적으로 adaptive thinking이 켜져 있어 thinking 블록이 먼저 오므로
     # content[0]이 아니라 text 타입 블록을 명시적으로 찾아야 함
     text_block = next((b for b in resp.content if b.type == "text"), None)

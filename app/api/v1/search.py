@@ -139,6 +139,10 @@ LLM 예산이 소진된 경우에도 500이 아니라 `reason=null`로 내려가
 - `meta.not_found` — papers 테이블에 없는 ID. 코퍼스 밖 논문을 보냈다는 뜻입니다.
 - `meta.failed` — 초록이 있는데 생성에 실패한 것. **이건 서버 버그 신호입니다.**
   일시적 오류는 서버가 이미 재시도하므로 여기 남는 건 재시도로도 못 살린 건들입니다.
+- `meta.refused` — 논문 주제가 LLM 안전 정책에 걸려 모델이 응답을 거부한 것
+  (병원체·바이오에어로졸 검출 등). 서버가 이미 대체 모델로 한 번 더 시도한 뒤이므로
+  **여기 남은 건은 재시도해도 달라지지 않습니다.** `failed`와 달리 버그가 아니니
+  에러로 다루지 말고 `no_abstract`와 같은 UI(사유 없이 초록/제목만)로 처리하세요.
 - `meta.budget_exceeded` — LLM 예산 소진. `true`면 이후 모든 요청이 사유 없이 내려가며,
   운영자가 예산을 올려야 복구됩니다(`GET /health/llm-cost`로 확인).
 """,
@@ -178,6 +182,7 @@ async def selection_reasons(
             "no_abstract": stats.get("no_abstract") or [],
             "not_found": [pid for pid in paper_ids if pid not in sources],
             "failed": stats.get("failed") or [],
+            "refused": stats.get("refused") or [],
             "budget_exceeded": bool(stats.get("budget_exceeded")),
         },
     )
@@ -590,6 +595,12 @@ async def _collect_selection_reasons(result_state: SearchState) -> list[str]:
         logger.warning(
             "선정 사유 생성 실패 %d/%d건 (paper_ids=%s)",
             len(stats["failed"]), len(head), stats["failed"],
+        )
+    # 거부는 버그가 아니라 "이 논문은 못 만든다"이므로 실패와 같은 레벨로 올리지 않는다.
+    if stats.get("refused"):
+        logger.info(
+            "선정 사유 모델 거부 %d/%d건 (paper_ids=%s)",
+            len(stats["refused"]), len(head), stats["refused"],
         )
 
     frames: list[str] = []

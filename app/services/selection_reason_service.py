@@ -32,7 +32,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import settings
 from app.models.paper_selection_reason import PaperSelectionReason
-from app.services.llm.client import LLMBudgetExceededError, chat, is_retryable
+from app.services.llm.client import (
+    LLMBudgetExceededError,
+    LLMRefusalError,
+    chat,
+    is_retryable,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +46,19 @@ logger = logging.getLogger(__name__)
 # 논문에서 억지 연결을 하지 않는 판단 — 은 작은 모델이 자주 실패하고, 실패하면 없는 연결을
 # 지어내는 형태로 나타나 "신뢰성을 높인다"는 이 기능의 목적을 정면으로 훼손한다.
 _MODEL = settings.llm_model_quality
+
+# 상위 모델이 안전 정책상 거부(stop_reason="refusal")한 논문에만 쓰는 대체 모델.
+#
+# 거부 판정은 모델마다 다르다. 실측(코퍼스 80건 표본)에서 Sonnet 5의 거부율은 1.2%인데,
+# 병원체·바이오에어로졸 검출을 다루는 학위논문에 몰려 있다 — 주제가 그렇다 보니 한 검색
+# 결과 10건 중 3건이 한꺼번에 거부되는 일이 실제로 일어났다. 같은 논문 3건을 Haiku 4.5로
+# 던지면 3×3회 전부 정상 생성된다.
+#
+# 품질은 상위 모델보다 낮다(문장 수·길이 준수율이 떨어져 3문장 중 1~2문장만 남는 경우가
+# 있다). 그래서 기본으로 쓰지 않고 **거부당한 건에만** 쓴다 — 짧은 사유라도 있는 편이
+# 카드가 통째로 비는 것보다 낫다는 판단이고, 이건 이 기능 전체의 열화가 아니라 1% 남짓의
+# 국소 구제다.
+_FALLBACK_MODEL = settings.llm_model_fast
 
 # 프롬프트 규칙을 고치면 반드시 올릴 것. 캐시 키에 들어가 있어 기존 행이 자동으로 무효화된다.
 PROMPT_VERSION = "v5"
@@ -290,7 +308,7 @@ def _system_prompt() -> str:
 
 
 async def _draw_one(
-    keywords: list[str], title: str, abstract: str
+    keywords: list[str], title: str, abstract: str, model: str = _MODEL
 ) -> Optional[tuple[str, Optional[int], Optional[int], bool]]:
     """LLM 1회 호출 → (본문, 강조시작, 강조끝, 완결여부).
 
@@ -314,7 +332,7 @@ async def _draw_one(
         # 여전히 유효하고, 올리면 이미 만들어둔 사유를 전부 돈 주고 다시 만들게 된다.
         system=_system_prompt(),
         cache_system=True,
-        model=_MODEL,
+        model=model,
         max_tokens=1500,
         # 실측: adaptive를 켜두면 한 건이 thinking에만 4,000토큰을 쓰고 max_tokens에
         # 걸려 text 블록 없이 끝났다(전량 실패). 비용도 3배가 된다.
@@ -361,7 +379,7 @@ def _pick_best(candidates: list[tuple[str, Optional[int], Optional[int], bool]])
 
 
 async def _draw_batch(
-    keywords: list[str], title: str, abstract: str, n: int
+    keywords: list[str], title: str, abstract: str, n: int, model: str = _MODEL
 ) -> SelectionReason | tuple[None, list[BaseException]]:
     """Best-of-N 한 라운드 — 같은 프롬프트를 N번 **동시에** 던지고 가장 좋은 후보를 고른다.
 
@@ -383,7 +401,7 @@ async def _draw_batch(
     다만 이건 **품질**을 고르는 장치다. 장애를 막는 것은 호출부의 순차 재시도가 한다.
     """
     draws = await asyncio.gather(*(
-        _draw_one(keywords, title, abstract) for _ in range(n)
+        _draw_one(keywords, title, abstract, model) for _ in range(n)
     ), return_exceptions=True)
 
     candidates: list[tuple[str, Optional[int], Optional[int], bool]] = []
@@ -421,6 +439,9 @@ async def _generate_one(keywords: list[str], title: str, abstract: str) -> Optio
     재시도하지 않는 두 가지:
       · 예산 소진 — 시간이 지나도 안 돌아온다. 즉시 위로 올려 배치 전체를 멈춘다.
       · 400/401/403/404 — 몇 번을 던져도 같은 답이 온다. 재시도는 장애를 가릴 뿐이다.
+
+    안전 거부(LLMRefusalError)는 셋째 경우다. 시간을 띄워도 소용없지만 **모델을 바꾸면**
+    통과하므로, 포기하지 않고 대체 모델로 한 번 더 던진다(_FALLBACK_MODEL 참고).
     """
     attempts = max(1, settings.selection_reason_max_attempts)
     base = settings.selection_reason_retry_base_seconds
@@ -440,6 +461,42 @@ async def _generate_one(keywords: list[str], title: str, abstract: str) -> Optio
             return result
 
         _, errors = result
+        if any(isinstance(e, LLMRefusalError) for e in errors):
+            # 상위 모델이 거부한 건 — 같은 모델로는 몇 번을 던져도 같으므로 백오프를 두지
+            # 않고 곧바로 대체 모델로 넘어간다. 여기서 성공하면 사유가 살아난다.
+            logger.info(
+                "상위 모델이 응답을 거부 — 대체 모델(%s)로 재시도 (title=%s)",
+                _FALLBACK_MODEL, title[:40],
+            )
+            # ★ 위쪽 재시도(n=1)와 달리 여기서는 Best-of-N을 그대로 쓴다. 규칙이 달라
+            #   보이지만 두 상황의 성격이 다르기 때문이다.
+            #
+            #   위쪽 재시도는 429·과부하를 겪는 중이라, N개를 또 던지면 상황을 악화시킨다.
+            #   그래서 "무엇이든 건지기"로 목표를 낮추고 1회만 뽑는다.
+            #
+            #   거부는 부하와 무관하다. 상위 모델이 정책상 답을 안 준 것뿐이고 대체 모델은
+            #   멀쩡하므로, 던지는 것을 아낄 이유가 없다. 오히려 아끼면 손해다 — Haiku는
+            #   길이·문장 수 준수율이 낮아 1회만 뽑으면 3문장 중 1~2문장만 남는 결과가
+            #   자주 나온다(실측 3건 중 2건이 81자·90자). 여기서 뽑기를 늘리는 비용은
+            #   전체의 1~2%에 대한 Haiku 호출 한 번이라 검색 비용의 1% 미만이고,
+            #   그 대가로 카드에 실제로 실릴 문구의 완결성이 올라간다.
+            fb = await _draw_batch(
+                keywords, title, abstract,
+                max(1, settings.selection_reason_best_of), _FALLBACK_MODEL,
+            )
+            if isinstance(fb, SelectionReason):
+                return fb
+            fb_err = next(iter(fb[1]), None)
+            logger.warning(
+                "대체 모델도 사유를 만들지 못함 — 사유 없이 반환 (title=%s)", title[:40],
+                exc_info=fb_err,
+            )
+            if isinstance(fb_err, LLMRefusalError):
+                # 두 모델이 다 거부한 건은 "버그"가 아니라 "이 논문은 못 만든다"이다.
+                # stats에서 failed와 갈라 놓아야 프런트·운영이 헛되이 원인을 찾지 않는다.
+                raise fb_err
+            return None
+
         fatal = next((e for e in errors if not is_retryable(e)), None)
         if fatal is not None:
             logger.error(
@@ -472,13 +529,15 @@ async def get_or_create_reasons(
     화면에 사유가 있는 카드와 없는 카드가 섞이지 않는다.
 
     stats: 넘기면 왜 빠졌는지를 채워 준다 — {"no_abstract": [...], "failed": [...],
-    "budget_exceeded": bool, "no_keyword": bool}. 반환값만 보면 "사유 없음"이 초록이
-    없어서인지 생성에 실패해서인지 예산이 말라서인지 구분이 안 되는데, 셋은 대응이 전혀
-    다르다(각각 데이터 보강 / 버그 / 예산 증액). 반환 타입을 바꾸지 않으려고 out-param으로 둔다.
+    "refused": [...], "budget_exceeded": bool, "no_keyword": bool}. 반환값만 보면
+    "사유 없음"이 초록이 없어서인지 생성에 실패해서인지 모델이 거부해서인지 예산이
+    말라서인지 구분이 안 되는데, 넷은 대응이 전혀 다르다(각각 데이터 보강 / 버그 /
+    대응 불가 / 예산 증액). 반환 타입을 바꾸지 않으려고 out-param으로 둔다.
     """
     if stats is not None:
         stats.setdefault("no_abstract", [])
         stats.setdefault("failed", [])
+        stats.setdefault("refused", [])
         stats.setdefault("budget_exceeded", False)
         stats.setdefault("no_keyword", False)
 
@@ -527,6 +586,7 @@ async def get_or_create_reasons(
 
     sem = asyncio.Semaphore(concurrency)
     budget_hit = False
+    refused: list[str] = []
 
     async def one(pid: str) -> tuple[str, Optional[SelectionReason]]:
         nonlocal budget_hit
@@ -537,6 +597,11 @@ async def get_or_create_reasons(
                 r = await _generate_one(
                     keywords, papers[pid].get("title") or pid, papers[pid]["abstract"]
                 )
+            except LLMRefusalError:
+                # 상위·대체 모델이 모두 거부. 이 논문은 사유를 만들 수 없다 —
+                # 재시도로도, 코드 수정으로도 달라지지 않으므로 failed와 구분해 기록한다.
+                refused.append(pid)
+                return pid, None
             except LLMBudgetExceededError as e:
                 # 예산이 마르면 남은 건 시도하지 않는다. 사유 없이 카드만 뜨는 건
                 # 허용되는 열화지만, 검색 자체가 죽는 건 아니어야 한다.
@@ -551,11 +616,13 @@ async def get_or_create_reasons(
     results = await asyncio.gather(*(one(p) for p in missing))
     if stats is not None:
         stats["budget_exceeded"] = budget_hit
+        stats["refused"].extend(refused)
 
+    refused_set = set(refused)
     to_store = []
     for pid, r in results:
         if r is None:
-            if stats is not None and not budget_hit:
+            if stats is not None and not budget_hit and pid not in refused_set:
                 stats["failed"].append(pid)
             continue
         r.paper_id = pid
