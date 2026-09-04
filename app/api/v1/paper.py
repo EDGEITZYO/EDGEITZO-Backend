@@ -92,6 +92,7 @@ async def get_paper_detail(
         degree=paper.degree,
         institution=paper.affiliation,
         full_text_available=paper.fulltext_flag,
+        kci_hint=paper.db_code == "JAKO",
     )
 
     if paper.pubdate:
@@ -163,6 +164,7 @@ async def get_paper_similar(
                 citation_count=p.citation_count or None,
                 institution=p.affiliation or p.publisher,
                 full_text_available=p.fulltext_flag,
+                kci_hint=p.db_code == "JAKO",
             )
         result.append(SimilarPaperResponse(
             title=s.title,
