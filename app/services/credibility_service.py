@@ -243,7 +243,11 @@ def build_trust_badge(
     degree: str | None = None,
     institution: str | None = None,
     full_text_available: bool | None = None,
+    kci_hint: bool | None = None,
 ) -> TrustBadge:
+    """kci_hint: calculate_credibility와 동일한 근거(db_code == 'JAKO'). journals에
+    매칭되는 행이 없으면 journal이 None이라 kci가 null로 내려가는데, credibility 쪽은
+    hint로 true를 주고 있어 두 필드가 어긋났다. 여기서도 참일 때만 채택한다."""
     if paper_type in ("thesis_phd", "thesis_master"):
         if paper_type == "thesis_phd":
             degree_type = "박사"
@@ -256,8 +260,11 @@ def build_trust_badge(
             institution=institution,
             full_text_available=full_text_available,
         )
+    kci = journal.kci_indexed if journal else None
+    if kci_hint:
+        kci = True
     return TrustBadge(
-        kci=journal.kci_indexed if journal else None,
+        kci=kci,
         sci=journal.sci_indexed if journal else None,
         citation_count=citation_count,
         if_value=journal.impact_factor if journal else None,

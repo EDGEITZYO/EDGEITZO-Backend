@@ -73,6 +73,7 @@ def _to_card(
         citation_count=paper.citation_count or None,
         institution=paper.affiliation or paper.publisher,
         full_text_available=paper.fulltext_flag,
+        kci_hint=paper.db_code == "JAKO",
     )
     if paper.pubdate:
         published_at = str(paper.pubdate).replace('.', '-')
@@ -395,6 +396,7 @@ async def get_recent_stats(
             citation_count=p.citation_count or None,
             institution=p.affiliation or p.publisher,
             full_text_available=p.fulltext_flag,
+            kci_hint=p.db_code == "JAKO",
         )
         if p.pubdate:
             published_at = str(p.pubdate).replace('.', '-')
