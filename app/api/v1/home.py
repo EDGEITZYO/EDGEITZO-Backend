@@ -299,6 +299,13 @@ def save_search_history(
             r.set(key, json.dumps(existing[:_HISTORY_LIMIT], ensure_ascii=False), ex=86400 * 7)
             return
 
+    # 같은 search_id로 재저장될 때(AI 탐색은 턴마다 호출) 기존 항목을 지우고 새로
+    # 만들기 때문에, 열람 기록으로 채워둔 last_viewed_paper_title이 날아간다.
+    # 새 값이 없으면 직전 값을 승계한다.
+    prev = next((i for i in existing if i.get("id") == search_id), None)
+    if last_viewed_paper_title is None and prev:
+        last_viewed_paper_title = prev.get("last_viewed_paper_title")
+
     new_item = {
         "id": search_id,
         "type": search_type,
