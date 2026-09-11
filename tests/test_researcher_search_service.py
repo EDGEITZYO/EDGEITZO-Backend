@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from app.schemas.researcher import ResearcherSearchItem
 from app.services import researcher_search_service as service
 
@@ -15,6 +17,33 @@ class FakeRedis:
     def set(self, key: str, value: str, ex: int | None = None):
         self.store[key] = value
         self.set_calls.append((key, ex))
+
+
+class FakeQueryResult:
+    def __init__(self, rows: list[dict]):
+        self._rows = rows
+
+    def mappings(self):
+        return self
+
+    def all(self):
+        return self._rows
+
+
+class FakeSearchDb:
+    def __init__(self, *, name_count: int, rows: list[dict]):
+        self.name_count = name_count
+        self.rows = rows
+        self.scalar_calls: list[tuple[object, dict]] = []
+        self.execute_calls: list[tuple[object, dict]] = []
+
+    async def scalar(self, sql, params):
+        self.scalar_calls.append((sql, params))
+        return self.name_count
+
+    async def execute(self, sql, params):
+        self.execute_calls.append((sql, params))
+        return FakeQueryResult(self.rows)
 
 
 def _researcher(
@@ -44,6 +73,39 @@ def _researcher(
     )
 
 
+def _field_row(
+    researcher_id: str,
+    *,
+    relevance_score: float,
+    field_paper_count: int = 1,
+    total_citations: int = 0,
+    total_count: int = 2,
+) -> dict:
+    return {
+        "researcher_id": researcher_id,
+        "source": "kci",
+        "scienceon_cn": None,
+        "author_name_kor": researcher_id,
+        "author_name_eng": None,
+        "institution_current": "Test University",
+        "institution_dept": "Test Department",
+        "keywords": ["biology"],
+        "total_papers": 10,
+        "total_citations": total_citations,
+        "citation_source": "kci",
+        "corpus_paper_count": 3,
+        "first_pubyear": 2020,
+        "last_pubyear": 2024,
+        "field_paper_count": field_paper_count,
+        "keyword_match_count": 1,
+        "researcher_matched_keywords": ["biology"],
+        "internal_matched_keywords": [],
+        "external_matched_keywords": [],
+        "relevance_score": relevance_score,
+        "total_count": total_count,
+    }
+
+
 def test_build_researcher_graph_returns_only_field_to_researcher_edges():
     items = [
         _researcher(
@@ -53,7 +115,7 @@ def test_build_researcher_graph_returns_only_field_to_researcher_edges():
             total_citations=12,
             citation_source="kci",
             field_paper_count=2,
-            relevance_score=4.0,
+            relevance_score=0.8,
         ),
         _researcher(
             "oa:two",
@@ -62,7 +124,7 @@ def test_build_researcher_graph_returns_only_field_to_researcher_edges():
             total_citations=34,
             citation_source="openalex",
             field_paper_count=1,
-            relevance_score=2.0,
+            relevance_score=0.4,
         ),
     ]
 
@@ -74,10 +136,52 @@ def test_build_researcher_graph_returns_only_field_to_researcher_edges():
     assert {edge.edge_type for edge in graph.edges} == {"field_relevance"}
     assert {edge.source for edge in graph.edges} == {"field:biology"}
     assert {edge.target for edge in graph.edges} == {"researcher:kci:one", "researcher:oa:two"}
+    assert [edge.weight for edge in graph.edges] == [0.8, 0.4]
 
     researcher_nodes = [node for node in graph.nodes if node.node_type == "researcher"]
     assert researcher_nodes[0].citation_source == "kci"
     assert researcher_nodes[1].citation_source == "openalex"
+
+
+@pytest.mark.asyncio
+async def test_field_search_executes_sql_and_ranks_by_embedding_affinity(monkeypatch):
+    db = FakeSearchDb(
+        name_count=0,
+        rows=[
+            _field_row("low-affinity", relevance_score=100.0, field_paper_count=5, total_citations=90),
+            _field_row("high-affinity", relevance_score=1.0, field_paper_count=1, total_citations=0),
+        ],
+    )
+
+    async def fake_field_affinity(db_arg, keyword, researcher_ids):
+        assert db_arg is db
+        assert keyword == "biology"
+        assert researcher_ids == ["low-affinity", "high-affinity"]
+        return [
+            {"researcher_id": "low-affinity", "affinity": 0.2},
+            {"researcher_id": "high-affinity", "affinity": 0.91},
+        ]
+
+    monkeypatch.setattr(service, "field_affinity", fake_field_affinity)
+
+    response = await service.search_researchers(db, "biology", page=1, size=1)
+
+    assert response.search_type == "field"
+    assert response.total == 2
+    assert [item.researcher_id for item in response.items] == ["high-affinity"]
+    assert response.items[0].relevance_score == 0.91
+    assert db.execute_calls[0][0] is service._FIELD_SEARCH_SQL
+    assert db.execute_calls[0][1] == {"pattern": "%biology%"}
+
+
+def test_name_detection_sql_uses_exact_and_prefix_not_substring():
+    count_sql = str(service._NAME_COUNT_SQL)
+    name_sql = str(service._NAME_SEARCH_SQL)
+
+    assert "= :norm_query" in count_sql
+    assert "LIKE :norm_prefix" in count_sql
+    assert "LIKE :norm_pattern" not in count_sql
+    assert "LIKE :norm_pattern" not in name_sql
 
 
 def test_recent_researcher_searches_use_separate_key_limit_and_dedupe(monkeypatch):
