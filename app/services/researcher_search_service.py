@@ -18,6 +18,7 @@ from app.schemas.researcher import (
     ResearcherSearchResponse,
     ResearcherSearchType,
 )
+from app.services.researcher_similarity import field_affinity
 
 _REDIS_DB = 7
 _RECENT_KEY = "researcher_searches:{user_id}"
@@ -29,8 +30,10 @@ _NAME_COUNT_SQL = text(
     """
     SELECT count(1)
     FROM researchers r
-    WHERE lower(replace(coalesce(r.author_name_kor, ''), ' ', '')) LIKE :norm_pattern
-       OR lower(replace(coalesce(r.author_name_eng, ''), ' ', '')) LIKE :norm_pattern
+    WHERE lower(replace(coalesce(r.author_name_kor, ''), ' ', '')) = :norm_query
+       OR lower(replace(coalesce(r.author_name_eng, ''), ' ', '')) = :norm_query
+       OR lower(replace(coalesce(r.author_name_kor, ''), ' ', '')) LIKE :norm_prefix
+       OR lower(replace(coalesce(r.author_name_eng, ''), ' ', '')) LIKE :norm_prefix
     """
 )
 
@@ -61,8 +64,10 @@ _NAME_SEARCH_SQL = text(
         END AS name_score,
         count(1) OVER() AS total_count
     FROM researchers r
-    WHERE lower(replace(coalesce(r.author_name_kor, ''), ' ', '')) LIKE :norm_pattern
-       OR lower(replace(coalesce(r.author_name_eng, ''), ' ', '')) LIKE :norm_pattern
+    WHERE lower(replace(coalesce(r.author_name_kor, ''), ' ', '')) = :norm_query
+       OR lower(replace(coalesce(r.author_name_eng, ''), ' ', '')) = :norm_query
+       OR lower(replace(coalesce(r.author_name_kor, ''), ' ', '')) LIKE :norm_prefix
+       OR lower(replace(coalesce(r.author_name_eng, ''), ' ', '')) LIKE :norm_prefix
     ORDER BY
         name_score DESC,
         coalesce(r.total_papers, r.corpus_paper_count, 0) DESC,
@@ -162,7 +167,6 @@ _FIELD_SEARCH_SQL = text(
         r.total_citations DESC NULLS LAST,
         coalesce(r.total_papers, r.corpus_paper_count, 0) DESC,
         r.author_name_kor ASC NULLS LAST
-    LIMIT :limit OFFSET :offset
     """
 )
 
@@ -175,7 +179,6 @@ def _name_params(query: str) -> dict[str, str]:
     norm_query = query.replace(" ", "").lower()
     return {
         "norm_query": norm_query,
-        "norm_pattern": f"%{norm_query}%",
         "norm_prefix": f"{norm_query}%",
     }
 
@@ -238,6 +241,35 @@ def _item_from_row(row: Any, *, field: bool) -> ResearcherSearchItem:
     )
 
 
+def _rank_field_items_by_affinity(
+    items: list[ResearcherSearchItem],
+    affinity_rows: list[dict],
+) -> list[ResearcherSearchItem]:
+    affinity_by_id = {
+        row["researcher_id"]: float(row["affinity"])
+        for row in affinity_rows
+        if row.get("researcher_id") and row.get("affinity") is not None
+    }
+
+    for item in items:
+        affinity = affinity_by_id.get(item.researcher_id)
+        if affinity is not None:
+            item.relevance_score = round(affinity, 4)
+        elif item.relevance_score is None:
+            item.relevance_score = 0.0
+
+    return sorted(
+        items,
+        key=lambda item: (
+            -(item.relevance_score or 0.0),
+            -(item.field_paper_count or 0),
+            -(item.total_citations or 0),
+            -item.total_papers,
+            _display_name(item),
+        ),
+    )
+
+
 async def _has_name_matches(db: AsyncSession, query: str) -> bool:
     count = await db.scalar(_NAME_COUNT_SQL, _name_params(query))
     return bool(count)
@@ -260,9 +292,16 @@ async def search_researchers(
         rows = (await db.execute(_NAME_SEARCH_SQL, params)).mappings().all()
         items = [_item_from_row(row, field=False) for row in rows]
     else:
-        params = _field_params(cleaned) | {"limit": limit, "offset": offset}
+        params = _field_params(cleaned)
         rows = (await db.execute(_FIELD_SEARCH_SQL, params)).mappings().all()
-        items = [_item_from_row(row, field=True) for row in rows]
+        all_items = [_item_from_row(row, field=True) for row in rows]
+        affinity_rows = await field_affinity(
+            db,
+            cleaned,
+            [item.researcher_id for item in all_items],
+        )
+        ranked_items = _rank_field_items_by_affinity(all_items, affinity_rows)
+        items = ranked_items[offset : offset + limit]
 
     total = int(rows[0]["total_count"]) if rows else 0
     return ResearcherSearchResponse(
@@ -290,7 +329,6 @@ def build_researcher_graph(query: str, items: list[ResearcherSearchItem]) -> Res
     ]
     edges: list[ResearcherGraphEdge] = []
 
-    max_score = max((item.relevance_score or 0 for item in items), default=0) or 1
     for item in items:
         node_key = f"researcher:{item.researcher_id}"
         nodes.append(
@@ -315,7 +353,7 @@ def build_researcher_graph(query: str, items: list[ResearcherSearchItem]) -> Res
                 source=center_key,
                 target=node_key,
                 edge_type="field_relevance",
-                weight=round(float((item.relevance_score or 0) / max_score), 4),
+                weight=round(max(0.0, min(float(item.relevance_score or 0), 1.0)), 4),
                 shared_keywords=item.matched_keywords,
             )
         )

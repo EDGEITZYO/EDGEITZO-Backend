@@ -43,6 +43,9 @@ Thumbs.db
 # =========================
 *.log
 logs/
+docs/session-log-*.md
+docs/github-collaboration-convention*.md
+docs/data-collection-processing-definition.md
 
 # =========================
 # Docker
