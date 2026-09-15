@@ -101,7 +101,7 @@ LEFT JOIN researcher_papers rp
 
 # 공저자 = 같은 논문에 함께 이름이 올라간 '프로필이 있는' 연구자.
 # authors 문자열 배열로 뽑으면 1인 평균 33명이 나오지만 그중 77%는 이름뿐이라
-# 팝오버의 '상세 정보' 버튼이 죽는다. 셀프조인은 ID로 이어지므로 동명이인 문제도 없다.
+# 그 사람을 다시 조회할 수단이 없다. 셀프조인은 ID로 이어지므로 동명이인 문제도 없다.
 _COAUTHORS_SQL = """
 WITH pairs AS (
     SELECT b.researcher_id AS coauthor_id,
@@ -149,8 +149,8 @@ def _published_at(pubyear: Optional[int], pubmonth: Optional[str], pubdate: Opti
     """표시용 발행일. KCI는 일자를 주지 않는 건이 많아 'YYYY-MM'까지만 나올 수 있다.
 
     papers.pubdate에는 '2022.10.30'(847건)과 '2022-10-30'(742건)이 섞여 있다.
-    적재 시기별로 다른 파서가 채운 흔적인데, 화면에 그대로 내보내면 카드마다 구분자가
-    달라지므로 여기서 대시로 통일한다.
+    적재 시기별로 다른 파서가 채운 흔적이라, 응답 형식이 논문마다 달라지지 않도록
+    여기서 대시로 통일한다.
     """
     if pubdate and len(pubdate) >= 10:
         return pubdate[:10].replace(".", "-")
@@ -250,7 +250,8 @@ def _to_item(row: Any, bookmarked: dict[str, bool], reads: dict[str, str]) -> Re
         authors=_as_list(row.authors),
         abstract=row.abstract,
         keywords=_as_list(row.keywords),
-        # KCI가 0으로 주는 건과 미집계를 구분할 수 없다. 0은 배지를 숨기는 쪽이 안전하다.
+        # KCI는 미집계도 0으로 준다. 둘을 구분할 수 없으므로 0은 null로 보낸다 —
+        # '인용 0회'로 단정하는 것보다 '모른다'가 사실에 가깝다.
         citation_count=row.citation_count if row.citation_count else None,
         paper_type=label,
         kci_registered=bool(row.external_id) or row.db_code == "JAKO",

@@ -125,7 +125,7 @@ async def save_recent_researcher_search_endpoint(
 
 _RID = PathParam(
     ...,
-    description="연구자 ID. 연구자 탐색 결과나 공저자 팝오버에서 받은 값 (예: kci:3a6d8496972cf306)",
+    description="연구자 ID (예: kci:3a6d8496972cf306). 연구자 탐색·공저자 응답이 내려주는 값",
 )
 
 
@@ -143,12 +143,13 @@ async def _ensure_exists(db: AsyncSession, researcher_id: str) -> None:
     responses={404: {"model": ApiErrorResponse}},
     summary="연구자 프로필 기본 정보 (08-01)",
     description=(
-        "상세페이지 상단 핵심 정보.\n\n"
-        "- 미확보 값은 **null**로 내려갑니다. 화면의 '데이터 없음'·공란('-')은 프런트가 그립니다\n"
-        "- `department`(전공)는 적재 커버리지가 17%라 대부분 null입니다 — 라벨째 숨기세요\n"
-        "- `email`은 출처 신뢰도가 확실한 건만 내려갑니다(추정 건은 null)\n"
-        "- `total_citations`는 `citation_source`가 kci냐 openalex냐에 따라 집계 범위가 달라 "
-        "두 연구자의 수치를 그대로 비교하면 안 됩니다\n\n"
+        "연구자 핵심 정보.\n\n"
+        "- 미확보 값은 **null**로 내려갑니다 (숫자 필드에 '데이터 없음' 같은 문자열을 넣지 않습니다)\n"
+        "- `department`(전공): 2,993명 중 497명(17%)만 보유 — 대부분 null\n"
+        "- `email`: 출처 신뢰도가 `confirmed`/`domain_verified`인 434건만 내려갑니다. "
+        "추정(`inferred`) 60건은 동명이인일 때 다른 사람의 주소일 수 있어 null 처리합니다\n"
+        "- `total_citations`: `citation_source`가 kci면 국내 등재지, openalex면 국제 범위라 "
+        "집계 기준이 다릅니다(중앙값 35배 차이). 출처가 다른 두 연구자의 값은 같은 척도가 아닙니다\n\n"
         "**404** — 없는 researcher_id"
     ),
 )
@@ -170,15 +171,17 @@ async def get_researcher_profile(
     responses={404: {"model": ApiErrorResponse}},
     summary="연구자 논문 리스트 (08-02)",
     description=(
-        "연구자의 논문을 카드 목록으로 반환합니다. 기본 정렬은 최신순입니다.\n\n"
-        "- `sort=citations`는 **`citation_sort_available`이 true일 때만** 드롭다운에 노출하세요. "
-        "false인데 요청하면 최신순으로 되돌려 응답합니다(명세 08-02)\n"
-        "- `coauthor_id`를 주면 그 공저자와 함께 쓴 논문만 남습니다 — 팝오버의 '함께 쓴 N편 보기'\n"
-        "- `is_internal`이 false면 우리 상세페이지가 없습니다. `external_url`(KCI 원문)로 보내고, "
-        "북마크(`can_bookmark`)·읽음(`read_at`)도 불가능합니다\n"
-        "- `citation_count`가 null이면 미집계라 인용수 배지를 숨기세요(0과 구분 불가)\n"
-        "- `sci_indexed`가 null이면 학술지 매칭 실패라 SCI 배지를 숨기세요. false는 '비SCI 확정'입니다\n"
-        "- 논문이 0편이면 `items: []`, `total: 0` — 화면은 '등재된 논문이 없습니다'\n\n"
+        "연구자의 논문 목록. 코퍼스 논문(researcher_papers)과 KCI 이력(researcher_external_papers)을 "
+        "합쳐 중복을 제거한 결과입니다. 기본 정렬은 최신순(발행연도 내림차순)입니다.\n\n"
+        "- `sort=citations`: `citation_sort_available`이 false(인용수 보유 논문 3편 미만)면 "
+        "요청해도 최신순으로 되돌려 응답합니다 (명세 08-02)\n"
+        "- `coauthor_id`: 그 연구자와 공동 작성한 논문만 남깁니다\n"
+        "- `is_internal`: papers에 행이 있는지. false면 논문 상세·북마크·읽음이 성립하지 않고 "
+        "`external_url`(KCI 원문)만 있습니다. 현재 연구자 논문의 93.6%가 false이며, "
+        "`scripts/promote_researcher_papers.py` 적재가 진행될수록 줄어듭니다\n"
+        "- `citation_count`: null은 미집계(34%), 0은 집계 결과 0 — 다른 의미입니다\n"
+        "- `sci_indexed`: null은 학술지 매칭 실패(9%), false는 비SCI 확정. is_internal과 무관하게 채워집니다\n"
+        "- 논문이 없으면 `items: []`, `total: 0`\n\n"
         "**404** — 없는 researcher_id"
     ),
 )
@@ -186,8 +189,8 @@ async def get_researcher_papers(
     researcher_id: str = _RID,
     sort: PaperSortKey = Query("recent", description="recent=최신순(기본) | citations=피인용순"),
     page: int = Query(1, ge=1),
-    size: int = Query(6, ge=1, le=100, description="와이어프레임 기준 6개 노출 후 페이지네이션"),
-    coauthor_id: Optional[str] = Query(None, description="이 공저자와 함께 쓴 논문만 필터링"),
+    size: int = Query(6, ge=1, le=100, description="한 번에 반환할 논문 수"),
+    coauthor_id: Optional[str] = Query(None, description="이 연구자와 공동 작성한 논문만 필터링"),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db),
 ):
@@ -210,19 +213,20 @@ async def get_researcher_papers(
     responses={404: {"model": ApiErrorResponse}},
     summary="연구자 논문 리스트 — 연도별 이력 (08-03)",
     description=(
-        "08-02와 **같은 데이터를 발행연도로 묶기만** 한 응답입니다. 두 화면이 어긋나지 않도록 "
-        "같은 조회를 씁니다.\n\n"
-        "- 연도 내림차순(최신 연도 상단), 같은 연도 안에서는 발행월 내림차순\n"
-        "- 발행연도가 없는 논문은 `year: null` 그룹으로 맨 뒤에 모입니다\n"
-        "- 논문 카드의 각 필드 의미는 08-02와 동일합니다\n\n"
+        "08-02와 **같은 조회 결과를 발행연도로 묶은** 응답입니다. 두 응답이 어긋나지 않도록 "
+        "같은 함수를 씁니다.\n\n"
+        "- 연도 내림차순, 같은 연도 안에서는 발행월 내림차순\n"
+        "- KCI는 발행일을 주지 않는 건이 많아 같은 달 안의 순서는 확정되지 않습니다\n"
+        "- 발행연도가 없는 논문은 `year: null` 그룹으로 모입니다\n"
+        "- 항목 필드 의미는 08-02와 동일합니다\n\n"
         "**404** — 없는 researcher_id"
     ),
 )
 async def get_researcher_papers_by_year(
     researcher_id: str = _RID,
     page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100, description="연도 그룹은 카드 여러 장을 담으므로 기본값이 더 큽니다"),
-    coauthor_id: Optional[str] = Query(None, description="이 공저자와 함께 쓴 논문만 필터링"),
+    size: int = Query(20, ge=1, le=100, description="한 번에 반환할 논문 수. 연도 그룹으로 묶이므로 기본값이 더 큽니다"),
+    coauthor_id: Optional[str] = Query(None, description="이 연구자와 공동 작성한 논문만 필터링"),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db),
 ):
@@ -242,21 +246,22 @@ async def get_researcher_papers_by_year(
     "/{researcher_id}/coauthors",
     response_model=ApiResponse[CoauthorListResponse],
     responses={404: {"model": ApiErrorResponse}},
-    summary="함께 연구한 사람들 (08-04)",
+    summary="함께 연구한 사람들 — 공저자 (08-04)",
     description=(
-        "같은 논문에 이름이 함께 올라간 연구자를, 함께 쓴 논문 수 내림차순으로 반환합니다.\n\n"
-        "- 호버 팝오버에 필요한 값(이름·소속·전공·키워드·함께 쓴 논문 수)을 **목록 응답에 이미 포함**했습니다. "
-        "팝오버를 띄울 때 추가 요청이 필요 없습니다\n"
-        "- 모든 항목이 `researcher_id`를 가지므로 '상세 정보' 버튼은 항상 동작합니다\n"
-        "- '함께 쓴 N편 보기'는 `GET /researchers/{researcher_id}/papers?coauthor_id=<그 사람 id>`\n"
-        "- `department`(전공)는 대부분 null입니다\n"
-        "- 공저자가 없으면 `total: 0` — 화면은 '0명'\n\n"
+        "같은 논문에 이름이 함께 올라간 연구자를 함께 쓴 논문 수 내림차순으로 반환합니다.\n\n"
+        "- 논문의 `authors` 문자열이 아니라 **researcher_id 셀프조인**으로 집계합니다. "
+        "문자열로 뽑으면 1인 평균 33명이 나오지만 그중 77%는 이름만 있어 다시 조회할 수 없고 "
+        "동명이인(110쌍) 문제도 생깁니다. 셀프조인 결과는 1인 평균 5.8명(최대 30명)이며 전부 조회 가능합니다\n"
+        "- 명세 08-04가 요구하는 항목을 목록 응답에 모두 담아 항목별 추가 조회가 필요 없습니다\n"
+        "- 함께 쓴 논문 목록은 `GET /researchers/{researcher_id}/papers?coauthor_id=<공저자 id>`\n"
+        "- `department`(전공)는 커버리지 17%라 대부분 null입니다\n"
+        "- 공저자가 없으면 `total: 0` (연구자의 93%는 1명 이상 보유)\n\n"
         "**404** — 없는 researcher_id"
     ),
 )
 async def get_researcher_coauthors(
     researcher_id: str = _RID,
-    limit: int = Query(20, ge=1, le=100, description="아바타로 노출할 최대 인원"),
+    limit: int = Query(20, ge=1, le=100, description="반환할 최대 공저자 수"),
     db: AsyncSession = Depends(get_db),
 ):
     await _ensure_exists(db, researcher_id)
@@ -268,22 +273,23 @@ async def get_researcher_coauthors(
     "/{researcher_id}/research-flow",
     response_model=ApiResponse[ResearchFlowResponse],
     responses={404: {"model": ApiErrorResponse}},
-    summary="연구 흐름 시각화 + 요약 카드 (08-05, 08-06)",
+    summary="연구 흐름 — 주제 묶음·연결·요약 (08-05, 08-06)",
     description=(
-        "연구자의 논문을 발행연도 순으로 배치한 노드 그래프와, 주제 묶음별 요약 카드를 함께 반환합니다.\n\n"
-        "**그래프 (08-05)**\n"
-        "- `nodes[].pub_year`/`pub_month`로 X축(좌 과거 → 우 최신) 배치를 계산하세요. "
-        "좌표·노드 크기·제목 축약은 프런트가 정합니다\n"
-        "- `edges`는 항상 과거(`source`) → 최신(`target`) 방향입니다. `weight`(0~1)를 선 굵기에 쓰세요\n"
-        "- `cluster_id`가 같은 노드가 한 주제 묶음입니다. `is_core`가 대표 논문(진한 초록)입니다\n"
-        "- `shared_keywords`가 비어 있어도 정상입니다 — 표기가 달라도 의미가 같으면 잇기 때문입니다\n\n"
-        "**요약 카드 (08-06)**\n"
-        "- `clusters[]`가 카드 한 장씩입니다. 카드 클릭 시 `node_ids`에 해당하는 노드를 하이라이트하세요\n"
-        "- `topic`은 실제 논문 키워드만 근거로 AI가 문장화한 주제명이고, 그 근거가 `topic_keywords`입니다\n"
-        "- `has_followup`이 false면 후속 논문이 없는 묶음이라 화면에 '후속 연구 없음'으로 표시합니다\n"
-        "- `summary_source`가 `rule`이면 LLM 예산 소진 등으로 규칙 기반 문장이 나간 것입니다\n\n"
-        "논문이 0편이어도 200으로 응답합니다(명세: 논문 수와 무관하게 상시 노출). "
-        "첫 호출은 임베딩·요약 생성으로 수 초 걸리고, 이후에는 캐시에서 즉시 응답합니다.\n\n"
+        "연구자 논문의 주제 묶음과 논문 간 연결, 묶음별 요약을 반환합니다.\n\n"
+        "**계산 방식**\n"
+        "- 논문의 제목+키워드를 BGE-m3-ko로 임베딩해 ward 연결로 묶습니다. "
+        "명세 원안인 '키워드 글자 공유'는 한 연구자의 논문 쌍 중 80~99%가 공유 0이라(실측) "
+        "연결이 거의 만들어지지 않습니다\n"
+        "- `edges`는 각 논문에서 '같은 묶음의 앞선 논문 중 가장 가까운 한 편'으로 잇습니다. "
+        "방향은 항상 과거(`source`) → 최신(`target`)이고 `weight`는 코사인 유사도입니다\n"
+        "- `shared_keywords`는 실제 공유 키워드이며, 연결 근거가 의미 유사도라 비어 있을 수 있습니다\n\n"
+        "**요약 (08-06)**\n"
+        "- 묶음·시작/최근 논문·키워드는 전부 계산이 정하고, `topic`과 `summary`만 LLM이 문장화합니다 "
+        "(명세 08-06: 'AI는 문장화만 담당')\n"
+        "- `topic_keywords`가 `topic`의 근거입니다. 없는 주제가 섞였는지 이 값으로 대조할 수 있습니다\n"
+        "- `summary_source=rule`이면 LLM 예산 소진·응답 거부·파싱 실패로 규칙 기반 문장이 나간 것입니다\n\n"
+        "논문이 0편이어도 200으로 응답합니다(명세: 논문 수와 무관하게 상시 제공). "
+        "첫 호출은 임베딩·요약 생성으로 수 초 걸리고 결과를 저장하므로 이후에는 즉시 응답합니다.\n\n"
         "**404** — 없는 researcher_id"
     ),
 )
