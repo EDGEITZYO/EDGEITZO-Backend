@@ -376,13 +376,21 @@ def _find_chip(state: SearchState, chip_id: str, chip_type: str) -> Optional[dic
     return None
 
 
-def _apply_chip_action(state: SearchState, chip_id: str, chip_type: str) -> SearchState:
+def _apply_chip_action(
+    state: SearchState, chip_id: str, chip_type: str, *, has_message: bool = False
+) -> SearchState:
     """칩 클릭 처리 — LLM 호출 없이 코드 레벨에서 확정된 값으로 filters/history 갱신.
     _skip_classification=True로 세팅해 그래프가 분류 노드 없이 response_builder로 바로 진입하게 한다."""
     chip = _find_chip(state, chip_id, chip_type)
     if chip is None:
+        # 못 찾은 칩에 대고 분류까지 건너뛰면 이번 턴 message가 통째로 버려진다. 그러면
+        # filters.keywords가 빈 채로 검색이 돌아 질의와 무관한 논문이 결과로 나간다
+        # (스웨거 기본값 chip_id="string", 그리고 사용자가 스크롤을 올려 지난 턴의 칩을
+        #  다시 누르는 경우 — 그 chip_id는 현재 narrow_chips/expand_chips에 없다).
+        # message가 있으면 평범한 자유입력 턴으로 넘기고, 없을 때만 직전 결과를 그대로
+        # 두기 위해 분류를 건너뛴다.
         logger.warning("칩을 찾을 수 없음: chip_id=%r chip_type=%r", chip_id, chip_type)
-        return {**state, "_skip_classification": True}
+        return state if has_message else {**state, "_skip_classification": True}
 
     filters = dict(state.get("filters") or empty_filters())
     panel_owned = list(state.get("panel_owned") or [])
@@ -466,7 +474,12 @@ def _apply_direct_filters(state: SearchState, request: ChatRequest) -> SearchSta
             panel_owned.append(field)
     new_state = {**state, "filters": filters, "panel_owned": panel_owned}
 
-    chip_follows = bool(request.chip_id and request.chip_type)
+    # 없는 칩이면 _apply_chip_action이 스텝을 기록하지 않으므로, 여기서 양보하면
+    # 이번 턴의 필터 변경이 history에 아무 흔적도 안 남는다.
+    chip_follows = bool(
+        request.chip_id and request.chip_type
+        and _find_chip(state, request.chip_id, request.chip_type)
+    )
     if not request.message and not chip_follows:
         # 소유권 때문에 보낸 값이 전부 무시됐어도(applied가 빔) 이번 턴은 여전히 '패널 조작'이다.
         # 여기서 분류를 건너뛰지 않으면 직전 턴의 stale한 message가 LLM에 재분류되어,
@@ -562,7 +575,9 @@ async def chat_search(
     state = _apply_direct_filters(state, request)
 
     if request.chip_id and request.chip_type:
-        state = _apply_chip_action(state, request.chip_id, request.chip_type)
+        state = _apply_chip_action(
+            state, request.chip_id, request.chip_type, has_message=bool(request.message)
+        )
 
     graph = get_graph()
     try:
@@ -702,7 +717,9 @@ async def stream_chat(
             state = _apply_direct_filters(state, request)
 
             if request.chip_id and request.chip_type:
-                state = _apply_chip_action(state, request.chip_id, request.chip_type)
+                state = _apply_chip_action(
+                    state, request.chip_id, request.chip_type, has_message=bool(request.message)
+                )
 
             yield _sse("search_started", {})
             yield _sse("searching", {})

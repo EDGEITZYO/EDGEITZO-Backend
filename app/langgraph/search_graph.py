@@ -493,6 +493,27 @@ async def node_response_builder(state: SearchState) -> SearchState:
         return {**state, "ai_summary": None, "fallback": "off_topic"}
 
     filters = state.get("filters") or empty_filters()
+
+    if not filters.get("keywords"):
+        # 키워드가 없으면 빈 문자열로 임베딩 검색이 돌아 질의와 무관한 논문이 아무거나
+        # 딸려 나온다. node_router는 이 상태를 fallback="clarify"(검색어가 비어 명확화
+        # 필요)로 판정하는데, 결과까지 같이 실려 나가면 "더 알려달라"면서 목록과 요약을
+        # 함께 주는 모순된 응답이 된다. 검색 자체를 돌리지 않고 빈 결과로 끝낸다.
+        # (history는 건드리지 않는다 — 직전 턴 스냅샷이 남아 있어야 되돌리기가 된다.)
+        logger.warning("키워드 없음 — 검색 생략 session_id=%s", state.get("session_id"))
+        return {
+            **state,
+            "result_items": [],
+            "total_count": 0,
+            "type_distribution": {},
+            "narrow_chips": [],
+            "expand_chips": [],
+            "ai_summary": None,
+            "summary_failed": False,
+            "is_broad_result": False,
+            "fallback": None,  # node_router가 clarify로 확정한다
+        }
+
     svc = get_chroma_search_service()
     # paper_type은 세션에 "학술 저널"/"박사학위 논문"/"석사학위 논문" 레이블로 저장되지만,
     # Chroma의 DBCode 메타데이터는 원본 코드(JAKO/DIKO/JAFO/CFKO)라 여기선 매칭 안 됨.
