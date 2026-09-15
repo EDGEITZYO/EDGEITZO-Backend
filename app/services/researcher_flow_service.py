@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -60,7 +61,14 @@ def _node_id(row: Any) -> str:
 
 
 def _paper_signature(rows: list[Any]) -> str:
-    keys = sorted(_node_id(r) for r in rows)
+    """캐시 무효화 키. 논문 목록이 바뀌면 값이 달라진다.
+
+    편입 여부(internal_paper_id)도 같이 넣는다. papers 편입은 internal_paper_id를
+    external_id와 같은 값(KCI art_id)으로 채우기 때문에, 노드 키만으로 해시하면
+    편입 전후의 서명이 같아진다. 그러면 편입이 끝나도 캐시가 is_internal=false인 옛 응답을
+    계속 돌려준다 — 노드를 눌러도 논문 상세로 못 가는 상태가 고정된다.
+    """
+    keys = sorted(f"{_node_id(r)}:{1 if r.internal_paper_id else 0}" for r in rows)
     return hashlib.sha1("|".join(keys).encode("utf-8")).hexdigest()
 
 
@@ -91,6 +99,12 @@ def _cluster(vectors: np.ndarray) -> np.ndarray:
 
     k = max(1, min(_MAX_CLUSTERS, round(n / _PAPERS_PER_CLUSTER), n))
     return AgglomerativeClustering(n_clusters=k, linkage="ward").fit_predict(vectors)
+
+
+def _embed_and_cluster(rows: list[Any]) -> tuple[np.ndarray, np.ndarray]:
+    """스레드에서 한 번에 돌리는 무거운 계산 두 가지."""
+    vectors = _embed(rows)
+    return vectors, _cluster(vectors)
 
 
 def _build_edges(
@@ -329,8 +343,10 @@ async def get_research_flow(
         if cached is not None:
             return cached
 
-    vectors = _embed(rows)
-    labels = _cluster(vectors)
+    # 임베딩과 클러스터링은 CPU를 오래 잡는 동기 코드다. 그대로 await 없이 부르면
+    # 이벤트 루프가 멈춰 그동안 들어온 다른 요청까지 같이 밀린다
+    # (실측: 73편 생성 중 프로필 조회가 1~3ms → 51ms). 스레드로 내보낸다.
+    vectors, labels = await asyncio.to_thread(_embed_and_cluster, rows)
     clusters, core_indices = _build_clusters(rows, vectors, labels)
     edges = _build_edges(rows, vectors, labels)
 
