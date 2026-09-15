@@ -14,8 +14,9 @@ class KeywordCandidate(TypedDict):
 
 class FilterState(TypedDict):
     """연도/논문유형/인용수/KCI/SCI 5축 고정 + 누적 키워드"""
+    # 발행 연도 — 정확히 그 해만 매칭(범위 아님). 경로(LLM/칩/드롭다운)와 무관하게 의미가 하나다.
+    # 와이어 필드명은 프런트 호환 때문에 유지 중이나 "start"는 더 이상 범위를 뜻하지 않는다.
     pub_year_start: Optional[int]
-    pub_year_exact: Optional[bool]  # true면 pub_year_start를 "그 연도 이상"이 아니라 "정확히 그 해"로 매칭
     paper_type: Optional[str]  # "학술 저널" | "박사학위 논문" | "석사학위 논문" (사용자 노출 레이블)
     citation_min: Optional[int]
     kci_only: Optional[bool]  # true면 KCI 등재만
@@ -58,6 +59,13 @@ class SearchState(TypedDict):
     sort_order: str  # "relevance" | "year_desc" | "citation_desc" 등, 유지되는 값
     research_purpose_class: Optional[str]  # "recency" | "citation" | "neutral" (정규식 분류 결과)
     filters: FilterState  # 누적 조건
+    # 논문 목록 패널(드롭다운·토글)이 직접 건 필터 필드명. 패널이 null을 보냈을 때
+    # '해제'로 볼지 '무시'로 볼지 가르는 유일한 근거다 — 여기 있으면 패널이 자기가 건 걸
+    # 되돌리는 것이므로 해제하고, 없으면 채팅(자연어·칩)이 건 것이므로 건드리지 않는다.
+    # 프런트는 드롭다운의 현재값을 매 요청 보내는데, 그 드롭다운은 채팅이 건 필터를 모른 채
+    # 계속 '전체'(null)로 남아 있다. 이 구분이 없으면 그 null이 매 턴 채팅 필터를 지워
+    # "필터를 하나 더 걸었는데 결과가 늘어나는" 일이 생긴다(실측: 석사 16건 → KCI 추가 시 69건).
+    panel_owned: List[str]
     history: List[RefinementStep]  # 탐색 경로
     result_items: List[Dict[str, Any]]  # 최신 검색 결과 캐시
     total_count: int
@@ -81,7 +89,6 @@ class SearchState(TypedDict):
 def empty_filters() -> FilterState:
     return FilterState(
         pub_year_start=None,
-        pub_year_exact=None,
         paper_type=None,
         citation_min=None,
         kci_only=None,
@@ -91,17 +98,21 @@ def empty_filters() -> FilterState:
 
 
 def _apply_filter_update(filters: FilterState, updates: Dict[str, Any]) -> FilterState:
-    """pub_year_start/paper_type/citation_min/kci_only/sci_only 중 None이 아닌 값만 반영한 새 filters 반환.
-    이 경로(LLM 분류/칩 클릭)로 들어오는 pub_year_start는 항상 "이후" 범위 검색이므로,
-    이전에 논문 목록 드롭다운(_apply_direct_filters)이 남겨둔 pub_year_exact=True가
-    새 pub_year_start에 잘못 적용되지 않도록 함께 초기화한다."""
+    """pub_year_start/paper_type/citation_min/kci_only/sci_only 중 None이 아닌 값만 반영한 새 filters 반환."""
     new_filters = dict(filters)
     for key in ("pub_year_start", "paper_type", "citation_min", "kci_only", "sci_only"):
         if updates.get(key) is not None:
             new_filters[key] = updates[key]
-            if key == "pub_year_start":
-                new_filters["pub_year_exact"] = False
     return FilterState(**new_filters)
+
+
+def _release_panel_ownership(panel_owned: List[str], updates: Dict[str, Any]) -> List[str]:
+    """채팅(LLM 분류/칩)이 값을 지정한 필드를 패널 소유에서 뗀다.
+
+    패널이 연도를 걸어둔 상태에서 사용자가 채팅으로 다른 연도를 말하면, 그 필드의 주인은
+    채팅으로 넘어간다. 그래야 이후 패널이 보내는 null이 채팅이 방금 건 값을 지우지 않는다.
+    _apply_filter_update와 항상 같이 호출할 것."""
+    return [f for f in panel_owned if updates.get(f) is None]
 
 
 def _apply_keyword_addition(filters: FilterState, keyword: str) -> FilterState:

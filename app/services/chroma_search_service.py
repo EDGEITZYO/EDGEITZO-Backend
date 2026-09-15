@@ -45,26 +45,34 @@ _RRF_K = 60  # RRF 상수 — 값이 클수록 하위 랭크 페널티 완화
 
 
 def _build_where_clause(
-    pub_year_start: Optional[int] = None,
+    pub_year: Optional[int] = None,
     paper_type: Optional[str] = None,
-    citation_min: Optional[int] = None,
-    pub_year_exact: bool = False,
 ) -> Optional[dict]:
-    """Chroma where절 조립 — 연도/논문유형/인용수 pre-filter.
+    """Chroma where절 조립 — 연도/논문유형 필터.
 
     paper_type은 현재 $eq(단일값)만 지원. 다중 유형 배제 조건(예: 학위논문 제외)이 필요해지면 $in으로 확장 예정 — 지금은 미구현 (4단계 칩 생성 로직에서 실제 필요 여부 확인 후 확장).
-    pub_year_exact=True면 pub_year_start를 "이상"이 아니라 정확히 그 해로 매칭 (논문 목록 연도 드롭다운 전용).
+
+    연도는 **정확히 그 해만** 매칭한다(범위 없음). 예전에는 경로에 따라 "그 해만"($eq)과
+    "그 해 이상"($gte)이 갈렸고, 어느 쪽인지를 pub_year_exact 플래그 하나로 구분했다.
+    그런데 _apply_filter_update가 연도를 쓸 때마다 이 플래그를 False로 되돌려서,
+    드롭다운으로 2022를 골라도 같은 턴에 LLM이 연도를 다시 추출하면 $eq가 $gte로 뒤집혔다
+    — 2022를 골랐는데 2025가 섞여 나오고, LLM이 연도를 못 뽑은 턴에는 멀쩡한
+    "됐다 안 됐다"의 원인. 의미가 하나뿐이면 뒤집힐 것도 없으므로 플래그째 제거했다.
+
+    인용수(citation_min)는 여기서 다루지 않는다 — Chroma 메타데이터의 citation_count는
+    1,000건 중 628건에만 키가 있고(나머지 372건은 PostgreSQL 기준 전부 0), $gte는 키가 없는
+    문서를 매칭하지 못해 인용수 조건을 켜는 순간 코퍼스 37%가 조건과 무관하게 탈락했다.
+    값 자체는 PostgreSQL papers.citation_count와 628건 전부 일치하고 PG는 1,000건 전량을
+    갖고 있으므로, Chroma를 백필해 같은 값을 두 군데 두는 대신 PG를 단일 출처로 삼고
+    kci_only/sci_only/paper_type과 같은 단계에서 파이썬 후처리로 거른다
+    (node_response_builder). 인용수는 시간에 따라 변하는 값이라 벡터스토어 메타데이터
+    스냅샷에 넣으면 갱신할 때마다 재적재가 필요해지는 것도 이유.
     """
     conditions = []
-    if pub_year_start:
-        if pub_year_exact:
-            conditions.append({"Pubyear": {"$eq": pub_year_start}})
-        else:
-            conditions.append({"Pubyear": {"$gte": pub_year_start}})
+    if pub_year:
+        conditions.append({"Pubyear": {"$eq": pub_year}})
     if paper_type:
         conditions.append({"DBCode": {"$eq": paper_type}})
-    if citation_min is not None:
-        conditions.append({"citation_count": {"$gte": citation_min}})
     if not conditions:
         return None
     if len(conditions) == 1:
@@ -292,35 +300,41 @@ class ChromaSearchService:
         self,
         query: str,
         n_results: Optional[int] = None,
-        pub_year_start: Optional[int] = None,
+        pub_year: Optional[int] = None,
         scope: Optional[str] = None,
         paper_type: Optional[str] = None,
-        citation_min: Optional[int] = None,
-        pub_year_exact: bool = False,
     ) -> list[PaperSearchItem]:
         self._init()
-
-        where_clause = _build_where_clause(pub_year_start, paper_type, citation_min, pub_year_exact)
 
         query_vec = self._encode_query(query)
 
         # RRF 랭킹(순수 점수 계산)은 코퍼스 전체를 대상으로 해도 저렴함(실측 약 3초, 대부분
-        # 쿼리 인코딩 1회 비용) — where절 필터를 pub_year_start/paper_type처럼 정확하게 적용하기
-        # 위해 candidate_n을 n_results*4로 미리 자르던 것을 없애고 전체를 후보로 삼는다.
+        # 쿼리 인코딩 1회 비용) — candidate_n을 n_results*4로 미리 자르던 것을 없애고 전체를 후보로 삼는다.
+        #
+        # 검색·랭킹·관련도 하한선은 **필터와 무관하게 항상 코퍼스 전체 기준**으로 계산하고,
+        # 연도/논문유형 필터는 아래 선정 루프에서 통과 여부만 본다. 예전에는 Chroma where절로
+        # 후보를 먼저 줄인 뒤 그 안에서 1위를 뽑아 하한선을 정했는데, 그러면 필터가 1위를
+        # 걷어낼 때 하한선이 같이 내려가 원래 못 들어오던 논문이 새로 들어왔다 — 필터를 걸수록
+        # 결과가 늘거나, 요약이 말한 건수와 필터 적용 후 건수가 어긋나는 원인이었다
+        # (실측: "암 치료" 무필터 174건 중 DIKO 16건인데, DIKO 프리필터를 걸면 55건이 나오고
+        #  그중 39건은 무필터 결과에 아예 없던 논문이었음).
+        # 이제 필터는 결과를 줄이기만 하며, 결과는 항상 무필터 결과의 부분집합이다.
         total = self._collection.count()
-        semantic_results = self._semantic_search(query_vec, total, where=where_clause)
+        semantic_results = self._semantic_search(query_vec, total)
         bm25_results = self._bm25_search(query, total)
         semantic_score_map = dict(semantic_results)
 
-        if where_clause:
-            # BM25는 ChromaDB where절 대상이 아니므로, 동일 필터 기준 ID 집합을 별도 조회해 교집합만 남김
-            filtered_ids = set(self._collection.get(where=where_clause, include=[])["ids"])
-            bm25_results = [(doc_id, score) for doc_id, score in bm25_results if doc_id in filtered_ids]
-
         combined = _rrf_combine(semantic_results, bm25_results)
 
-        # 관련도 하한선 — where절 통과 후보 중 1위 similarity_score 대비 search_relevance_ratio
-        # 미만인 건 제외. 절대 점수 기준으로는 코퍼스 전체가 다 걸려버리는 경우가 있어
+        where_clause = _build_where_clause(pub_year, paper_type)
+        # BM25는 ChromaDB where절 대상이 아니라서, 어차피 동일 필터 기준 ID 집합을 따로 조회해야 한다.
+        filtered_ids = (
+            set(self._collection.get(where=where_clause, include=[])["ids"])
+            if where_clause else None
+        )
+
+        # 관련도 하한선 — 코퍼스 전체 1위 similarity_score 대비 search_relevance_ratio 미만인 건 제외.
+        # 절대 점수 기준으로는 코퍼스 전체가 다 걸려버리는 경우가 있어
         # (질의와 진짜 무관한 문서도 완만하게 이어지는 분포라 절벽이 없음, 실측 확인됨)
         # "1위 대비 상대적으로 얼마나 안 맞는지"로 판단한다.
         top_similarity = semantic_results[0][1] if semantic_results else 0.0
@@ -337,6 +351,8 @@ class ChromaSearchService:
             if not paper:
                 continue
             if semantic_score_map.get(doc_id, 0.0) < min_similarity:
+                continue
+            if filtered_ids is not None and doc_id not in filtered_ids:
                 continue
             # scope 필터 — DBCode 기준 (기존 로직 그대로 유지, 이번 작업 범위 아님)
             # KCI: JAKO / SCI계열: SCIE·SSCI·AHCI (현재 미적재, 추후 추가 가능)
@@ -371,14 +387,12 @@ class ChromaSearchService:
         self,
         query: str,
         n_results: Optional[int] = None,
-        pub_year_start: Optional[int] = None,
+        pub_year: Optional[int] = None,
         scope: Optional[str] = None,
         paper_type: Optional[str] = None,
-        citation_min: Optional[int] = None,
-        pub_year_exact: bool = False,
     ) -> list[PaperSearchItem]:
         return await asyncio.to_thread(
-            self._sync_search, query, n_results, pub_year_start, scope, paper_type, citation_min, pub_year_exact
+            self._sync_search, query, n_results, pub_year, scope, paper_type
         )
 
     def _sync_get_by_ids(self, ids: list[str]) -> list[PaperSearchItem]:
@@ -394,19 +408,9 @@ class ChromaSearchService:
     async def get_items_by_ids(self, ids: list[str]) -> list[PaperSearchItem]:
         return await asyncio.to_thread(self._sync_get_by_ids, ids)
 
-    def _sync_get_citation_counts(self, ids: list[str]) -> dict[str, Optional[int]]:
-        self._init()
-        if not ids:
-            return {}
-        meta = self._collection.get(ids=ids, include=["metadatas"])
-        return {
-            doc_id: m.get("citation_count")
-            for doc_id, m in zip(meta["ids"], meta["metadatas"])
-        }
-
-    async def get_citation_counts(self, ids: list[str]) -> dict[str, Optional[int]]:
-        """ids에 대한 citation_count만 가볍게 조회 (필드 없으면 None). PostgreSQL 왕복 없음."""
-        return await asyncio.to_thread(self._sync_get_citation_counts, ids)
+    # get_citation_counts(Chroma 메타데이터 조회)는 제거됨 — 1,000건 중 372건에 키가 없어
+    # 칩 임계값이 결과 집합의 37%를 못 보고 계산됐다. 호출부(node_response_builder)는 이미
+    # 같은 턴에 PostgreSQL을 읽고 있으므로 거기서 나온 값을 그대로 쓴다(왕복 추가 없음).
 
 
 _service: Optional[ChromaSearchService] = None

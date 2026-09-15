@@ -23,6 +23,7 @@ from app.langgraph.search_state import (
     SearchState,
     _apply_filter_update,
     _apply_keyword_addition,
+    _release_panel_ownership,
     empty_filters,
 )
 from app.core.database import AsyncSessionLocal
@@ -117,7 +118,7 @@ async def node_keyword_extractor(state: SearchState) -> SearchState:
 
 [필터 조건 추출]
 입력에 아래 조건이 명시적으로 언급된 경우에만 채운다 (언급 안 된 필드는 null, 임의 추정 금지):
-- pub_year_start: 정수 연도. "최근 3년"처럼 상대 표현이면 오늘 날짜 기준으로 직접 계산해 절대 연도로 반환
+- pub_year_start: 정수 연도. **사용자가 특정 연도 한 해를 지목했을 때만** 채운다 (예: "2022년 논문" → 2022). 연도 필터는 그 해만 매칭하는 단일 연도 선택이고 범위 검색이 없으므로, "최근 3년"/"2020년 이후"처럼 기간을 뜻하는 표현은 표현할 방법이 없다 — 이런 경우는 null로 두고 임의의 한 해로 좁히지 말 것(사용자가 요청하지 않은 연도로 결과가 잘린다).
 - paper_type: "학술 저널"(국내외 학술지·학술대회 포함) | "박사학위 논문" | "석사학위 논문" 중 하나, 언급 없으면 null
 - citation_min: 정수. "인용 많은"처럼 모호하면 null (숫자 임의 추정 금지)
 - kci_only: "KCI 등재 논문만" 같은 언급이 있으면 true, 언급 없으면 null
@@ -139,8 +140,9 @@ JSON만 반환:
     filters = dict(state.get("filters") or empty_filters())
     filters["keywords"] = [c["ko"] for c in candidates]
     filters = dict(_apply_filter_update(filters, filter_vals))
+    panel_owned = _release_panel_ownership(state.get("panel_owned") or [], filter_vals)
 
-    return {**state, "filters": filters}
+    return {**state, "filters": filters, "panel_owned": panel_owned}
 
 
 # ── node_free_input_classifier: 자유입력 전용, 통합 프롬프트(의도분류+확장키워드) ──
@@ -162,7 +164,7 @@ async def node_free_input_classifier(state: SearchState) -> SearchState:
 - "주제변경": 완전히 다른 주제로 바꾸려는 요청
 
 [intent="좁히기"일 때] params.filter에 아래 중 해당하는 필드만 채운다 (언급 안 된 필드는 null):
-- pub_year_start: 정수 연도. "최근 3년"처럼 상대 표현이면 오늘 날짜 기준으로 직접 계산해 절대 연도로 반환
+- pub_year_start: 정수 연도. **사용자가 특정 연도 한 해를 지목했을 때만** 채운다 (예: "2022년 논문" → 2022). 연도 필터는 그 해만 매칭하는 단일 연도 선택이고 범위 검색이 없으므로, "최근 3년"/"2020년 이후"처럼 기간을 뜻하는 표현은 표현할 방법이 없다 — 이런 경우는 null로 두고 임의의 한 해로 좁히지 말 것(사용자가 요청하지 않은 연도로 결과가 잘린다).
 - paper_type: "학술 저널"(국내외 학술지·학술대회 포함) | "박사학위 논문" | "석사학위 논문" 중 하나, 언급 없으면 null
 - citation_min: 정수. "인용 많은"처럼 모호하면 null (숫자 임의 추정 금지)
 - kci_only: "KCI 등재 논문만" 같은 언급이 있으면 true, 언급 없으면 null
@@ -192,11 +194,13 @@ JSON만 반환:
     params = result.get("params") or {}
 
     filters = dict(state.get("filters") or empty_filters())
+    panel_owned = list(state.get("panel_owned") or [])
     history = list(state.get("history") or [])
 
     if intent == "좁히기":
         filter_vals = params.get("filter") or {}
         filters = dict(_apply_filter_update(filters, filter_vals))
+        panel_owned = _release_panel_ownership(panel_owned, filter_vals)
         history.append(RefinementStep(
             step_id=str(uuid.uuid4()),
             step_type="narrow", applied_filter=filter_vals, added_keyword=None,
@@ -221,6 +225,7 @@ JSON만 반환:
         filter_vals = params.get("filter") or {}
         filters = dict(_apply_filter_update(empty_filters(), filter_vals))
         filters["keywords"] = new_keywords
+        panel_owned = []  # 필터를 전부 리셋했으므로 패널 소유 기록도 같이 비운다
         history.append(RefinementStep(
             step_id=str(uuid.uuid4()),
             step_type="search", applied_filter=None, added_keyword=None,
@@ -231,6 +236,7 @@ JSON만 반환:
     new_state = {
         **state,
         "filters": filters,
+        "panel_owned": panel_owned,
         "history": history,
         "_free_input_intent": intent,
     }
@@ -280,18 +286,18 @@ def _build_narrow_chips(
     threshold = settings.chip_evenness_threshold
     candidates: list[tuple[float, NarrowChip]] = []
 
+    # 연도 필터는 "그 해만" 매칭하는 단일 연도 선택이라, 분위수 구간의 하한값을 집어
+    # "OOOO년 이후"로 제안하면 칩 라벨과 실제 동작이 어긋난다(구간을 뜻하는 값인데 한 해로 걸림).
+    # 논문유형 칩과 같은 방식으로 결과에서 가장 많은 연도를 제안한다 — 눌렀을 때 몇 건이
+    # 남는지가 라벨만 보고도 예측 가능해진다.
     years = [it["year"] for it in result_items if it.get("year") is not None]
     if years:
-        bin_indices, edges = _numeric_quantile_bins(years, bin_count)
-        counts = [0] * (len(edges) + 1)
-        for b in bin_indices:
-            counts[b] += 1
-        score, k_eff = _entropy_score(counts)
+        year_counts = Counter(years)
+        score, k_eff = _entropy_score(list(year_counts.values()))
         if k_eff > 1 and score >= threshold:
-            top_bin_lower = edges[-1] if edges else min(years)
-            year_value = int(top_bin_lower)
+            year_value = int(year_counts.most_common(1)[0][0])
             candidates.append((score, NarrowChip(
-                chip_id="narrow_year", chip_type="year", label=f"{year_value}년 이후 논문만 보기",
+                chip_id="narrow_year", chip_type="year", label=f"{year_value}년 논문만 보기",
                 value={"pub_year_start": year_value},
             )))
 
@@ -497,28 +503,28 @@ async def node_response_builder(state: SearchState) -> SearchState:
     chroma_paper_type = "DIKO" if paper_type_filter in ("박사학위 논문", "석사학위 논문") else None
     # similarity_score/snippet은 사전계산 캐시(scripts/embed_abstract_sentences.py)를 쓰므로
     # 후보 수와 무관하게 빠름 — n_results 생략해 where절 필터를 통과한 전체 후보를 받는다.
-    # kci_only/sci_only/paper_type은 뒤에서 전체 후보에 대해 적용된다.
+    # kci_only/sci_only/paper_type/citation_min은 뒤에서 전체 후보에 대해 적용된다.
     timings: Dict[str, int] = {}
     with _stage("chroma_search", timings):
         items = await svc.search(
             query=" ".join(filters.get("keywords") or []),
-            pub_year_start=filters.get("pub_year_start"),
+            pub_year=filters.get("pub_year_start"),
             paper_type=chroma_paper_type,
-            citation_min=filters.get("citation_min"),
-            pub_year_exact=bool(filters.get("pub_year_exact")),
         )
 
-    # 칩 엔트로피 계산 전용 lookup
-    # (PostgreSQL citation_count는 미매칭 건도 0으로 채워져 있어 엔트로피 계산에 부적합 — 별도 이슈로만 기록)
     ids = [it.paper_id for it in items]
-    with _stage("citation_lookup", timings):
-        citation_lookup = await svc.get_citation_counts(ids)
 
     # 카드에 노출할 배지는 PostgreSQL enrichment로 별도 채움 (citation_count/kci/sci/SJR 등)
+    # 칩 임계값 계산과 citation_min 필터가 함께 쓰는 인용수 — 카드에 표시되는 값과
+    # 같은 출처(PostgreSQL)여야 "인용 5회"로 보이는 논문이 "5회 이상" 필터에서 빠지는 일이 없다.
+    citation_lookup: dict[str, Optional[int]] = {}
     async with AsyncSessionLocal() as db:
         try:
             with _stage("pg_enrichment", timings):
                 db_extra = await get_paper_cards_batch(db, ids)
+                citation_lookup = {
+                    pid: (db_extra.get(pid) or {}).get("citation_count") for pid in ids
+                }
                 for it in items:
                     extra = db_extra.get(it.paper_id) or {}
                     it.credibility = CredibilityInfo(badge="unknown", citation_count=extra.get("citation_count"))
@@ -542,6 +548,14 @@ async def node_response_builder(state: SearchState) -> SearchState:
         items = [it for it in items if it.credibility.sci_indexed]
     if paper_type_filter:
         items = [it for it in items if it.paper_type == paper_type_filter]
+    citation_min = filters.get("citation_min")
+    if citation_min is not None:
+        # 인용수를 모르는 논문(enrichment 실패로 None)은 "0회 이상"에서도 빼지 않는다 —
+        # citation_min=0은 "조건 없음"과 같은 뜻이라 여기서 결과가 줄면 필터가 역행하는 것처럼 보인다.
+        items = [
+            it for it in items
+            if (it.credibility.citation_count if it.credibility.citation_count is not None else 0) >= citation_min
+        ]
 
     # items = _apply_scoring(items, research_purpose_class=state.get("research_purpose_class") or "neutral")  # 관련도순 정렬 원칙에 따라 비활성화
     items = _sort_items(items)
@@ -561,7 +575,11 @@ async def node_response_builder(state: SearchState) -> SearchState:
             timestamp=datetime.now(timezone.utc).isoformat(),
         ))
 
-    narrow_chips = _build_narrow_chips(result_items, citation_lookup) if total_count > 4 else []
+    # 연도/유형 분위수는 result_items(=화면에 보이는 최종 결과)로 계산되는데 인용수만
+    # 필터 이전 후보 전체로 계산되면, 화면에 없는 논문이 만든 임계값이 칩 라벨에 찍힌다
+    # ("인용수 N회 이상만 보기"를 눌렀는데 건수가 예상과 어긋나는 원인). 같은 집합으로 맞춘다.
+    visible_citations = {it["paper_id"]: citation_lookup.get(it["paper_id"]) for it in result_items}
+    narrow_chips = _build_narrow_chips(result_items, visible_citations) if total_count > 4 else []
     type_distribution = dict(Counter(
         it["paper_type"] for it in result_items if it.get("paper_type")
     ))

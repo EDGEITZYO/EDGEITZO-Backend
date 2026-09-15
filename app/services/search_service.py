@@ -152,7 +152,7 @@ async def _search_chroma_local(
         service = get_chroma_search_service()
         return await service.search(
             query=query,
-            pub_year_start=pub_year_start,
+            pub_year=pub_year_start,
             scope=scope,
             paper_type=paper_type,
         )

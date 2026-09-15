@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 class SearchPapersRequest(BaseModel):
     query: str = Field(..., min_length=1, description="사용자 검색어")
     pub_year_start: Optional[int] = Field(
-        None, description="이 연도 이상만 포함. 미설정 시 전체 연도"
+        None, description="발행 연도. **정확히 그 해만** 포함한다 (2022 → 2022년 논문만, 범위 아님). 미설정 시 전체 연도"
     )
     paper_type: Optional[Literal["JAKO", "DIKO", "JAFO", "CFKO"]] = Field(
         None,

@@ -26,6 +26,7 @@ from app.langgraph.search_state import (
     SearchState,
     _apply_filter_update,
     _apply_keyword_addition,
+    _release_panel_ownership,
     empty_filters,
 )
 from app.models.user import User
@@ -219,13 +220,12 @@ class ChatRequest(BaseModel):
     pub_year_start: Optional[int] = Field(
         None,
         description=(
-            "발행연도 필터 직접 지정 — 이 경로(드롭다운 직접 지정)로 보내면 정확히 그 연도만 매칭됨 "
-            "('이상' 범위가 아님). 드롭다운의 현재 선택값을 매 요청마다 그대로 보내면 됨. "
+            "발행연도 필터 직접 지정 — **정확히 그 연도만** 매칭됨 (2022 → 2022년 논문만). "
+            "범위('이상') 검색은 없으며, 자연어·칩·드롭다운 어느 경로로 들어와도 의미가 같다. "
+            "드롭다운의 현재 선택값을 매 요청마다 그대로 보내면 됨. "
             "필드 자체를 아예 안 보내면 이전 값 유지, 필드를 포함해서 null로 보내면 '전체'로 해제됨 "
             "(즉 드롭다운에서 '전체'를 선택했을 때는 pub_year_start: null을 명시적으로 보낼 것 — "
-            "필드를 통째로 빼면 안 됨). 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨. "
-            "참고: 자연어로 '최근 3년'/'OOOO년 이후'라고 말했을 때는 이 필드가 아니라 LLM 분류 경로를 "
-            "타므로 여전히 그 연도 이상 범위로 처리됨 — 동작이 다르니 혼용하지 말 것."
+            "필드를 통째로 빼면 안 됨). 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨."
         ),
     )
     paper_type: Optional[Literal["학술 저널", "박사학위 논문", "석사학위 논문"]] = Field(
@@ -258,8 +258,7 @@ class ChatRequest(BaseModel):
 
 
 class FilterStateSchema(BaseModel):
-    pub_year_start: Optional[int] = Field(None, description="발행 연도 필터값. pub_year_exact가 true면 이 연도만, 아니면 이 연도 이상(예: 2021 → 2021년 이후). 미설정 시 null")
-    pub_year_exact: Optional[bool] = Field(None, description="true면 pub_year_start를 정확히 그 연도로만 매칭(논문 목록 드롭다운). false/null이면 그 연도 이상 범위(자연어 검색/칩)")
+    pub_year_start: Optional[int] = Field(None, description="발행 연도 필터값. **정확히 그 해만** 매칭한다 (예: 2022 → 2022년 논문만, 2023년 이후는 포함되지 않음). 미설정 시 null — 이때는 연도 제한 없이 전체 연도가 나온다")
     paper_type: Optional[str] = Field(None, description="'학술 저널'(국내외 학술지·학술대회 통합) | '박사학위 논문' | '석사학위 논문'. 미설정 시 null")
     citation_min: Optional[int] = Field(None, description="이 인용수 이상만 포함. 미설정 시 null")
     kci_only: Optional[bool] = Field(None, description="true면 KCI 등재 논문만 포함. 미설정 시 null")
@@ -354,6 +353,7 @@ def _new_state(session_id: str, user_query: str) -> SearchState:
         sort_order="relevance",
         research_purpose_class=None,
         filters=empty_filters(),
+        panel_owned=[],
         history=[],
         result_items=[],
         total_count=0,
@@ -385,6 +385,7 @@ def _apply_chip_action(state: SearchState, chip_id: str, chip_type: str) -> Sear
         return {**state, "_skip_classification": True}
 
     filters = dict(state.get("filters") or empty_filters())
+    panel_owned = list(state.get("panel_owned") or [])
     history = list(state.get("history") or [])
     step_type = _CHIP_TYPE_TO_STEP_TYPE.get(chip_type, "narrow")
 
@@ -401,13 +402,17 @@ def _apply_chip_action(state: SearchState, chip_id: str, chip_type: str) -> Sear
     else:
         value = chip.get("value") or {}
         filters = dict(_apply_filter_update(filters, value))
+        panel_owned = _release_panel_ownership(panel_owned, value)
         history.append({
             "step_id": str(uuid.uuid4()),
             "step_type": step_type, "applied_filter": value, "added_keyword": None,
             "result_count": 0, "result_items": [], "timestamp": timestamp,
         })
 
-    return {**state, "filters": filters, "history": history, "_skip_classification": True}
+    return {
+        **state, "filters": filters, "panel_owned": panel_owned,
+        "history": history, "_skip_classification": True,
+    }
 
 
 _DIRECT_FILTER_FIELDS = ("pub_year_start", "paper_type", "kci_only", "sci_only")
@@ -417,48 +422,70 @@ def _apply_direct_filters(state: SearchState, request: ChatRequest) -> SearchSta
     """발행연도/논문유형/KCI/SCI 드롭다운·토글 직접 지정 처리 — LLM 호출 없이 filters에 반영.
 
     field-presence 기반: request.model_fields_set에 필드명이 있는지(요청 JSON에 그 키가
-    실제로 포함됐는지)로 판단한다. 포함돼 있으면 값이 null이어도 '명시적으로 이 값으로
-    설정(=해제)'로 처리하고, 키 자체가 없으면 이전 값을 그대로 둔다. 즉 드롭다운에서
-    '전체'를 고르거나 토글을 껐을 때는 필드를 아예 빼지 말고 null/false를 명시적으로
-    보내야 실제로 해제된다 — 그래야 '생략=이전 값 유지'와 구분됨.
+    실제로 포함됐는지)로 판단한다. 키 자체가 없으면 이전 값을 그대로 둔다.
     (LLM 분류 경로(_apply_filter_update)는 '언급 안 함=null=변경 없음'이 맞으므로
     이 field-presence 판단을 쓰지 않는다 — 의도적으로 다른 규칙.)
 
-    pub_year_start는 이 드롭다운 경로로 들어올 때만 pub_year_exact=True로 같이 세팅해
-    "그 연도 이상"이 아니라 "정확히 그 해"로 매칭한다 (논문 목록 화면의 연도 드롭다운 전용 —
-    자연어 검색의 "최근 3년"/"OOOO년 이후" 해석이나 칩 클릭은 계속 기존 범위 검색을 쓴다).
+    값이 null로 온 경우 '해제'로 볼지는 **그 필드를 패널이 걸었는지**(state["panel_owned"])로
+    가른다. 패널이 건 거면 자기가 되돌리는 것이므로 해제하고, 채팅(자연어·칩)이 건 거면
+    무시한다. 프런트는 드롭다운 현재값을 매 요청 보내는데 그 드롭다운은 채팅이 건 필터를
+    모르고 계속 '전체'(null)로 남아 있어서, 이 구분이 없으면 그 null이 매 턴 채팅 필터를
+    지운다 — "채팅은 16건인데 패널에서 KCI만 켜니 69건"이 그 증상이었다.
+    (패널이 null이 아닌 '값'을 보내 채팅이 건 같은 축을 덮어쓰는 건 지금도 허용된다.
+     이 부분은 채팅/패널 필터 소유권 모델이 정해지면 같이 정리할 것.)
+
+    연도는 경로와 무관하게 "정확히 그 해"로 매칭되므로 여기서 따로 표시할 플래그가 없다
+    (예전의 pub_year_exact는 같은 필드에 두 가지 의미를 얹어 뒤집히던 원인이라 제거됨).
 
     message가 비어있으면(순수 필터 변경만) 칩 클릭과 동일하게 history에 narrow 스텝을 기록하고
     _skip_classification=True로 세팅해 자유입력 분류 노드가 이전 턴의 stale한 메시지를
     재분류하는 걸 막는다. message가 함께 오면 free_input_classifier가 이번 턴의 history를
-    책임지므로 여기서는 중복 기록하지 않는다(뒤에서 result_count가 마지막 항목에만 채워지기 때문)."""
+    책임지므로 여기서는 중복 기록하지 않는다(뒤에서 result_count가 마지막 항목에만 채워지기 때문).
+    같은 요청에 칩까지 실려 오면 _apply_chip_action이 이번 턴의 스텝을 기록하므로 여기서는
+    기록하지 않는다 — 둘 다 기록하면 앞 스텝이 result_count=0인 유령으로 남는다."""
     touched = request.model_fields_set & set(_DIRECT_FILTER_FIELDS)
     if not touched:
         return state
 
     filters = dict(state.get("filters") or empty_filters())
+    panel_owned = list(state.get("panel_owned") or [])
     applied = {}
     for field in touched:
         value = getattr(request, field)
+        # 네 필드 모두 falsy가 곧 '조건 없음'이다 — 연도/유형은 null, KCI/SCI 토글은
+        # null이거나 false(꺼짐). 토글을 끈 false도 null과 똑같이 해제 의도로 다뤄야
+        # 한다. 안 그러면 프런트가 매 요청 보내는 false가 채팅이 건 KCI/SCI를 지운다.
+        clearing = not value
+        if clearing and field not in panel_owned:
+            continue  # 채팅이 건 필터 — 패널의 '전체'/'꺼짐'으로는 못 지운다
         filters[field] = value
         applied[field] = value
-        if field == "pub_year_start":
-            filters["pub_year_exact"] = value is not None
-    new_state = {**state, "filters": filters}
+        if clearing:
+            panel_owned.remove(field)
+        elif field not in panel_owned:
+            panel_owned.append(field)
+    new_state = {**state, "filters": filters, "panel_owned": panel_owned}
 
-    if not request.message:
-        history = list(state.get("history") or [])
-        history.append({
-            "step_id": str(uuid.uuid4()),
-            "step_type": "narrow",
-            "applied_filter": applied,
-            "added_keyword": None,
-            "result_count": 0,
-            "result_items": [],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
-        new_state["history"] = history
+    chip_follows = bool(request.chip_id and request.chip_type)
+    if not request.message and not chip_follows:
+        # 소유권 때문에 보낸 값이 전부 무시됐어도(applied가 빔) 이번 턴은 여전히 '패널 조작'이다.
+        # 여기서 분류를 건너뛰지 않으면 직전 턴의 stale한 message가 LLM에 재분류되어,
+        # 사용자가 아무것도 안 했는데 history에 유령 narrow 스텝이 매 요청 쌓이고
+        # (실측: 같은 요청 4번에 스텝 1→5) 그 재분류가 '주제변경'으로 떨어지면 채팅이 건
+        # 필터가 통째로 리셋된다. filters를 실제로 바꿨는지와 무관하게 세워야 하는 신호다.
         new_state["_skip_classification"] = True
+        if applied:
+            history = list(state.get("history") or [])
+            history.append({
+                "step_id": str(uuid.uuid4()),
+                "step_type": "narrow",
+                "applied_filter": applied,
+                "added_keyword": None,
+                "result_count": 0,
+                "result_items": [],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+            new_state["history"] = history
     return new_state
 
 
