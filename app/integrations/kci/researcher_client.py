@@ -113,6 +113,10 @@ class KCIArticle:
     categories: list[str] = field(default_factory=list)
     doi: str | None = None
     url: str | None = None
+    issn: str | None = None
+    # articleDetail의 <abstract-group>. 코퍼스 밖 논문에는 초록이 이것 말고 공급처가 없다.
+    abstract: str | None = None
+    abstract_eng: str | None = None
     authors: list[KCIAuthor] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)
     # articleDetail에서만 오는 서지 지표.
@@ -165,7 +169,22 @@ def parse_article_detail(xml_text: str) -> KCIArticle | None:
         kci_registration=(journal_info.findtext("kci-registration") or "").strip() or None
         if journal_info is not None
         else None,
+        issn=(journal_info.findtext("issn") or "").strip() or None if journal_info is not None else None,
     )
+
+    # 초록. lang="original"이 그 논문의 원어이고, 영문 논문은 original과 english가 같은 값으로 온다.
+    abstract_group = info.find("abstract-group")
+    if abstract_group is not None:
+        for node in abstract_group.findall("abstract"):
+            body = (node.text or "").strip()
+            if not body:
+                continue
+            if node.get("lang") == "english":
+                article.abstract_eng = body
+            else:
+                article.abstract = body
+        if article.abstract is None:
+            article.abstract = article.abstract_eng
 
     # 참고문헌 영역에도 <author>가 있으므로 author-group 안으로만 내려간다.
     group = info.find("author-group")

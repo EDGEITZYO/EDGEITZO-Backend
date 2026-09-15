@@ -6,6 +6,7 @@ from app.models.paper import Paper
 from app.models.paper_selection_reason import PaperSelectionReason
 from app.models.recent_read import RecentRead
 from app.models.researcher import Researcher, ResearcherPaper
+from app.models.researcher_flow import ResearcherFlowCache  # noqa: F401
 from app.models.user import User
 from app.models.user_keyword_map import UserKeywordMap
 
