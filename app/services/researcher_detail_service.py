@@ -89,12 +89,14 @@ FROM unioned u
 LEFT JOIN papers p   ON p.id = u.internal_paper_id
 LEFT JOIN journals j ON j.id = p.journal_id
 -- 코퍼스 밖 논문에는 ISSN이 없어 journal_id를 못 붙인다. 학술지명으로 잇는다(실측 매칭률 91.4%).
+-- journal_id가 이미 있으면 건너뛴다. 이 LATERAL이 논문마다 journals를 훑어서,
+-- 인덱스(ix_journals_title_norm) 없이는 341편 연구자에서 1.1초가 걸렸다.
 -- 같은 제목의 저널이 40쌍 있어 SCI 등재 쪽을 우선한다 — 배지를 놓치는 쪽보다 낫다.
 LEFT JOIN LATERAL (
     SELECT jj.sci_indexed FROM journals jj
     WHERE lower(btrim(jj.title)) = lower(btrim(u.journal))
     ORDER BY jj.sci_indexed DESC NULLS LAST LIMIT 1
-) jn ON u.journal IS NOT NULL
+) jn ON u.journal IS NOT NULL AND p.journal_id IS NULL
 LEFT JOIN researcher_papers rp
        ON rp.researcher_id = :rid AND rp.paper_id = u.internal_paper_id
 """
