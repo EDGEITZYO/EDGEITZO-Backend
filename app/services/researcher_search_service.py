@@ -16,6 +16,7 @@ from app.schemas.researcher import (
     ResearcherGraphResponse,
     ResearcherSearchItem,
     ResearcherSearchResponse,
+    ResearcherSearchSort,
     ResearcherSearchType,
 )
 from app.services.researcher_similarity import field_affinity
@@ -71,6 +72,47 @@ _NAME_SEARCH_SQL = text(
     ORDER BY
         name_score DESC,
         coalesce(r.total_papers, r.corpus_paper_count, 0) DESC,
+        r.total_citations DESC NULLS LAST,
+        r.author_name_kor ASC NULLS LAST,
+        r.author_name_eng ASC NULLS LAST
+    LIMIT :limit OFFSET :offset
+    """
+)
+
+
+_NAME_SEARCH_BY_PAPER_COUNT_SQL = text(
+    """
+    SELECT
+        r.researcher_id,
+        r.source,
+        r.scienceon_cn,
+        r.author_name_kor,
+        r.author_name_eng,
+        r.institution_current,
+        r.institution_dept,
+        r.keywords,
+        coalesce(r.total_papers, r.corpus_paper_count, 0) AS total_papers,
+        r.total_citations,
+        r.citation_source,
+        coalesce(r.corpus_paper_count, 0) AS corpus_paper_count,
+        r.first_pubyear,
+        r.last_pubyear,
+        CASE
+            WHEN lower(replace(coalesce(r.author_name_kor, ''), ' ', '')) = :norm_query THEN 3
+            WHEN lower(replace(coalesce(r.author_name_eng, ''), ' ', '')) = :norm_query THEN 3
+            WHEN lower(replace(coalesce(r.author_name_kor, ''), ' ', '')) LIKE :norm_prefix THEN 2
+            WHEN lower(replace(coalesce(r.author_name_eng, ''), ' ', '')) LIKE :norm_prefix THEN 2
+            ELSE 1
+        END AS name_score,
+        count(1) OVER() AS total_count
+    FROM researchers r
+    WHERE lower(replace(coalesce(r.author_name_kor, ''), ' ', '')) = :norm_query
+       OR lower(replace(coalesce(r.author_name_eng, ''), ' ', '')) = :norm_query
+       OR lower(replace(coalesce(r.author_name_kor, ''), ' ', '')) LIKE :norm_prefix
+       OR lower(replace(coalesce(r.author_name_eng, ''), ' ', '')) LIKE :norm_prefix
+    ORDER BY
+        coalesce(r.total_papers, r.corpus_paper_count, 0) DESC,
+        name_score DESC,
         r.total_citations DESC NULLS LAST,
         r.author_name_kor ASC NULLS LAST,
         r.author_name_eng ASC NULLS LAST
@@ -270,6 +312,19 @@ def _rank_field_items_by_affinity(
     )
 
 
+def _sort_field_items_by_paper_count(items: list[ResearcherSearchItem]) -> list[ResearcherSearchItem]:
+    return sorted(
+        items,
+        key=lambda item: (
+            -item.total_papers,
+            -(item.relevance_score or 0.0),
+            -(item.field_paper_count or 0),
+            -(item.total_citations or 0),
+            _display_name(item),
+        ),
+    )
+
+
 async def _has_name_matches(db: AsyncSession, query: str) -> bool:
     count = await db.scalar(_NAME_COUNT_SQL, _name_params(query))
     return bool(count)
@@ -281,6 +336,7 @@ async def search_researchers(
     *,
     page: int = 1,
     size: int = 20,
+    sort: ResearcherSearchSort = "relevance",
 ) -> ResearcherSearchResponse:
     cleaned = _clean_query(query)
     search_type: ResearcherSearchType = "name" if await _has_name_matches(db, cleaned) else "field"
@@ -289,7 +345,8 @@ async def search_researchers(
 
     if search_type == "name":
         params = _name_params(cleaned) | {"limit": limit, "offset": offset}
-        rows = (await db.execute(_NAME_SEARCH_SQL, params)).mappings().all()
+        sql = _NAME_SEARCH_BY_PAPER_COUNT_SQL if sort == "paper_count" else _NAME_SEARCH_SQL
+        rows = (await db.execute(sql, params)).mappings().all()
         items = [_item_from_row(row, field=False) for row in rows]
     else:
         params = _field_params(cleaned)
@@ -301,6 +358,8 @@ async def search_researchers(
             [item.researcher_id for item in all_items],
         )
         ranked_items = _rank_field_items_by_affinity(all_items, affinity_rows)
+        if sort == "paper_count":
+            ranked_items = _sort_field_items_by_paper_count(ranked_items)
         items = ranked_items[offset : offset + limit]
 
     total = int(rows[0]["total_count"]) if rows else 0

@@ -14,6 +14,7 @@ from app.schemas.researcher import (
     RecentResearcherSearchResponse,
     ResearcherGraphResponse,
     ResearcherSearchResponse,
+    ResearcherSearchSort,
     SaveRecentResearcherSearchRequest,
 )
 from app.schemas.researcher_detail import (
@@ -49,10 +50,14 @@ async def search_researcher_endpoint(
     query: str = Query(..., min_length=1, description="연구자명 또는 연구 분야"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
+    sort: ResearcherSearchSort = Query(
+        "relevance",
+        description="정렬 기준: relevance=관련도순(기본) | paper_count=논문개수순",
+    ),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await search_researchers(db, query, page=page, size=size)
+    result = await search_researchers(db, query, page=page, size=size, sort=sort)
     if current_user:
         save_recent_researcher_search(str(current_user.id), result.query, result.search_type)
     return success_response(
