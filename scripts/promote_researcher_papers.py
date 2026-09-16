@@ -22,6 +22,10 @@
   python scripts/promote_researcher_papers.py --concurrency 3 # 기본 2
 
 재실행하면 이미 편입된 논문은 건너뛴다(papers.id 존재 여부로 판단).
+
+실행 결과 (2026-09-16, 전량):
+  적재 25,781편 / DOI 연결 16편 / 96.5분 (4.5건/초, 동시성 3)
+  초록 96.4% · 학술지 연결 94.2% · 연구자 논문 33,179건 전부 papers와 연결됨
 """
 from __future__ import annotations
 
@@ -184,6 +188,22 @@ async def main() -> None:
     args = parser.parse_args()
 
     async with AsyncSessionLocal() as session:
+        # 먼저 DOI로 이어붙인다. 같은 논문이 코퍼스에 다른 ID(ScienceON CN)로 이미 있는
+        # 경우가 있어, 그대로 INSERT하면 papers.doi 유니크 제약에 걸린다(실측 16건).
+        # 새로 넣을 게 아니라 연결하면 되는 건이다.
+        linked = (
+            await session.execute(
+                text(
+                    "UPDATE researcher_external_papers e SET internal_paper_id = p.id "
+                    "FROM papers p "
+                    "WHERE e.internal_paper_id IS NULL AND e.doi IS NOT NULL AND p.doi = e.doi"
+                )
+            )
+        ).rowcount
+        if linked:
+            await session.commit()
+            print(f"DOI가 같은 기존 논문에 연결: {linked}건")
+
         pending = [r[0] for r in (await session.execute(text(_PENDING_SQL))).all()]
     if args.limit:
         pending = pending[: args.limit]
