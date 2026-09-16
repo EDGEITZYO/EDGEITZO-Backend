@@ -18,7 +18,7 @@ def test_researcher_routes_are_registered_in_openapi():
         for param in paths["/api/v1/researchers/field-graph"]["get"]["parameters"]
     }
 
-    assert {"query", "page", "size"} <= search_params
+    assert {"query", "page", "size", "sort"} <= search_params
     assert {"query", "limit"} <= graph_params
     assert "get" in paths["/api/v1/researchers/recent-searches"]
     assert "post" in paths["/api/v1/researchers/recent-searches"]
