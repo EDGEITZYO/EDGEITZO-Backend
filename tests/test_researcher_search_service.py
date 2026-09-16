@@ -78,6 +78,7 @@ def _field_row(
     *,
     relevance_score: float,
     field_paper_count: int = 1,
+    total_papers: int = 10,
     total_citations: int = 0,
     total_count: int = 2,
 ) -> dict:
@@ -90,7 +91,7 @@ def _field_row(
         "institution_current": "Test University",
         "institution_dept": "Test Department",
         "keywords": ["biology"],
-        "total_papers": 10,
+        "total_papers": total_papers,
         "total_citations": total_citations,
         "citation_source": "kci",
         "corpus_paper_count": 3,
@@ -174,6 +175,40 @@ async def test_field_search_executes_sql_and_ranks_by_embedding_affinity(monkeyp
     assert db.execute_calls[0][1] == {"pattern": "%biology%"}
 
 
+@pytest.mark.asyncio
+async def test_field_search_can_sort_by_total_paper_count(monkeypatch):
+    db = FakeSearchDb(
+        name_count=0,
+        rows=[
+            _field_row("high-affinity", relevance_score=1.0, total_papers=3),
+            _field_row("many-papers", relevance_score=1.0, total_papers=20),
+        ],
+    )
+
+    async def fake_field_affinity(db_arg, keyword, researcher_ids):
+        return [
+            {"researcher_id": "high-affinity", "affinity": 0.91},
+            {"researcher_id": "many-papers", "affinity": 0.2},
+        ]
+
+    monkeypatch.setattr(service, "field_affinity", fake_field_affinity)
+
+    response = await service.search_researchers(db, "biology", page=1, size=2, sort="paper_count")
+
+    assert response.search_type == "field"
+    assert [item.researcher_id for item in response.items] == ["many-papers", "high-affinity"]
+    assert [item.relevance_score for item in response.items] == [0.2, 0.91]
+
+
+@pytest.mark.asyncio
+async def test_name_search_uses_paper_count_sql_when_requested():
+    db = FakeSearchDb(name_count=1, rows=[])
+
+    await service.search_researchers(db, "kim", page=1, size=10, sort="paper_count")
+
+    assert db.execute_calls[0][0] is service._NAME_SEARCH_BY_PAPER_COUNT_SQL
+
+
 def test_name_detection_sql_uses_exact_and_prefix_not_substring():
     count_sql = str(service._NAME_COUNT_SQL)
     name_sql = str(service._NAME_SEARCH_SQL)
@@ -209,9 +244,12 @@ def test_recent_researcher_searches_use_separate_key_limit_and_dedupe(monkeypatc
 
 def test_total_papers_sql_falls_back_to_corpus_paper_count_not_article_count():
     name_sql = str(service._NAME_SEARCH_SQL)
+    name_paper_count_sql = str(service._NAME_SEARCH_BY_PAPER_COUNT_SQL)
     field_sql = str(service._FIELD_SEARCH_SQL)
 
     assert "coalesce(r.total_papers, r.corpus_paper_count, 0) AS total_papers" in name_sql
+    assert "coalesce(r.total_papers, r.corpus_paper_count, 0) AS total_papers" in name_paper_count_sql
     assert "coalesce(r.total_papers, r.corpus_paper_count, 0) AS total_papers" in field_sql
     assert "coalesce(r.total_papers, r.article_cnt" not in name_sql
+    assert "coalesce(r.total_papers, r.article_cnt" not in name_paper_count_sql
     assert "coalesce(r.total_papers, r.article_cnt" not in field_sql
