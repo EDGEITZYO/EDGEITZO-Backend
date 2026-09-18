@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import bearer_scheme, decode_token
+from app.core.settings import settings
 from app.models.user import User
 from app.repositories.user_repository import get_user_by_id
 
@@ -63,3 +64,19 @@ async def get_current_user_optional(
     if not user_id:
         return None
     return await get_user_by_id(db, user_id)
+
+
+async def get_current_member(current_user: User = Depends(get_current_user)) -> User:
+    """계정 관리 API(프로필 설정·수정, 탈퇴)용 — 게스트는 403."""
+    if current_user.is_guest:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="게스트 계정에서는 사용할 수 없는 기능입니다",
+        )
+    return current_user
+
+
+async def require_demo_mode() -> None:
+    """DEMO_MODE=false면 게스트 관련 엔드포인트를 없는 것처럼 404로 응답."""
+    if not settings.demo_mode:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")

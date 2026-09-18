@@ -24,6 +24,8 @@ class User(Base):
     purposes = Column(JSON, nullable=True)
     purpose_custom = Column(String, nullable=True)
     is_profile_set = Column(Boolean, default=False, nullable=False)
+    # 데모 기간 익명 체험 계정. email은 guest_{uuid}@guest.local 플레이스홀더, 비밀번호 없음.
+    is_guest = Column(Boolean, default=False, server_default="false", nullable=False, index=True)
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

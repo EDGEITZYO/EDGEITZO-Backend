@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.rate_limit import limit_llm_calls
 from app.core.deps import get_current_user_optional
 from app.core.redis import get_redis
 from app.core.response import success_response
@@ -59,6 +60,7 @@ _CHIP_TYPE_TO_STEP_TYPE = {
 
 @router.post(
     "/search/papers",
+    dependencies=[Depends(limit_llm_calls)],
     response_model=ApiResponse[SearchPapersResponse],
     responses={422: {"model": ApiErrorResponse}, 500: {"model": ApiErrorResponse}},
     summary="논문 검색 (단순)",
@@ -110,6 +112,7 @@ async def _fetch_reason_sources(db: AsyncSession, paper_ids: list[str]) -> dict[
 
 @router.post(
     "/search/selection-reasons",
+    dependencies=[Depends(limit_llm_calls)],
     response_model=ApiResponse[SelectionReasonResponse],
     responses={422: {"model": ApiErrorResponse}, 500: {"model": ApiErrorResponse}},
     summary="논문 선정 사유 조회/생성",
@@ -544,6 +547,7 @@ def _to_chat_response(session_id: str, state: SearchState) -> ChatResponse:
 
 @router.post(
     "/search/chat",
+    dependencies=[Depends(limit_llm_calls)],
     response_model=ApiResponse[ChatResponse],
     summary="자연어 검색 — 검색-먼저 모델",
     description="""질의 입력 즉시 광범위 검색을 실행하고, 결과 기반 칩/자유입력으로 정교화하는 방식입니다.
@@ -662,6 +666,7 @@ async def _collect_selection_reasons(result_state: SearchState) -> list[str]:
 
 @router.post(
     "/search/chat/stream",
+    dependencies=[Depends(limit_llm_calls)],
     summary="자연어 검색 — SSE 스트리밍",
     description="""`/search/chat`과 동일한 검색-먼저 대화를 SSE(Server-Sent Events)로 스트리밍합니다.
 

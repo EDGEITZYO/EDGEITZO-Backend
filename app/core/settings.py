@@ -68,6 +68,25 @@ class Settings(BaseSettings):
     # 토큰 블랙리스트 전용 Redis DB
     redis_blacklist_db: int = 3
 
+    # 데모(심사·투표) 기간 게스트 체험 — false면 게스트 발급·게스트/비로그인 호출 제한이
+    # 전부 꺼지고 기존 동작과 완전히 같아진다.
+    demo_mode: bool = False
+    # 게스트 refresh 토큰(및 쿠키) 만료. access 토큰은 회원과 같은 jwt_access_expire_minutes.
+    guest_token_expire_days: int = 30
+    # rate limit 카운터 전용 Redis DB
+    redis_rate_limit_db: int = 4
+    # POST /auth/guest — IP당 발급 횟수. 투표장·학교 와이파이처럼 한 IP(NAT) 뒤에
+    # 여러 명이 있을 수 있어 넉넉하게 잡는다.
+    guest_issue_limit_per_ip: int = 20
+    guest_issue_window_seconds: int = 3600
+    # 검색/LLM 호출 API — 게스트는 user_id 기준, 토큰 없는 요청은 IP 기준. 회원은 제한 없음.
+    guest_llm_rate_limit: int = 60
+    anon_llm_rate_limit_per_ip: int = 60
+    llm_rate_window_seconds: int = 3600
+    # X-Forwarded-For에서 오른쪽부터 몇 번째 값을 클라이언트 IP로 볼지 = 앞단 신뢰 프록시 수.
+    # 맨 왼쪽 값은 클라이언트가 임의로 넣을 수 있으므로 쓰지 않는다. Nginx 한 단이면 1.
+    trusted_proxy_hops: int = 1
+
     # KCI
     kci_api_key: str = ""
     kci_base_url: str = "https://open.kci.go.kr/po/openapi/openApiSearch.kci"

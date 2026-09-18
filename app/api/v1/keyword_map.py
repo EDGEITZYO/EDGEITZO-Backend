@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.rate_limit import limit_llm_calls
 from app.core.response import success_response
 from app.models.user_keyword_map import UserKeywordMap
 from app.schemas.common import ApiErrorResponse, ApiResponse
@@ -199,6 +200,7 @@ async def get_keyword_map_node_papers(
 
 @router.get(
     "/keyword-map/node/{node_key:path}/detail",
+    dependencies=[Depends(limit_llm_calls)],
     response_model=ApiResponse[KeywordMapNodeDetailResponse],
     responses={404: {"model": ApiErrorResponse}},
     summary="키워드 노드 상세 정보 (정의 + 연구자)",
