@@ -1,10 +1,12 @@
 from __future__ import annotations
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 from fastapi import HTTPException, status
 from redis import Redis
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -120,7 +122,7 @@ async def register_service(
 async def login_service(db: AsyncSession, email: str, password: str) -> dict[str, Any]:
     user = await get_user_by_email(db, email)
 
-    if not user:
+    if not user or user.is_guest:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="가입되지 않은 이메일입니다. 회원가입을 진행해주세요",
@@ -246,6 +248,10 @@ async def refresh_tokens(refresh_token: str) -> dict[str, Any]:
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않은 토큰 페이로드입니다")
 
+    guest = bool(payload.get("guest"))
+    if guest and not settings.demo_mode:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="게스트 체험 기간이 종료되었습니다")
+
     # Rotation: 이전 refresh jti 블랙리스트 등록
     old_jti = payload.get("jti")
     exp = payload.get("exp")
@@ -254,8 +260,42 @@ async def refresh_tokens(refresh_token: str) -> dict[str, Any]:
         add_to_blacklist(old_jti, remaining)
 
     return {
-        "access_token": create_access_token(user_id),
-        "refresh_token": create_refresh_token(user_id),
+        "access_token": create_access_token(user_id, guest=guest),
+        "refresh_token": create_refresh_token(user_id, guest=guest),
+        "token_type": "bearer",
+        "guest": guest,
+    }
+
+
+# 게스트 기본 프로필 — 온보딩을 건너뛰고 바로 서비스에 들어가게 하기 위한 값(기획 확정값).
+_GUEST_PROFILE: dict[str, Any] = {
+    "research_field": "암 분자 생물학",
+    "role": "석사과정",
+    "purposes": ["논문 작성 참고"],
+    "purpose_custom": "랩미팅 준비",
+    "gender": "여성",
+    "birth_year": 1999,
+}
+_GUEST_NAME_PREFIX = "게스트"
+# .local은 EmailStr 검증에서 거부되는 특수 용도 도메인이라, 이 주소로는
+# 로그인·회원가입·이메일 인증 요청 자체가 422로 막힌다.
+_GUEST_EMAIL_DOMAIN = "guest.local"
+
+
+async def create_guest_service(db: AsyncSession) -> dict[str, Any]:
+    seq = (await db.execute(text("SELECT nextval('guest_nickname_seq')"))).scalar_one()
+    user = await create_user(
+        db,
+        email=f"guest_{uuid.uuid4().hex}@{_GUEST_EMAIL_DOMAIN}",
+        provider="guest",
+        name=f"{_GUEST_NAME_PREFIX}{seq}",
+        is_guest=True,
+        is_profile_set=True,
+        **_GUEST_PROFILE,
+    )
+    return {
+        "access_token": create_access_token(str(user.id), guest=True),
+        "refresh_token": create_refresh_token(str(user.id), guest=True),
         "token_type": "bearer",
     }
 

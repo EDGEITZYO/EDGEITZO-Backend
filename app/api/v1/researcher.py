@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path as PathParam, Query,
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.rate_limit import limit_llm_calls
 from app.core.deps import get_current_user, get_current_user_optional
 from app.core.response import success_response
 from app.models.user import User
@@ -276,6 +277,7 @@ async def get_researcher_coauthors(
 
 @router.get(
     "/{researcher_id}/research-flow",
+    dependencies=[Depends(limit_llm_calls)],
     response_model=ApiResponse[ResearchFlowResponse],
     responses={404: {"model": ApiErrorResponse}},
     summary="연구 흐름 — 주제 묶음·연결·요약 (08-05, 08-06)",

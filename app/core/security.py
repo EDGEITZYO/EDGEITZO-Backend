@@ -41,22 +41,26 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
-def create_access_token(user_id: str) -> str:
+def create_access_token(user_id: str, *, guest: bool = False) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_access_expire_minutes)
-    return jwt.encode(
-        {"sub": user_id, "exp": expire, "type": "access", "jti": str(uuid.uuid4())},
-        settings.jwt_secret_key,
-        algorithm="HS256",
-    )
+    payload = {"sub": user_id, "exp": expire, "type": "access", "jti": str(uuid.uuid4())}
+    if guest:
+        payload["guest"] = True
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm="HS256")
 
 
-def create_refresh_token(user_id: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(days=settings.jwt_refresh_expire_days)
-    return jwt.encode(
-        {"sub": user_id, "exp": expire, "type": "refresh", "jti": str(uuid.uuid4())},
-        settings.jwt_secret_key,
-        algorithm="HS256",
-    )
+def refresh_expire_days(guest: bool = False) -> int:
+    return settings.guest_token_expire_days if guest else settings.jwt_refresh_expire_days
+
+
+def create_refresh_token(user_id: str, *, guest: bool = False) -> str:
+    """게스트 여부는 refresh에도 실어 둔다 — /auth/refresh 회전 시 DB 조회 없이
+    게스트 만료 기간(guest_token_expire_days)을 그대로 이어가기 위해서다."""
+    expire = datetime.now(timezone.utc) + timedelta(days=refresh_expire_days(guest))
+    payload = {"sub": user_id, "exp": expire, "type": "refresh", "jti": str(uuid.uuid4())}
+    if guest:
+        payload["guest"] = True
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm="HS256")
 
 
 def decode_token(token: str) -> Optional[dict]:

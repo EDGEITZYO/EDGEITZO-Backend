@@ -7,12 +7,14 @@ from redis import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_member, get_current_user, require_demo_mode
+from app.core.rate_limit import limit_guest_issue
 from app.core.redis_client import get_redis_client
 from app.core.response import success_response
 from app.core.security import bearer_scheme, decode_token
 from app.core.settings import settings
 from app.models.user import User
+from app.schemas.common import ApiErrorResponse, ApiResponse
 from app.schemas.auth import (
     EmailCheckRequest,
     LoginRequest,
@@ -24,6 +26,7 @@ from app.schemas.auth import (
     VerifyCodeRequest,
 )
 from app.services.auth_service import (
+    create_guest_service,
     create_profile_service,
     email_check_service,
     login_service,
@@ -37,6 +40,7 @@ from app.services.auth_service import (
 
 _ACCESS_MAX_AGE = 60 * settings.jwt_access_expire_minutes
 _REFRESH_MAX_AGE = 60 * 60 * 24 * settings.jwt_refresh_expire_days
+_GUEST_REFRESH_MAX_AGE = 60 * 60 * 24 * settings.guest_token_expire_days
 
 
 _IS_LOCAL = settings.app_env == "local"
@@ -44,7 +48,12 @@ _SECURE_COOKIE = not _IS_LOCAL
 _SAMESITE = "lax" if _IS_LOCAL else "none"
 
 
-def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
+def _set_auth_cookies(
+    response: Response,
+    access_token: str,
+    refresh_token: str,
+    refresh_max_age: int = _REFRESH_MAX_AGE,
+) -> None:
     response.set_cookie(
         key="access_token",
         value=access_token,
@@ -59,7 +68,7 @@ def _set_auth_cookies(response: Response, access_token: str, refresh_token: str)
         httponly=True,
         secure=_SECURE_COOKIE,
         samesite=_SAMESITE,
-        max_age=_REFRESH_MAX_AGE,
+        max_age=refresh_max_age,
     )
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -183,6 +192,46 @@ async def login(
     return success_response(data=TokenResponse(**result), message="로그인 성공")
 
 
+@router.post(
+    "/guest",
+    response_model=ApiResponse[TokenResponse],
+    summary="게스트 자동 발급 (데모 기간 전용)",
+    description=(
+        "로그인 없이 서비스를 체험할 수 있는 익명 게스트 계정을 만들고 토큰을 발급합니다.\n\n"
+        "**`DEMO_MODE=true`일 때만 동작하며, 꺼져 있으면 404를 반환합니다.** 요청 본문은 없습니다.\n\n"
+        "- 응답 형식은 `POST /auth/login`과 같습니다 (`data`에 토큰 + HttpOnly 쿠키 2개)\n"
+        "- 온보딩 완료 상태(`is_profile_set=true`)로 생성되며 기본 프로필이 채워집니다. "
+        "닉네임은 `게스트{번호}`로 계정마다 다릅니다\n"
+        "- Refresh 토큰 만료는 `GUEST_TOKEN_EXPIRE_DAYS`(기본 30일), Access 토큰 만료는 회원과 같습니다. "
+        "토큰 payload에 `guest: true`가 들어갑니다\n"
+        "- 북마크·최근 열람·탐색 이력 등은 회원과 똑같이 계정별로 분리 저장됩니다\n"
+        "- 게스트는 프로필 설정·수정(`POST /auth/profile`, `PATCH /mypage/profile`)과 "
+        "회원 탈퇴(`DELETE /mypage/account`)를 쓸 수 없습니다 (403)\n"
+        "- 검색/LLM 호출 API는 게스트 계정당 `GUEST_LLM_RATE_LIMIT`회/`LLM_RATE_WINDOW_SECONDS`로 제한됩니다 (429)\n"
+        "- IP당 발급 횟수는 `GUEST_ISSUE_LIMIT_PER_IP`회/`GUEST_ISSUE_WINDOW_SECONDS`로 제한되며, "
+        "넘으면 429와 `Retry-After` 헤더(초)를 반환합니다"
+    ),
+    responses={
+        200: {"description": "게스트 생성 및 토큰 발급"},
+        404: {"model": ApiErrorResponse, "description": "DEMO_MODE가 꺼져 있음"},
+        429: {"model": ApiErrorResponse, "description": "IP당 발급 횟수 초과 (Retry-After 헤더 포함)"},
+    },
+    dependencies=[Depends(require_demo_mode), Depends(limit_guest_issue)],
+)
+async def issue_guest(
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await create_guest_service(db)
+    _set_auth_cookies(
+        response,
+        result["access_token"],
+        result["refresh_token"],
+        refresh_max_age=_GUEST_REFRESH_MAX_AGE,
+    )
+    return success_response(data=TokenResponse(**result), message="게스트 체험을 시작합니다")
+
+
 @router.get(
     "/kakao/callback",
     summary="카카오 OAuth2 콜백",
@@ -251,12 +300,13 @@ async def google_callback(
     responses={
         200: {"description": "프로필 저장 완료 및 서비스 시작"},
         401: {"description": "JWT 토큰 없음 또는 만료"},
+        403: {"description": "게스트 계정은 사용 불가"},
         422: {"description": "요청 형식 오류"},
     },
 )
 async def create_profile(
     body: ProfileCreateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_member),
     db: AsyncSession = Depends(get_db),
 ):
     result = await create_profile_service(db, current_user, body.model_dump(exclude_none=True))
@@ -281,7 +331,12 @@ async def refresh(request: Request, response: Response):
     if not refresh_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="refresh 토큰이 없습니다")
     result = await refresh_tokens(refresh_token)
-    _set_auth_cookies(response, result["access_token"], result["refresh_token"])
+    _set_auth_cookies(
+        response,
+        result["access_token"],
+        result["refresh_token"],
+        refresh_max_age=_GUEST_REFRESH_MAX_AGE if result["guest"] else _REFRESH_MAX_AGE,
+    )
     return success_response(message="토큰이 갱신되었습니다")
 
 

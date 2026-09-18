@@ -3,7 +3,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_member, get_current_user
 from app.core.response import success_response
 from app.core.security import bearer_scheme
 from app.models.user import User
@@ -33,13 +33,17 @@ async def get_mypage(
 @router.patch(
     "/profile",
     response_model=ApiResponse[MypageProfile],
-    responses={401: {"model": ApiErrorResponse}, 422: {"model": ApiErrorResponse}},
+    responses={
+        401: {"model": ApiErrorResponse},
+        403: {"model": ApiErrorResponse, "description": "게스트 계정은 사용 불가"},
+        422: {"model": ApiErrorResponse},
+    },
     summary="마이페이지 프로필 수정",
     description="로그인한 사용자의 프로필 정보를 부분 수정합니다.",
 )
 async def update_profile(
     body: MypageProfileUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_member),
     db: AsyncSession = Depends(get_db),
 ):
     data = await update_mypage_profile(
@@ -53,7 +57,10 @@ async def update_profile(
 @router.delete(
     "/account",
     response_model=ApiResponse[None],
-    responses={401: {"model": ApiErrorResponse}},
+    responses={
+        401: {"model": ApiErrorResponse},
+        403: {"model": ApiErrorResponse, "description": "게스트 계정은 사용 불가"},
+    },
     summary="회원 탈퇴",
     description="""회원 탈퇴 처리 후 토큰을 무효화합니다. **Authorization 헤더에 Bearer 토큰 필요.**
 
@@ -68,7 +75,7 @@ async def update_profile(
 )
 async def delete_account_endpoint(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_member),
     db: AsyncSession = Depends(get_db),
 ):
     await delete_account(db, current_user)
