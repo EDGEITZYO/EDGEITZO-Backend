@@ -121,9 +121,32 @@ def _resolve_pricing(model: str) -> dict[str, float]:
     return _DEFAULT_PRICING
 
 
-def _calc_cost_micro_usd(model: str, input_tokens: int, output_tokens: int) -> int:
+# 프롬프트 캐시 과금 배율 (입력 단가 대비). 5분 캐시 쓰기 1.25배, 읽기 0.1배.
+_CACHE_WRITE_MULTIPLIER = 1.25
+_CACHE_READ_MULTIPLIER = 0.1
+
+
+def _calc_cost_micro_usd(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_write_tokens: int = 0,
+    cache_read_tokens: int = 0,
+) -> int:
+    """호출 1건의 비용(마이크로 달러).
+
+    usage.input_tokens에는 프롬프트 캐시로 쓰거나 읽은 토큰이 **들어 있지 않다**. 예전에는
+    input/output만 세서, 캐시를 쓰는 선정 사유 호출이 실제 청구보다 적게 집계됐다(실측: 캐시가
+    데워진 상태 약 6%, 식은 상태에서 첫 묶음은 약 44% 과소). 그만큼 월 예산 가드가 늦게 걸려
+    가드보다 결제 잔액이 먼저 바닥날 수 있었다. 캐시 토큰도 청구되므로 같이 센다.
+    """
     pricing = _resolve_pricing(model)
-    cost_usd = (input_tokens * pricing["input"] + output_tokens * pricing["output"]) / 1_000_000
+    cost_usd = (
+        input_tokens * pricing["input"]
+        + output_tokens * pricing["output"]
+        + cache_write_tokens * pricing["input"] * _CACHE_WRITE_MULTIPLIER
+        + cache_read_tokens * pricing["input"] * _CACHE_READ_MULTIPLIER
+    ) / 1_000_000
     return int(cost_usd * 1_000_000)
 
 
@@ -201,7 +224,8 @@ async def _call_claude(
     thinking: Optional[dict] = None,
     system: Optional[str] = None,
     cache_system: bool = False,
-) -> tuple[str, int, int]:
+) -> tuple[str, int, int, int, int]:
+    """(본문, 입력 토큰, 출력 토큰, 캐시 쓰기 토큰, 캐시 읽기 토큰)."""
     client = _client()
     # 이름있는 인자가 아니라 extra_body로 보낸다 (위 주석 2번 참고).
     sampling_kwargs = (
@@ -245,7 +269,14 @@ async def _call_claude(
     text_block = next((b for b in resp.content if b.type == "text"), None)
     if text_block is None:
         raise ValueError(f"Claude 응답에 text 블록이 없음 (model={model}, stop_reason={resp.stop_reason})")
-    return text_block.text, resp.usage.input_tokens, resp.usage.output_tokens
+    usage = resp.usage
+    return (
+        text_block.text,
+        usage.input_tokens,
+        usage.output_tokens,
+        getattr(usage, "cache_creation_input_tokens", 0) or 0,
+        getattr(usage, "cache_read_input_tokens", 0) or 0,
+    )
 
 
 async def chat(
@@ -292,12 +323,12 @@ async def chat(
             return LLMResponse(cached=True, **json.loads(hit))
 
     # 3. API 호출
-    text, input_tokens, output_tokens = await _call_claude(
+    text, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens = await _call_claude(
         messages, model, temperature, max_tokens, thinking, system, cache_system
     )
 
     # 4. 비용 계산 + 누적 (실패해도 호출 결과는 반환)
-    cost_micro = _calc_cost_micro_usd(model, input_tokens, output_tokens)
+    cost_micro = _calc_cost_micro_usd(model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens)
     try:
         r.incrby(_COST_KEY_TOTAL, cost_micro)      # 관측용(평생)
         r.incrby(monthly_key, cost_micro)          # 차단 기준(이번 달)
