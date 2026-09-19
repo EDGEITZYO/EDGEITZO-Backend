@@ -10,11 +10,12 @@ from typing import Any, Dict, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.ai_usage_limit import AiUsage, consume_ai_usage, release_ai_usage, usage_subject
 from app.core.database import AsyncSessionLocal, get_db
 from app.core.rate_limit import limit_llm_calls
 from app.core.deps import get_current_user_optional
@@ -331,6 +332,16 @@ class ChatResponse(BaseModel):
         ),
     )
     is_broad_result: bool = Field(description="광범위 질문 판정. 임계값(search_broad_result_threshold) 미설정 시 항상 false")
+    remaining_new_chats: Optional[int] = Field(
+        None,
+        description="이 요청을 처리한 뒤 남은 새 채팅(AI 검색 시작) 횟수. 이용 한도가 꺼져 있으면 null. "
+        "0이면 다음 새 채팅 요청은 429(error_code=AI_CHAT_LIMIT)",
+    )
+    remaining_turns: Optional[int] = Field(
+        None,
+        description="이 채팅(session_id)에서 남은 턴(메시지·칩으로 좁히기/확장) 횟수. 이용 한도가 꺼져 있으면 null. "
+        "0이면 이 채팅의 다음 턴 요청은 429(error_code=AI_TURN_LIMIT). 정렬만 바꾸는 요청은 횟수를 쓰지 않는다",
+    )
 
 
 def _load_state(session_id: str) -> Optional[SearchState]:
@@ -529,6 +540,33 @@ def _record_search_history(current_user: Optional[User], session_id: str, result
         logger.warning("최근 탐색 이력 저장 실패 session_id=%s", session_id, exc_info=True)
 
 
+def _consume_chat_usage(
+    http_request: Request, request: ChatRequest, current_user: Optional[User]
+) -> tuple[str, Optional[SearchState], AiUsage]:
+    """이 요청이 새 채팅인지 턴인지 가려 이용 횟수를 쓴다. 한도를 넘으면 429(AI_CHAT_LIMIT/AI_TURN_LIMIT).
+
+    - 새 채팅: session_id가 없거나, 있어도 서버에 상태가 없는 경우(만료·임의 값)
+    - 턴: 기존 채팅에 메시지나 칩이 온 경우
+    - 그 외(정렬·직접 필터만 바꾸는 요청)는 횟수를 쓰지 않는다
+    """
+    session_id = request.session_id or str(uuid.uuid4())
+    existing = _load_state(request.session_id) if request.session_id else None
+    if existing is None:
+        kind = "new_chat"
+    elif request.message or (request.chip_id and request.chip_type):
+        kind = "turn"
+    else:
+        kind = "free"
+    subject = usage_subject(http_request, str(current_user.id) if current_user else None)
+    return session_id, existing, consume_ai_usage(subject, session_id, kind)
+
+
+def _with_usage(response: "ChatResponse", usage: AiUsage) -> "ChatResponse":
+    response.remaining_new_chats = usage.remaining_new_chats
+    response.remaining_turns = usage.remaining_turns
+    return response
+
+
 def _to_chat_response(session_id: str, state: SearchState) -> ChatResponse:
     return ChatResponse(
         session_id=session_id,
@@ -581,15 +619,23 @@ async def _refresh_bookmarks(response: ChatResponse, current_user: Optional[User
 3. `narrow_chips`/`expand_chips`의 `chip_id`를 다음 턴 `chip_id`에 그대로 전달하면 해당 칩이 적용됨
 
 **칩 클릭 시 주의**: `chip_id`+`chip_type`을 전달하면 `message`는 무시되고 칩 값이 바로 필터에 반영됩니다 (LLM 호출 없음).
+
+**이용 한도 (공모전 기간)** — 켜져 있을 때만 적용. 회원·게스트 모두, 토큰이 없으면 IP 기준
+- 새 채팅(session_id 없이 시작)은 1인당 `remaining_new_chats`만큼, 한 채팅의 턴(메시지·칩으로 좁히기/확장)은 `remaining_turns`만큼 남아 있다. 정렬만 바꾸는 요청은 횟수를 쓰지 않는다
+- 한도를 넘으면 **HTTP 429** (스트리밍도 스트림을 열기 전이라 일반 JSON). `error_code`로 구분한다
+  - `AI_CHAT_LIMIT`: 새 채팅 횟수 소진 / `AI_TURN_LIMIT`: 이 채팅의 턴 횟수 소진
+  - `message`는 사용자에게 보여줄 수 있는 문장이다
+- 검색이 실패(시간 초과·서버 오류)하면 쓴 횟수는 돌려준다
 """,
 )
 async def chat_search(
     request: ChatRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    session_id = request.session_id or str(uuid.uuid4())
-    state = _load_state(session_id) or _new_state(session_id, request.message)
+    session_id, existing, usage = _consume_chat_usage(http_request, request, current_user)
+    state = existing or _new_state(session_id, request.message)
     state["user_id"] = str(current_user.id) if current_user else ""
 
     if request.message:
@@ -613,12 +659,16 @@ async def chat_search(
             timeout=settings.graph_timeout_seconds,
         )
     except asyncio.TimeoutError:
+        release_ai_usage(usage)
         raise HTTPException(status_code=504, detail="요청 시간이 초과됐어요. 다시 시도해주세요.")
+    except Exception:
+        release_ai_usage(usage)  # 실패한 요청으로 횟수가 깎이지 않게
+        raise
 
     _save_state(session_id, result_state)
     _record_search_history(current_user, session_id, result_state)
     response = await _refresh_bookmarks(_to_chat_response(session_id, result_state), current_user)
-    return success_response(data=response, message="chat processed")
+    return success_response(data=_with_usage(response, usage), message="chat processed")
 
 
 async def _collect_selection_reasons(result_state: SearchState) -> list[str]:
@@ -723,18 +773,28 @@ async def _collect_selection_reasons(result_state: SearchState) -> list[str]:
   (요약 타이핑과 병렬로 미리 시작하므로 `done` 시점엔 이미 진행 중입니다)
 - `reason` 생성에 실패한 논문은 이벤트가 오지 않습니다 — 10건보다 적게 올 수 있습니다.
 - 스크롤·정렬·필터로 **새로 보이게 된** 논문만 `POST /search/selection-reasons`로 받아가세요.
+
+**이용 한도 (공모전 기간)** — 켜져 있을 때만 적용. 회원·게스트 모두, 토큰이 없으면 IP 기준
+- 새 채팅(session_id 없이 시작)은 1인당 `remaining_new_chats`만큼, 한 채팅의 턴(메시지·칩으로 좁히기/확장)은 `remaining_turns`만큼 남아 있다. 정렬만 바꾸는 요청은 횟수를 쓰지 않는다
+- 한도를 넘으면 **HTTP 429** (스트리밍도 스트림을 열기 전이라 일반 JSON). `error_code`로 구분한다
+  - `AI_CHAT_LIMIT`: 새 채팅 횟수 소진 / `AI_TURN_LIMIT`: 이 채팅의 턴 횟수 소진
+  - `message`는 사용자에게 보여줄 수 있는 문장이다
+- 검색이 실패(시간 초과·서버 오류)하면 쓴 횟수는 돌려준다
 """,
 )
 async def stream_chat(
     request: ChatRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    session_id = request.session_id or str(uuid.uuid4())
+    # 이용 한도는 스트림을 열기 전에 확인한다 — 넘으면 SSE가 아니라 일반 JSON 429로 응답
+    session_id, existing, usage = _consume_chat_usage(http_request, request, current_user)
 
     async def generate():
+        delivered = False
         try:
-            state = _load_state(session_id) or _new_state(session_id, request.message)
+            state = existing or _new_state(session_id, request.message)
             state["user_id"] = str(current_user.id) if current_user else ""
             if request.message:
                 state["messages"] = (state.get("messages") or []) + [{"role": "user", "content": request.message}]
@@ -765,6 +825,7 @@ async def stream_chat(
                     task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await task
+                    release_ai_usage(usage)
                     yield _sse("error", {"message": "요청 시간이 초과됐어요. 다시 시도해주세요."})
                     return
                 yield _sse("heartbeat", {})
@@ -786,7 +847,10 @@ async def stream_chat(
                 yield _sse("token", {"text": ai_summary[i:i + settings.sse_chunk_size]})
                 await asyncio.sleep(settings.sse_chunk_delay_seconds)
 
-            response = await _refresh_bookmarks(_to_chat_response(session_id, result_state), current_user)
+            response = _with_usage(
+                await _refresh_bookmarks(_to_chat_response(session_id, result_state), current_user), usage
+            )
+            delivered = True
             # 카드를 먼저 내보낸다. 선정 사유를 여기서 기다리면 사유 생성이 끝날 때까지
             # 카드가 화면에 아예 안 뜬다(초기 10건이면 수 초). 사유는 아래에서 뒤따라 흘린다.
             yield _sse("done", response.model_dump())
@@ -796,6 +860,8 @@ async def stream_chat(
 
         except Exception:
             logger.exception("SSE 스트리밍 오류 session_id=%s", session_id)
+            if not delivered:
+                release_ai_usage(usage)  # 결과를 못 받은 요청은 횟수를 돌려준다
             yield _sse("error", {"message": "서버 오류가 발생했어요. 잠시 후 다시 시도해주세요."})
 
     return StreamingResponse(

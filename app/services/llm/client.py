@@ -21,11 +21,24 @@ _COST_KEY_TOTAL = "llm:cost:total:edgeitzo"
 # 차단 기준. 달이 바뀌면 키가 바뀌므로 1일에 저절로 회복된다.
 _COST_KEY_MONTHLY_PREFIX = "llm:cost:monthly"
 _COST_KEY_DAILY_PREFIX = "llm:cost:daily"
+# 충전 예산 카운터 — 만료·리셋 없음 (settings.llm_budget_prepaid_usd 참고)
+_COST_KEY_PREPAID = "llm:cost:prepaid"
 
 # 지난달 키를 영원히 남겨둘 이유가 없다. 두 달이면 회고용으로 충분하다.
 _MONTHLY_TTL = 86400 * 70
 
 _BUDGET_MICRO_USD = int(settings.llm_budget_monthly_usd * 1_000_000)
+
+
+def _prepaid_mode() -> bool:
+    return settings.llm_budget_prepaid_usd is not None
+
+
+def _budget_state(r) -> tuple[str, int, int]:
+    """(방식, 사용액 마이크로달러, 한도 마이크로달러). 충전 예산이 설정돼 있으면 그쪽이 기준이다."""
+    if _prepaid_mode():
+        return "prepaid", int(r.get(_COST_KEY_PREPAID) or 0), int(settings.llm_budget_prepaid_usd * 1_000_000)
+    return "monthly", int(r.get(_monthly_key()) or 0), _BUDGET_MICRO_USD
 
 
 def _monthly_key(today: Optional[date] = None) -> str:
@@ -308,9 +321,15 @@ async def chat(
     # 1. 비용 한도 체크 (하드 차단) — 기준은 **이번 달** 사용액이다.
     #    평생 누적으로 막던 시절에는 한 번 넘으면 사람이 리셋을 부르기 전까지 영구히
     #    죽었다. 실제 과금은 달마다 다시 계산되므로 코드가 현실과 어긋나 있었다.
+    #    충전 예산이 설정돼 있으면 리셋 없는 충전 카운터로 막는다.
     monthly_key = _monthly_key()
-    current = int(r.get(monthly_key) or 0)
-    if current >= _BUDGET_MICRO_USD:
+    mode, current, limit = _budget_state(r)
+    if current >= limit:
+        if mode == "prepaid":
+            raise LLMBudgetExceededError(
+                f"충전 예산 소진: ${current / 1_000_000:.4f} / ${settings.llm_budget_prepaid_usd} "
+                "(충전 후 LLM_BUDGET_PREPAID_USD를 올려야 회복)"
+            )
         raise LLMBudgetExceededError(
             f"이번 달 비용 한도 초과: ${current / 1_000_000:.4f} / "
             f"${settings.llm_budget_monthly_usd} (다음 달 1일 자동 회복)"
@@ -336,6 +355,8 @@ async def chat(
         daily_key = f"{_COST_KEY_DAILY_PREFIX}:{date.today().isoformat()}"
         r.incrby(daily_key, cost_micro)
         r.expire(daily_key, 86400 * 7)
+        if _prepaid_mode():
+            r.incrby(_COST_KEY_PREPAID, cost_micro)  # 충전 예산 기준(리셋 없음)
     except Exception:
         logger.warning("비용 누적 실패 (호출은 성공)", exc_info=True)
 
@@ -364,9 +385,26 @@ async def get_monthly_cost() -> float:
     return int(get_redis(_DB).get(_monthly_key()) or 0) / 1_000_000
 
 
+async def get_prepaid_cost() -> float:
+    """충전 예산 모드를 켠 뒤로 쓴 금액 (USD)."""
+    return int(get_redis(_DB).get(_COST_KEY_PREPAID) or 0) / 1_000_000
+
+
+def get_budget_status() -> dict:
+    """차단 기준이 되는 예산 상태. 충전 예산이 설정돼 있으면 그쪽, 아니면 이번 달."""
+    mode, used, limit = _budget_state(get_redis(_DB))
+    return {
+        "mode": mode,
+        "used_usd": used / 1_000_000,
+        "limit_usd": limit / 1_000_000,
+        "remaining_usd": max(0, limit - used) / 1_000_000,
+        "exhausted": used >= limit,
+    }
+
+
 async def get_remaining_budget() -> float:
-    """이번 달 잔여 예산 조회 (USD). 음수가 되지 않게 0에서 자른다."""
-    return max(0.0, settings.llm_budget_monthly_usd - await get_monthly_cost())
+    """차단 기준 예산의 잔여액 (USD). 음수가 되지 않게 0에서 자른다."""
+    return get_budget_status()["remaining_usd"]
 
 
 def next_reset_date(today: Optional[date] = None) -> date:

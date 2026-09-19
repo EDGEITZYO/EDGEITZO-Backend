@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette import status
@@ -32,11 +32,20 @@ def validation_exception_handler(request: Request, exc: RequestValidationError):
     )
 
 
+class AppHTTPException(HTTPException):
+    """프런트가 상황을 구분해야 하는 오류용 — error_code를 응답에 그대로 싣는다.
+    (일반 HTTPException은 모두 error_code="HTTP_EXCEPTION"으로 나간다)"""
+
+    def __init__(self, status_code: int, detail: str, error_code: str, headers: dict | None = None):
+        super().__init__(status_code=status_code, detail=detail, headers=headers)
+        self.error_code = error_code
+
+
 def http_exception_handler(request: Request, exc):
     response = ApiErrorResponse(
         success=False,
         message=str(exc.detail),
-        error_code="HTTP_EXCEPTION",
+        error_code=getattr(exc, "error_code", "HTTP_EXCEPTION"),
         errors=[],
     )
 

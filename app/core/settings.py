@@ -81,6 +81,14 @@ class Settings(BaseSettings):
     guest_issue_window_seconds: int = 3600
     # 검색/LLM 호출 API — 게스트는 user_id 기준, 토큰 없는 요청은 IP 기준. 회원은 제한 없음.
     guest_llm_rate_limit: int = 60
+    # AI 자연어 검색(채팅) 인당 이용 한도 — 공모전 투표 기간 비용 관리용. 회원·게스트 모두 적용,
+    # 토큰이 없으면 IP 기준. 한도는 사용자별 카운터 기준이며 ai_usage_window_seconds 동안 유지된다.
+    #   새 채팅  : session_id 없이(또는 만료된 session_id로) 시작하는 검색
+    #   턴       : 기존 채팅에서 메시지·칩으로 좁히기/확장하는 요청 (정렬만 바꾸는 요청은 제외)
+    ai_usage_limit_enabled: bool = False
+    ai_new_chat_limit: int = 2
+    ai_turns_per_chat_limit: int = 3
+    ai_usage_window_seconds: int = 86400 * 90
     anon_llm_rate_limit_per_ip: int = 60
     llm_rate_window_seconds: int = 3600
     # X-Forwarded-For에서 오른쪽부터 몇 번째 값을 클라이언트 IP로 볼지 = 앞단 신뢰 프록시 수.
@@ -121,6 +129,12 @@ class Settings(BaseSettings):
         default=40.0,
         validation_alias=AliasChoices("LLM_BUDGET_MONTHLY_USD", "LLM_BUDGET_TOTAL_USD"),
     )
+    # 충전(선불) 예산 — 설정하면 월 예산 대신 이것으로 막는다. **리셋되지 않는다.**
+    # 월 예산은 달력 1일에 0부터 다시 세서, 선불로 충전한 만큼만 써야 할 때(공모전처럼 달을
+    # 넘겨 진행) 1일에 상한이 통째로 다시 열린다. 이 값은 "이 기능을 켠 뒤로 쓸 수 있는 총액"이고
+    # 카운터(llm:cost:prepaid)는 켠 시점부터 쌓인다. 다시 충전하면 충전액만큼 이 값을 올린다.
+    # 비용 리셋 API(POST /health/llm-cost/reset)는 이 카운터를 건드리지 않는다.
+    llm_budget_prepaid_usd: Optional[float] = None
     llm_timeout_seconds: int = 120
     # SDK가 429·5xx·연결 오류를 자체 백오프로 재시도하는 횟수. SDK 기본값과 같은 2지만,
     # 기본값에 기대면 버전이 바뀔 때 조용히 달라진다 — 명시해서 고정한다.
