@@ -30,6 +30,12 @@ from app.services.credibility_service import (
     paper_type_label,
     resolve_paper_type,
 )
+from app.services.domestic_paper_service import (
+    fetch_kci_paper,
+    is_domestic_key,
+    materialize_domestic_paper,
+    resolve_papers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +64,10 @@ _scienceon = ScienceOnClient()
         "- `fulltext_flag` — 원문 제공 여부. 없으면 null\n"
         "- `credibility` — 신뢰도 정보 (badge: `high`|`medium`|`low`|`unknown`)\n"
         "- `trust_badge` — 신뢰도 뱃지 (kci, sci, if_value, degree_type 등)\n\n"
-        "**404** — 해당 paper_id가 서비스 DB에 없는 경우"
+        "**국내(KCI) 논문**: `paper_id`가 KCI 논문 ID(`ART…`)면 서비스 DB에 아직 없어도 이 호출에서 "
+        "KCI로부터 받아 적재한 뒤 응답합니다(첫 조회만 약 0.5초 추가). 인용관계 그래프의 "
+        "`in_service=true` 노드는 모두 이 경로로 상세를 볼 수 있습니다.\n\n"
+        "**404** — 해당 paper_id가 서비스 DB에 없고 KCI에서도 찾을 수 없는 경우"
     ),
 )
 async def get_paper_detail(
@@ -66,6 +75,10 @@ async def get_paper_detail(
     db: AsyncSession = Depends(get_db),
 ):
     paper = await get_paper_with_journal(db, paper_id)
+    if paper is None and is_domestic_key(paper_id):
+        materialized_id = await materialize_domestic_paper(db, paper_id)
+        if materialized_id is not None:
+            paper = await get_paper_with_journal(db, materialized_id)
     if paper is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -194,6 +207,9 @@ async def get_paper_similar(
     description=(
         "논문의 참고문헌 목록을 반환합니다.\n\n"
         "**조회 경로** (db_code가 아니라 아래 순서로 분기합니다)\n"
+        "- `paper_id`가 KCI 논문 ID(`ART…`) → KCI articleDetail 참고문헌. 참고문헌에 KCI 논문 ID가 있으면 "
+        "`in_service=true`(국내 논문, 인용관계 그래프와 같은 기준)이고 `paper_id`로 상세 조회 가능 — "
+        "서비스 DB에 아직 없는 논문은 상세 조회 시 적재됨\n"
         "- `db_code = JAKO` → ScienceON browse API (CitedDocumentInfo). `CitedDOI`로만 서비스 DB 매칭 "
         "(ScienceON의 `CitedCn`은 논문 CN이 아니라 항목 일련번호라 쓸 수 없음 — DOI 없는 참고문헌은 항상 `in_service=false`)\n"
         "- 그 외 논문 중 **DOI 보유** → CrossRef API. DOI로 서비스 DB 매칭 (JAFO가 대부분이지만 db_code로 거르지 않음)\n"
@@ -202,7 +218,7 @@ async def get_paper_similar(
         "- `in_service: true` — 서비스 papers 테이블에 있는 논문 (`paper_id`로 상세 이동 가능)\n"
         "- `in_service: false` — 서비스 외 논문\n"
         "- `unstructured` — CrossRef 경로에서만 채워지는 원문 인용 문자열. ScienceON 경로는 항상 null\n\n"
-        "**502** — ScienceON(JAKO 경로) 호출 실패에만 해당합니다. 참고문헌이 실제로 없는 경우(빈 리스트)와 구분하기 위한 것입니다.\n"
+        "**502** — KCI(ART… 경로) 또는 ScienceON(JAKO 경로) 호출 실패에만 해당합니다. 참고문헌이 실제로 없는 경우(빈 리스트)와 구분하기 위한 것입니다.\n"
         "⚠️ CrossRef 경로는 호출이 실패해도 502가 아니라 **빈 리스트**로 반환되므로, 프론트에서 "
         "\'참고문헌 없음\'과 구분할 수 없습니다"
     ),
@@ -212,12 +228,25 @@ async def get_paper_references(
     db: AsyncSession = Depends(get_db),
 ):
     db_code, _, doi = await get_paper_meta(db, paper_id)
+    if db_code is None and is_domestic_key(paper_id) and await materialize_domestic_paper(db, paper_id) == paper_id:
+        db_code, _, doi = await get_paper_meta(db, paper_id)
 
     if db_code is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="해당 논문을 찾을 수 없습니다",
         )
+
+    # ── KCI 논문 ID(ART…): KCI articleDetail referenceInfo ────────────────
+    # ScienceON browse는 ScienceON CN으로만 조회되므로 KCI ID 논문은 KCI에서 받는다
+    if is_domestic_key(paper_id):
+        fetched = await fetch_kci_paper(paper_id)
+        if fetched is None:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="참고문헌 제공처(KCI) 호출에 실패했습니다",
+            )
+        return await _build_kci_response(db, fetched.references)
 
     # ── JAKO: ScienceON browse CitedDocumentInfo ──────────────────────────
     if db_code == "JAKO":
@@ -271,6 +300,28 @@ async def get_paper_references(
 
     # ── DIKO 등 참고문헌 없음 ────────────────────────────────────────────
     return success_response(data=[], message="ok")
+
+
+async def _build_kci_response(db: AsyncSession, refs: list) -> dict:
+    """KCI 참고문헌 → ReferenceResponse. in_service는 인용관계 그래프와 같은 기준이다 —
+    KCI 논문 ID(arti-id)가 있으면 국내 논문(true)이고, 서비스 DB에 아직 없어도 paper_id(ART…)로
+    상세 조회 시 적재된다."""
+    resolved = await resolve_papers(db, [r.arti_id for r in refs if r.arti_id])
+    result: list[ReferenceResponse] = []
+    for ref in refs:
+        domestic = is_domestic_key(ref.arti_id)
+        paper = resolved.get(ref.arti_id) if domestic else None
+        result.append(ReferenceResponse(
+            doi=normalize_doi(ref.doi) if ref.doi else None,
+            title=ref.title,
+            authors=ref.authors,
+            year=ref.pubyear,
+            journal=ref.journal,
+            in_service=domestic,
+            paper_id=(paper["id"] if paper else ref.arti_id) if domestic else None,
+            unstructured=None,
+        ))
+    return success_response(data=result, message="ok")
 
 
 async def _build_scienceon_response(db: AsyncSession, refs: list[ScienceOnReference]) -> dict:

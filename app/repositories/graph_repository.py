@@ -448,7 +448,15 @@ class GraphRepository:
         if record is None:
             return None
 
-        return self._paper_to_dict(record["paper"])
+        return self._citation_paper_dict(record["paper"])
+
+    @classmethod
+    def _citation_paper_dict(cls, paper: Any) -> dict[str, Any]:
+        """인용관계 그래프용 — refs_loaded는 KCI 참고문헌을 받아 연결까지 끝낸 논문인지
+        (app/services/domestic_paper_service.py가 표시). 안 끝났으면 확장할 때 받아 온다."""
+        data = cls._paper_to_dict(paper)
+        data["refs_loaded"] = dict(paper).get("refs_loaded_at") is not None
+        return data
 
     def find_citation_neighbors(
         self,
@@ -474,7 +482,29 @@ class GraphRepository:
                 session.run(query, cn=cn, limit=limit, excluded_cns=excluded_cns or [])
             )
 
-        return [self._paper_to_dict(record["paper"]) for record in records]
+        return [self._citation_paper_dict(record["paper"]) for record in records]
+
+    def has_more_citation_neighbors_batch(
+        self,
+        cns: list[str],
+        *,
+        direction: str,
+        excluded_cns: list[str],
+    ) -> dict[str, bool]:
+        """has_more_citation_neighbors를 노드 여러 개에 대해 한 번의 쿼리로. 노드마다 따로 부르면
+        요약 그래프 12칸에서 Aura 왕복(실측 median 94ms)이 12번 쌓인다."""
+        if not cns:
+            return {}
+        pattern = "-[:CITES]->" if direction == "reference" else "<-[:CITES]-"
+        query = f"""
+        UNWIND $cns AS cn
+        OPTIONAL MATCH (:Paper {{cn: cn}}){pattern}(c:Paper)
+        WHERE NOT c.cn IN $excluded_cns
+        RETURN cn, count(c) > 0 AS has_more
+        """
+        with self.driver.session() as session:
+            records = list(session.run(query, cns=cns, excluded_cns=excluded_cns))
+        return {r["cn"]: bool(r["has_more"]) for r in records}
 
     def has_more_citation_neighbors(
         self,

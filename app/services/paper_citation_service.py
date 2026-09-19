@@ -27,6 +27,7 @@ from app.schemas.paper_citation import (
     PaperCitationGraphResponse,
     PaperCitationNode,
 )
+from app.services.domestic_paper_service import is_domestic_key, materialize_domestic_paper
 
 logger = logging.getLogger(__name__)
 
@@ -66,17 +67,26 @@ def _node_from_in_service(paper: dict[str, Any], *, tier: int, side: str, has_mo
     )
 
 
-def _node_from_external(ref: PaperCitationExternalRef, *, tier: int, side: str) -> PaperCitationNode:
+def _refs_pending(paper: dict[str, Any], direction: Direction) -> bool:
+    """KCI 참고문헌을 아직 안 받아 온 국내 논문 — 펼칠 때 받아 오므로 참고문헌 방향은 펼칠 수 있다고 본다.
+    피인용은 KCI 응답에 없어(참고문헌만 옴) 받아 와도 늘지 않는다."""
+    return direction == "reference" and is_domestic_key(paper["cn"]) and not paper.get("refs_loaded", False)
+
+
+def _node_from_external(ref: PaperCitationExternalRef, *, tier: int, side: str, direction: Direction) -> PaperCitationNode:
+    # KCI ID(ART…)가 있으면 국내 논문 — 아직 papers에 없어도 누르는 순간 적재되므로 in_service.
+    # 참고문헌은 적재 전이라 몇 편인지 모르지만 KCI 논문은 대부분 참고문헌이 있어 펼칠 수 있다고 본다.
+    domestic = is_domestic_key(ref.external_id)
     return PaperCitationNode(
         key=ref.external_id,
-        in_service=False,
-        paper_id=None,
+        in_service=domestic,
+        paper_id=ref.external_id if domestic else None,
         title=ref.title,
         title_en=None,
         pubyear=ref.pubyear,
         tier=tier,
         side=side,
-        has_more=False,  # 외부 논문은 상세페이지/그래프 데이터가 없어 확장 불가
+        has_more=domestic and direction == "reference",  # 해외 논문은 인용관계 데이터가 없어 확장 불가
     )
 
 
@@ -90,6 +100,8 @@ class _InServicePartial:
     nodes: list[PaperCitationNode]
     edges: list[PaperCitationEdge]
     has_more_in_service: bool
+    # 중앙 논문이 KCI 참고문헌까지 연결을 마쳤는지. False면 그래프를 만들기 전에 적재부터 한다.
+    center_refs_loaded: bool = True
 
 
 def _assign_keyword_clusters(repo: GraphRepository, nodes: list[PaperCitationNode]) -> None:
@@ -160,14 +172,21 @@ def _build_in_service_part_sync(cn: str, direction: Direction, limit: int) -> Op
         nodes = [_node_from_in_service(n, tier=1, side="child") for n in neighbors]
         edges = [_citation_edge_for(direction, cn, n["cn"]) for n in neighbors]
 
+        more = repo.has_more_citation_neighbors_batch([n["cn"] for n in neighbors], direction=direction, excluded_cns=list(placed))
         for node, n in zip(nodes, neighbors):
-            node.has_more = repo.has_more_citation_neighbors(n["cn"], direction=direction, excluded_cns=list(placed))
+            node.has_more = more.get(n["cn"], False) or _refs_pending(n, direction)
 
         # 07-01: 요약 그래프의 1단계 자식끼리 키워드 공유 기반 클러스터링 (expand로 추가된
         # 노드에는 적용 안 함 — 명세가 요약 그래프에만 요구).
         _assign_keyword_clusters(repo, nodes)
 
-        return _InServicePartial(center=center_node, nodes=nodes, edges=edges, has_more_in_service=has_more_in_service)
+        return _InServicePartial(
+            center=center_node,
+            nodes=nodes,
+            edges=edges,
+            has_more_in_service=has_more_in_service,
+            center_refs_loaded=not (is_domestic_key(cn) and not center_dict.get("refs_loaded", False)),
+        )
     finally:
         driver.close()
 
@@ -183,6 +202,7 @@ def _serialize_partial(result: _InServicePartial) -> str:
             "nodes": [n.model_dump() for n in result.nodes],
             "edges": [e.model_dump() for e in result.edges],
             "has_more_in_service": result.has_more_in_service,
+            "center_refs_loaded": result.center_refs_loaded,
         },
         ensure_ascii=False,
     )
@@ -195,6 +215,7 @@ def _deserialize_partial(raw: str) -> _InServicePartial:
         nodes=[PaperCitationNode(**n) for n in data["nodes"]],
         edges=[PaperCitationEdge(**e) for e in data["edges"]],
         has_more_in_service=data["has_more_in_service"],
+        center_refs_loaded=data.get("center_refs_loaded", True),
     )
 
 
@@ -290,6 +311,8 @@ async def _build_in_service_cards(db: AsyncSession, cns: list[str]) -> dict[str,
 
 
 def _card_from_external(ref: PaperCitationExternalRef) -> PaperCitationCard:
+    if is_domestic_key(ref.external_id):
+        return _card_from_domestic_ref(ref)
     return PaperCitationCard(
         key=ref.external_id,
         in_service=False,
@@ -311,20 +334,77 @@ def _card_from_external(ref: PaperCitationExternalRef) -> PaperCitationCard:
     )
 
 
+def _card_from_domestic_ref(ref: PaperCitationExternalRef) -> PaperCitationCard:
+    """아직 papers에 적재 전인 국내(KCI) 논문 카드. 참고문헌 목록의 서지정보와 사전 적재된
+    상세(scripts/enrich_paper_citation_external_refs.py — 초록·키워드·피인용·KCI 등재)로 채운다.
+    상세페이지로 들어가는 순간 KCI에서 전체를 받아 papers에 적재한다."""
+    kci = bool(ref.kci_registered) if ref.kci_registered is not None else True
+    return PaperCitationCard(
+        key=ref.external_id,
+        in_service=True,
+        paper_id=ref.external_id,
+        title=ref.title,
+        title_en=ref.title_en,
+        authors=list(ref.authors) if ref.authors else None,
+        journal_name=ref.journal,
+        pub_year=ref.pubyear,
+        doi=ref.doi or ref.resolved_doi,
+        abstract=ref.abstract,
+        keywords=list(ref.keywords) if ref.keywords else None,
+        paper_type=_DB_CODE_DEFAULT_LABEL["JAKO"],
+        kci_registered=kci,
+        sci_indexed=False,
+        citation_count=ref.citation_count,
+        trust_badge=PaperCardTrustBadge(kci=kci, sci=False, citation_count=ref.citation_count, degree_type=None),
+        is_bookmarked=False,
+    )
+
+
+async def _mark_children_with_external_refs(
+    db: AsyncSession, nodes: list[PaperCitationNode], direction: Direction, placed_keys: list[str]
+) -> None:
+    """Neo4j CITES만으로 has_more=false가 된 in-service 노드 중, 아직 안 놓인 해외/국내 참고문헌이
+    external_refs에 남아 있으면 펼칠 수 있게 표시한다."""
+    candidates = [n.key for n in nodes if n.in_service and not n.has_more and n.side == "child"]
+    if not candidates:
+        return
+    with_more = await paper_citation_repository.sources_with_remaining_external_refs(
+        db, candidates, direction, excluded_ids=placed_keys
+    )
+    for node in nodes:
+        if node.key in with_more:
+            node.has_more = True
+
+
 async def _build_cards_for_nodes(db: AsyncSession, nodes: list[PaperCitationNode], external_refs_by_key: dict[str, PaperCitationExternalRef]) -> list[PaperCitationCard]:
     in_service_keys = [n.key for n in nodes if n.in_service]
     in_service_cards = await _build_in_service_cards(db, in_service_keys)
 
     cards: list[PaperCitationCard] = []
     for node in nodes:
-        if node.in_service:
-            card = in_service_cards.get(node.key)
-        else:
-            ref = external_refs_by_key.get(node.key)
-            card = _card_from_external(ref) if ref else None
+        # 서비스 DB 카드 → 참고문헌 행 카드(적재 전 국내 논문 / 해외 논문) → 노드 정보만으로 만든 카드 순.
+        # 마지막은 Neo4j에는 있는데 이 환경 Postgres에는 아직 없는 논문이다(Neo4j Aura를 여러 환경이
+        # 같이 쓰므로 생길 수 있다). 카드를 빼면 노드-카드 1:1이 깨지므로 최소 카드로 채우고,
+        # 상세 조회 시 적재된다.
+        card = in_service_cards.get(node.key) if node.in_service else None
+        if card is None and node.key in external_refs_by_key:
+            card = _card_from_external(external_refs_by_key[node.key])
+        if card is None and node.in_service:
+            card = _card_from_node(node)
         if card:
             cards.append(card)
     return cards
+
+
+def _card_from_node(node: PaperCitationNode) -> PaperCitationCard:
+    return PaperCitationCard(
+        key=node.key,
+        in_service=True,
+        paper_id=node.paper_id or node.key,
+        title=node.title,
+        title_en=node.title_en,
+        pub_year=node.pubyear,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +414,13 @@ async def _build_cards_for_nodes(db: AsyncSession, nodes: list[PaperCitationNode
 async def get_citation_graph(cn: str, direction: Direction, db: AsyncSession) -> PaperCitationGraphResponse:
     """Neo4j 드라이버가 동기(sync)이므로 스레드풀에서 실행해 이벤트 루프 블로킹을 방지."""
     partial = await asyncio.to_thread(_get_or_build_in_service_part, cn, direction)
+    if partial is None or not partial.center_refs_loaded:
+        # 그래프에 아직 없는 논문(연구자 논문 편입분, 참고문헌에서 들어온 국내 논문)이거나
+        # KCI 참고문헌을 아직 안 받은 국내 논문 — 지금 적재하고 다시 만든다.
+        paper_id = await materialize_domestic_paper(db, cn)
+        if paper_id is not None:
+            cn = paper_id
+            partial = await asyncio.to_thread(_get_or_build_in_service_part, cn, direction)
     if partial is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"paper not found: {cn}")
 
@@ -351,10 +438,13 @@ async def get_citation_graph(cn: str, direction: Direction, db: AsyncSession) ->
             db, cn, direction, limit=remaining, excluded_ids=placed_keys
         )
         for ref in external_refs:
-            nodes.append(_node_from_external(ref, tier=1, side="child"))
+            nodes.append(_node_from_external(ref, tier=1, side="child", direction=direction))
             edges.append(_citation_edge_for(direction, cn, ref.external_id))
 
     excluded_ext_ids = placed_keys + [r.external_id for r in external_refs]
+    # 캐시된 partial을 고치지 않도록 요청마다 복사본에 표시한다
+    nodes = [n.model_copy() for n in nodes]
+    await _mark_children_with_external_refs(db, nodes, direction, excluded_ext_ids)
     has_more_external = (
         await paper_citation_repository.count_remaining_external_refs(db, cn, direction, excluded_ids=excluded_ext_ids)
     ) > 0
@@ -366,7 +456,7 @@ async def get_citation_graph(cn: str, direction: Direction, db: AsyncSession) ->
 
     return PaperCitationGraphResponse(
         direction=direction,
-        center=partial.center,
+        center=nodes[0],
         nodes=nodes,
         edges=edges,
         has_more=has_more,
@@ -383,6 +473,8 @@ class _InServiceExpandPartial:
     nodes: list[PaperCitationNode]
     edges: list[PaperCitationEdge]
     parent_has_more_in_service: bool
+    # 펼칠 논문이 KCI 참고문헌을 아직 안 받은 국내 논문이면 True — 적재 후 다시 만든다
+    refs_pending: bool = False
 
 
 def _build_in_service_expand_sync(
@@ -403,12 +495,18 @@ def _build_in_service_expand_sync(
 
         fresh_cns = {c["cn"] for c in fresh}
         full_excluded = excluded_set | fresh_cns
+        more = repo.has_more_citation_neighbors_batch(list(fresh_cns), direction=direction, excluded_cns=list(full_excluded))
         for node, c in zip(nodes, fresh):
-            node.has_more = repo.has_more_citation_neighbors(c["cn"], direction=direction, excluded_cns=list(full_excluded))
+            node.has_more = more.get(c["cn"], False) or _refs_pending(c, direction)
 
         parent_has_more_in_service = repo.has_more_citation_neighbors(node_key, direction=direction, excluded_cns=list(full_excluded))
 
-        return _InServiceExpandPartial(nodes=nodes, edges=edges, parent_has_more_in_service=parent_has_more_in_service)
+        return _InServiceExpandPartial(
+            nodes=nodes,
+            edges=edges,
+            parent_has_more_in_service=parent_has_more_in_service,
+            refs_pending=_refs_pending(node_dict, direction),
+        )
     finally:
         driver.close()
 
@@ -436,6 +534,14 @@ async def expand_citation_node(
     partial = await asyncio.to_thread(
         _build_in_service_expand_sync, node_key, direction, list(excluded), fetch_limit, new_tier
     )
+    if partial is None or partial.refs_pending:
+        # 참고문헌 목록에서 들어온 국내 논문(ART…)을 처음 펼치는 경우 — KCI에서 받아 적재한 뒤 펼친다
+        paper_id = await materialize_domestic_paper(db, node_key)
+        if paper_id is not None:
+            node_key = paper_id
+            partial = await asyncio.to_thread(
+                _build_in_service_expand_sync, node_key, direction, list(excluded), fetch_limit, new_tier
+            )
     if partial is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"paper not found: {node_key}")
 
@@ -454,10 +560,11 @@ async def expand_citation_node(
             db, node_key, direction, limit=remaining_after_in_service, excluded_ids=ext_excluded
         )
         for ref in external_refs:
-            nodes.append(_node_from_external(ref, tier=new_tier, side="child"))
+            nodes.append(_node_from_external(ref, tier=new_tier, side="child", direction=direction))
             edges.append(_citation_edge_for(direction, node_key, ref.external_id))
 
     excluded_ext_ids = ext_excluded + [r.external_id for r in external_refs]
+    await _mark_children_with_external_refs(db, nodes, direction, excluded_ext_ids)
     has_more_external = (
         await paper_citation_repository.count_remaining_external_refs(db, node_key, direction, excluded_ids=excluded_ext_ids)
     ) > 0

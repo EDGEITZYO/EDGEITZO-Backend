@@ -1,4 +1,4 @@
-"""코퍼스 밖(in_service=false) 논문의 상세 조회.
+"""해외 논문(in_service=false) 노드의 상세 조회.
 
 인용관계/참고문헌 그래프의 노드 중 자체 코퍼스에 없는 논문은 papers 테이블에 적재돼 있지 않아
 상세페이지로 갈 수 없었다. 여기서는 저장된 서지정보에 초록·링크를 얹어 돌려준다. 외부 조회가
@@ -364,7 +364,7 @@ def _cache_detail(external_id: str, detail: PaperCitationExternalDetail) -> None
             ex=settings.paper_citation_external_detail_cache_ttl_seconds,
         )
     except Exception:
-        logger.warning("외부 논문 상세 캐시 저장 실패", exc_info=True)
+        logger.warning("해외 논문 상세 캐시 저장 실패", exc_info=True)
 
 
 async def get_external_paper_detail(external_id: str, db: AsyncSession) -> PaperCitationExternalDetail:
@@ -374,7 +374,7 @@ async def get_external_paper_detail(external_id: str, db: AsyncSession) -> Paper
         if cached:
             return PaperCitationExternalDetail(**json.loads(cached))
     except Exception:
-        logger.warning("외부 논문 상세 캐시 조회 실패", exc_info=True)
+        logger.warning("해외 논문 상세 캐시 조회 실패", exc_info=True)
 
     rows = await _load_stored_rows(db, external_id)
     if not rows:
@@ -398,7 +398,7 @@ async def get_external_paper_detail(external_id: str, db: AsyncSession) -> Paper
     try:
         enriched = await _enrich(external_id, stored)
     except asyncio.TimeoutError:
-        logger.warning("외부 논문 상세 조회 타임아웃: %s", external_id)
+        logger.warning("해외 논문 상세 조회 타임아웃: %s", external_id)
         enriched = None
 
     # 외부 조회 결과를 우선하되, 비어 있는 필드는 저장된 서지정보로 메운다.

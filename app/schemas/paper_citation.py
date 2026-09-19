@@ -6,13 +6,22 @@ from app.schemas.paper import PaperCardTrustBadge
 
 
 class PaperCitationNode(BaseModel):
-    key: str = Field(..., description="그래프 내 고유 키. in_service=true면 papers.id와 동일, false면 외부 소스 고유 ID")
+    key: str = Field(
+        ...,
+        description="그래프 내 고유 키. in_service=true면 서비스 논문 ID(paper_id와 같음 — 코퍼스 논문 ID 또는 "
+        "KCI 논문 ID `ART…`), false면 해외 논문의 참고문헌 ID(`REF…` KCI 참고문헌 항목 / `W…` OpenAlex)",
+    )
     in_service: bool = Field(
         ...,
-        description="서비스 코퍼스 수록 여부. 모든 노드는 클릭 가능하며 이 값으로 이동할 상세만 갈라진다 — "
-        "true면 paper_id로 일반 상세페이지, false면 key로 GET /papers/citation-graph/external/{key}",
+        description="국내 논문 여부. KCI 논문 ID(`ART…`)가 있거나 코퍼스 논문이면 true(국내 논문), "
+        "KCI ID가 없는 참고문헌이면 false(해외 논문).\n\n"
+        "- true: `paper_id`로 `GET /papers/{paper_id}` 상세 조회가 된다. 아직 서비스 DB에 적재되지 않은 "
+        "국내 논문도 true이며, 첫 상세 조회·확장 때 KCI에서 받아 적재된다\n"
+        "- false: 서지정보만 있는 해외 논문. 상세는 `GET /papers/citation-graph/external/{key}`\n\n"
+        "KCI ID가 없는데 제목이 한글인 참고문헌(단행본·법령·백서 등 KCI 밖 국내 자료)은 국내 논문도 해외 논문도 "
+        "아니어서 노드로 내려가지 않는다",
     )
-    paper_id: Optional[str] = Field(default=None, description="in_service=true일 때 서비스 DB의 논문 ID. false면 null")
+    paper_id: Optional[str] = Field(default=None, description="in_service=true일 때 서비스 논문 ID. false면 null")
     title: Optional[str] = Field(default=None, description="논문 제목. 없으면 null")
     title_en: Optional[str] = Field(default=None, description="영문 제목. 없으면 null")
     pubyear: Optional[int] = Field(default=None, description="발행 연도. 없으면 null")
@@ -20,15 +29,16 @@ class PaperCitationNode(BaseModel):
     side: Literal["center", "child"] = Field(..., description="중앙 논문 자신(center)인지 하위(child)인지")
     has_more: bool = Field(
         default=False,
-        description="expand 시 새로 추가될 후보가 남아있는지 여부. in_service=false 노드는 항상 false "
-        "(외부 논문은 확장 불가). false면 프론트에서 expand 버튼 비활성화/숨김",
+        description="expand 시 새로 추가될 후보가 남아있는지 여부. 해외 논문(in_service=false)은 인용관계 "
+        "데이터가 없어 항상 false. KCI 참고문헌을 아직 받지 않은 국내 논문은 direction=reference에서 true "
+        "(확장할 때 받아 오므로, 받아 보니 참고문헌이 없으면 확장 결과가 0건일 수 있다)",
     )
     cluster_id: Optional[int] = Field(
         default=None,
         description="요약 그래프(최초 로드)의 1단계 자식 노드끼리 키워드를 일정 개수 이상 공유하면 같은 정수값 부여 "
         "(같은 값끼리 시각적으로 묶어서 표시). null이면 다른 노드와 묶이지 않은 단독 노드. "
-        "center, external(in_service=false) 노드, expand로 추가된 노드는 항상 null — "
-        "클러스터링은 요약 그래프의 1단계 in-service 자식에만 적용됨(외부 노드는 키워드 데이터 자체가 없음)",
+        "center, 해외 논문(in_service=false) 노드, expand로 추가된 노드는 항상 null — "
+        "클러스터링은 그래프 DB에 키워드가 있는 1단계 자식에만 적용됨(해외 논문은 키워드 데이터 자체가 없음)",
     )
 
     model_config = {
@@ -75,13 +85,14 @@ class PaperCitationEdge(BaseModel):
 
 
 class PaperCitationCard(BaseModel):
-    """인용관계 그래프 우측 논문 리스트용 카드. in_service=false면 서지정보(제목/저자/저널/연도/doi)만
-    채워지고 나머지(초록/키워드/신뢰도뱃지/북마크 등)는 전부 null — 상세페이지가 없는 외부 논문이라
-    그 필드들을 계산할 근거 데이터 자체가 없기 때문."""
+    """인용관계 그래프 우측 논문 리스트용 카드. in_service=false(해외 논문)면 서지정보(제목/저자/저널/연도/doi)만
+    채워지고 나머지(초록/키워드/신뢰도뱃지/북마크 등)는 전부 null — 해외 논문은 그 필드들을 계산할
+    근거 데이터 자체가 없기 때문. in_service=true(국내 논문)라도 아직 서비스 DB에 적재 전인 논문은
+    참고문헌 목록과 사전 수집된 상세로 채우므로 초록·키워드가 null일 수 있다."""
 
     key: str = Field(..., description="PaperCitationNode.key와 동일")
-    in_service: bool = Field(..., description="서비스 코퍼스 수록 여부. true면 paper_id로 상세페이지 이동 가능")
-    paper_id: Optional[str] = Field(default=None, description="in_service=true일 때만 서비스 DB 논문 ID")
+    in_service: bool = Field(..., description="PaperCitationNode.in_service와 동일 — true 국내 논문, false 해외 논문")
+    paper_id: Optional[str] = Field(default=None, description="in_service=true일 때만 서비스 논문 ID")
     title: Optional[str] = Field(default=None, description="논문 제목. in_service 여부와 무관하게 항상 채워짐")
     title_en: Optional[str] = Field(default=None, description="영문 제목. 없으면 null")
     authors: Optional[list[str]] = Field(default=None, description="저자 목록. in_service 여부와 무관하게 항상 채워짐")
@@ -169,7 +180,7 @@ class PaperCitationGraphResponse(BaseModel):
 
 
 class PaperCitationExternalDetail(BaseModel):
-    """코퍼스 밖(in_service=false) 노드를 클릭했을 때의 상세. papers 테이블에 적재된 논문이
+    """해외 논문(in_service=false) 노드의 상세. papers 테이블에 적재된 논문이
     아니므로 PaperDetailResponse와 필드가 다르다 — 신뢰도 계산, 북마크, 유사논문, 원문 링크가
     없고 초록/키워드는 외부 조회가 성공했을 때만 채워진다.
 
@@ -177,7 +188,7 @@ class PaperCitationExternalDetail(BaseModel):
     경우를 정상 응답으로 처리해야 하며, 초록·키워드 영역은 비워두거나 안내 문구로 대체한다."""
 
     key: str = Field(..., description="PaperCitationNode.key와 동일 (ART…/REF…/W… 등 외부 ID)")
-    in_service: bool = Field(default=False, description="항상 false. 이 엔드포인트는 코퍼스 밖 논문 전용")
+    in_service: bool = Field(default=False, description="항상 false. 이 엔드포인트는 해외 논문용")
     title: Optional[str] = Field(default=None, description="논문 제목. 저장된 서지정보가 있으면 거의 항상 채워짐")
     title_en: Optional[str] = Field(default=None, description="영문 제목. 외부 조회 성공 시에만")
     authors: Optional[list[str]] = Field(default=None, description="저자 목록")
