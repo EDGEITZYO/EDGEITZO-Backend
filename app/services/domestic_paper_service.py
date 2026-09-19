@@ -22,6 +22,10 @@ in_service의 정의:
   달라지면 안 되기 때문이다.
 
   모든 쓰기는 멱등(ON CONFLICT DO NOTHING / MERGE)이라 같은 논문을 동시에 요청해도 안전하다.
+
+주의 — Neo4j Aura는 로컬·운영이 같은 인스턴스다. 노드·CITES는 모든 환경에 한 번에 반영되지만
+papers 행·참고문헌 행은 환경별 Postgres에만 들어간다. 그래서 "참고문헌을 받았는가"는 Postgres
+(papers.kci_refs_loaded_at)로 판단한다. Neo4j의 refs_loaded_at은 참고용 기록일 뿐 판단에 쓰지 않는다.
 """
 from __future__ import annotations
 
@@ -166,7 +170,7 @@ async def fetch_kci_paper(
 # Postgres
 # ---------------------------------------------------------------------------
 
-_PAPER_COLUMNS = "id, kci_art_id, db_code, title, title_en, pubyear, doi, journal_name, citation_count"
+_PAPER_COLUMNS = "id, kci_art_id, db_code, title, title_en, pubyear, doi, journal_name, citation_count, kci_refs_loaded_at"
 
 _JOURNAL_BY_ISSN_SQL = "SELECT id FROM journals WHERE issn && :forms ORDER BY sci_indexed DESC LIMIT 1"
 _JOURNAL_BY_NAME_SQL = (
@@ -344,14 +348,11 @@ def _json_rows(rows: list[dict[str, Any]]) -> str:
 # Neo4j (sync 드라이버 — asyncio.to_thread로 호출)
 # ---------------------------------------------------------------------------
 
-def _neo4j_node_state(cn: str) -> Optional[dict[str, Any]]:
+def _neo4j_node_exists(cn: str) -> bool:
     driver = get_neo4j_driver()
     try:
         with driver.session() as session:
-            record = session.run(
-                "MATCH (p:Paper {cn: $cn}) RETURN p.refs_loaded_at IS NOT NULL AS refs_loaded", cn=cn
-            ).single()
-        return None if record is None else {"refs_loaded": record["refs_loaded"]}
+            return session.run("MATCH (p:Paper {cn: $cn}) RETURN 1 AS x", cn=cn).single() is not None
     finally:
         driver.close()
 
@@ -472,14 +473,16 @@ async def materialize_domestic_paper(
                 return None
 
     paper_id = paper["id"]
-    state = await asyncio.to_thread(_neo4j_node_state, paper_id)
+    node_exists = await asyncio.to_thread(_neo4j_node_exists, paper_id)
     # 참고문헌을 KCI에서 받아 와야 하는 건 KCI ID로 식별되는 논문뿐이다. ScienceON CN으로
     # 들어온 코퍼스 논문은 참고문헌이 이미 적재돼 있다(scripts/load_paper_citation_external_refs_kci.py).
-    needs_refs = is_domestic_key(paper_id) and not (state and state["refs_loaded"])
+    # 받았는지는 이 환경 Postgres(papers.kci_refs_loaded_at)로 본다 — 참고문헌 행이 환경별 Postgres에
+    # 들어가므로, 여러 환경이 같이 쓰는 Neo4j에 표시하면 다른 환경이 받은 것으로 착각한다.
+    needs_refs = is_domestic_key(paper_id) and paper.get("kci_refs_loaded_at") is None
     # 요청 key가 이 논문의 id/kci_art_id와 다르면(같은 논문이 다른 ID로 있던 경우) 그 key를
     # 가리키던 참고문헌 행도 이 노드로 옮긴다
     aliases = {key} - {paper_id, paper.get("kci_art_id")}
-    if state is not None and not needs_refs and not aliases:
+    if node_exists and not needs_refs and not aliases:
         return paper_id
 
     refs: list[KciReference] = []
@@ -551,6 +554,8 @@ async def _link(
     if moved:
         await db.execute(text("DELETE FROM paper_citation_external_refs WHERE id = ANY(:ids)"), {"ids": moved})
     await _insert_external_refs(db, paper_id, outside_refs)
+    if mark_loaded:
+        await db.execute(text("UPDATE papers SET kci_refs_loaded_at = now() WHERE id = :id"), {"id": paper_id})
     await db.commit()
 
     touched = {paper_id, *ref_papers, *(row["source_cn"] for row in incoming)}

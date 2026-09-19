@@ -26,6 +26,8 @@ class Paper(Base):
     pubyear = Column(Integer, nullable=True, index=True)
     pubdate = Column(String(10), nullable=True)
     kci_art_id = Column(String(50), nullable=True, index=True)
+    # KCI 참고문헌을 받아 이 환경 external_refs에 넣은 시각. NULL이면 아직 안 받음(요청 시 받는다)
+    kci_refs_loaded_at = Column(DateTime(timezone=True), nullable=True)
     paper_type = Column(String(50), nullable=True)
     citation_count = Column(Integer, default=0, nullable=False)
     journal_id = Column(

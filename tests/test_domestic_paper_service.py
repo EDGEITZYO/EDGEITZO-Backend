@@ -147,17 +147,20 @@ def test_foreign_card_keeps_bibliography_only():
     assert card.trust_badge is None
 
 
-@pytest.mark.parametrize(
-    "paper,direction,expected",
-    [
-        ({"cn": "ART001", "refs_loaded": False}, "reference", True),
-        ({"cn": "ART001", "refs_loaded": True}, "reference", False),
-        ({"cn": "ART001", "refs_loaded": False}, "citing", False),
-        ({"cn": "JAKO2025", "refs_loaded": False}, "reference", False),
-    ],
-)
-def test_refs_pending(paper, direction, expected):
-    assert _refs_pending(paper, direction) is expected
+@pytest.mark.asyncio
+async def test_refs_pending_uses_this_environments_postgres():
+    """papers 행이 없거나 kci_refs_loaded_at이 NULL인 국내 논문만 대기 중. 코퍼스 CN·해외 key는 대상 아님."""
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: ["ART001"]))
+    pending = await _refs_pending(db, ["ART001", "ART002", "JAKO2025", "REF045167936"])
+    assert pending == {"ART002"}
+
+
+@pytest.mark.asyncio
+async def test_refs_pending_skips_query_without_domestic_keys():
+    db = AsyncMock()
+    assert await _refs_pending(db, ["JAKO2025", "REF1"]) == set()
+    db.execute.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -171,13 +174,13 @@ def patched(monkeypatch):
         fetch=AsyncMock(return_value=None),
         link=AsyncMock(),
         insert=AsyncMock(),
-        state=None,
+        node_exists=False,
     )
     monkeypatch.setattr(svc, "resolve_papers", mocks.resolve)
     monkeypatch.setattr(svc, "fetch_kci_paper", mocks.fetch)
     monkeypatch.setattr(svc, "_link", mocks.link)
     monkeypatch.setattr(svc, "_insert_paper", mocks.insert)
-    monkeypatch.setattr(svc, "_neo4j_node_state", lambda cn: mocks.state)
+    monkeypatch.setattr(svc, "_neo4j_node_exists", lambda cn: mocks.node_exists)
     return mocks
 
 
@@ -195,8 +198,8 @@ async def test_materialize_returns_none_for_unknown_foreign_key(patched):
 
 @pytest.mark.asyncio
 async def test_materialize_skips_everything_when_already_linked(patched):
-    patched.resolve.return_value = {"ART001": {"id": "ART001", "kci_art_id": "ART001"}}
-    patched.state = {"refs_loaded": True}
+    patched.resolve.return_value = {"ART001": {"id": "ART001", "kci_art_id": "ART001", "kci_refs_loaded_at": "2026-09-19"}}
+    patched.node_exists = True
     assert await svc.materialize_domestic_paper(_db(), "ART001") == "ART001"
     patched.fetch.assert_not_called()
     patched.link.assert_not_called()
@@ -205,8 +208,8 @@ async def test_materialize_skips_everything_when_already_linked(patched):
 @pytest.mark.asyncio
 async def test_materialize_corpus_paper_without_node_links_without_kci_call(patched):
     """ScienceON CN 코퍼스 논문은 참고문헌이 이미 적재돼 있어 KCI를 부르지 않는다."""
-    patched.resolve.return_value = {"JAKO1": {"id": "JAKO1", "kci_art_id": None}}
-    patched.state = None
+    patched.resolve.return_value = {"JAKO1": {"id": "JAKO1", "kci_art_id": None, "kci_refs_loaded_at": None}}
+    patched.node_exists = False
     assert await svc.materialize_domestic_paper(_db(), "JAKO1") == "JAKO1"
     patched.fetch.assert_not_called()
     patched.link.assert_awaited_once()
@@ -253,9 +256,9 @@ async def test_materialize_does_not_merge_different_paper_sharing_issue_doi(patc
 async def test_materialize_reuses_same_paper_with_same_doi_and_title(patched):
     fetched = svc.parse_kci_paper(_XML)
     patched.fetch.return_value = fetched
-    existing = {"id": "JAKO2017", "kci_art_id": None}
+    existing = {"id": "JAKO2017", "kci_art_id": None, "kci_refs_loaded_at": None}
     patched.resolve.side_effect = [{}, {"JAKO2017": existing}]
-    patched.state = {"refs_loaded": True}
+    patched.node_exists = True
     same = SimpleNamespace(id="JAKO2017", title="저온 처리 배추의 항산화 효소", title_en=None)
 
     assert await svc.materialize_domestic_paper(_db(same_doi_row=same), "ART002295537") == "JAKO2017"
@@ -291,3 +294,17 @@ async def test_cards_cover_unloaded_domestic_and_missing_rows(monkeypatch):
     assert cards[0].in_service is True and cards[0].abstract == "초록"
     assert cards[1].in_service is False
     assert cards[2].in_service is True and cards[2].title == "그래프에만 있는 논문"
+
+
+@pytest.mark.asyncio
+async def test_materialize_loads_refs_when_other_environment_already_linked_graph(patched):
+    """공유 Neo4j에는 노드·CITES가 이미 있어도(다른 환경이 적재) 이 환경 Postgres에 참고문헌 행이
+    없으면(kci_refs_loaded_at NULL) KCI에서 받아 넣어야 한다 — 안 그러면 해외 참고문헌이 그래프에서 빠진다."""
+    fetched = svc.parse_kci_paper(_XML)
+    patched.fetch.return_value = fetched
+    patched.resolve.return_value = {"ART002295537": {"id": "ART002295537", "kci_art_id": "ART002295537", "kci_refs_loaded_at": None}}
+    patched.node_exists = True
+
+    assert await svc.materialize_domestic_paper(_db(), "ART002295537") == "ART002295537"
+    patched.fetch.assert_awaited_once()
+    assert patched.link.await_args.kwargs["mark_loaded"] is True

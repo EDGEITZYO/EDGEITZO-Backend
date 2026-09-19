@@ -67,10 +67,15 @@ def _node_from_in_service(paper: dict[str, Any], *, tier: int, side: str, has_mo
     )
 
 
-def _refs_pending(paper: dict[str, Any], direction: Direction) -> bool:
-    """KCI 참고문헌을 아직 안 받아 온 국내 논문 — 펼칠 때 받아 오므로 참고문헌 방향은 펼칠 수 있다고 본다.
-    피인용은 KCI 응답에 없어(참고문헌만 옴) 받아 와도 늘지 않는다."""
-    return direction == "reference" and is_domestic_key(paper["cn"]) and not paper.get("refs_loaded", False)
+async def _refs_pending(db: AsyncSession, keys: list[str]) -> set[str]:
+    """KCI 참고문헌을 이 환경에 아직 안 받은 국내 논문 key — papers 행이 없거나 kci_refs_loaded_at이 NULL.
+    펼칠 때 받아 오므로 참고문헌 방향은 펼칠 수 있다고 본다(피인용은 KCI 응답에 없어 받아도 늘지 않는다).
+    Neo4j가 아니라 Postgres로 판단한다 — Neo4j는 여러 환경이 같이 쓰고 참고문헌 행은 환경별이다."""
+    domestic = [k for k in keys if is_domestic_key(k)]
+    if not domestic:
+        return set()
+    loaded = await db.execute(select(Paper.id).where(Paper.id.in_(domestic), Paper.kci_refs_loaded_at.isnot(None)))
+    return set(domestic) - set(loaded.scalars().all())
 
 
 def _node_from_external(ref: PaperCitationExternalRef, *, tier: int, side: str, direction: Direction) -> PaperCitationNode:
@@ -100,8 +105,6 @@ class _InServicePartial:
     nodes: list[PaperCitationNode]
     edges: list[PaperCitationEdge]
     has_more_in_service: bool
-    # 중앙 논문이 KCI 참고문헌까지 연결을 마쳤는지. False면 그래프를 만들기 전에 적재부터 한다.
-    center_refs_loaded: bool = True
 
 
 def _assign_keyword_clusters(repo: GraphRepository, nodes: list[PaperCitationNode]) -> None:
@@ -174,19 +177,13 @@ def _build_in_service_part_sync(cn: str, direction: Direction, limit: int) -> Op
 
         more = repo.has_more_citation_neighbors_batch([n["cn"] for n in neighbors], direction=direction, excluded_cns=list(placed))
         for node, n in zip(nodes, neighbors):
-            node.has_more = more.get(n["cn"], False) or _refs_pending(n, direction)
+            node.has_more = more.get(n["cn"], False)
 
         # 07-01: 요약 그래프의 1단계 자식끼리 키워드 공유 기반 클러스터링 (expand로 추가된
         # 노드에는 적용 안 함 — 명세가 요약 그래프에만 요구).
         _assign_keyword_clusters(repo, nodes)
 
-        return _InServicePartial(
-            center=center_node,
-            nodes=nodes,
-            edges=edges,
-            has_more_in_service=has_more_in_service,
-            center_refs_loaded=not (is_domestic_key(cn) and not center_dict.get("refs_loaded", False)),
-        )
+        return _InServicePartial(center=center_node, nodes=nodes, edges=edges, has_more_in_service=has_more_in_service)
     finally:
         driver.close()
 
@@ -202,7 +199,6 @@ def _serialize_partial(result: _InServicePartial) -> str:
             "nodes": [n.model_dump() for n in result.nodes],
             "edges": [e.model_dump() for e in result.edges],
             "has_more_in_service": result.has_more_in_service,
-            "center_refs_loaded": result.center_refs_loaded,
         },
         ensure_ascii=False,
     )
@@ -215,7 +211,6 @@ def _deserialize_partial(raw: str) -> _InServicePartial:
         nodes=[PaperCitationNode(**n) for n in data["nodes"]],
         edges=[PaperCitationEdge(**e) for e in data["edges"]],
         has_more_in_service=data["has_more_in_service"],
-        center_refs_loaded=data.get("center_refs_loaded", True),
     )
 
 
@@ -364,13 +359,15 @@ async def _mark_children_with_external_refs(
     db: AsyncSession, nodes: list[PaperCitationNode], direction: Direction, placed_keys: list[str]
 ) -> None:
     """Neo4j CITES만으로 has_more=false가 된 in-service 노드 중, 아직 안 놓인 해외/국내 참고문헌이
-    external_refs에 남아 있으면 펼칠 수 있게 표시한다."""
+    external_refs에 남아 있거나 KCI 참고문헌을 이 환경에 아직 안 받은 국내 논문이면 펼칠 수 있게 표시한다."""
     candidates = [n.key for n in nodes if n.in_service and not n.has_more and n.side == "child"]
     if not candidates:
         return
     with_more = await paper_citation_repository.sources_with_remaining_external_refs(
         db, candidates, direction, excluded_ids=placed_keys
     )
+    if direction == "reference":
+        with_more |= await _refs_pending(db, candidates)
     for node in nodes:
         if node.key in with_more:
             node.has_more = True
@@ -414,7 +411,7 @@ def _card_from_node(node: PaperCitationNode) -> PaperCitationCard:
 async def get_citation_graph(cn: str, direction: Direction, db: AsyncSession) -> PaperCitationGraphResponse:
     """Neo4j 드라이버가 동기(sync)이므로 스레드풀에서 실행해 이벤트 루프 블로킹을 방지."""
     partial = await asyncio.to_thread(_get_or_build_in_service_part, cn, direction)
-    if partial is None or not partial.center_refs_loaded:
+    if partial is None or (direction == "reference" and await _refs_pending(db, [cn])):
         # 그래프에 아직 없는 논문(연구자 논문 편입분, 참고문헌에서 들어온 국내 논문)이거나
         # KCI 참고문헌을 아직 안 받은 국내 논문 — 지금 적재하고 다시 만든다.
         paper_id = await materialize_domestic_paper(db, cn)
@@ -473,8 +470,6 @@ class _InServiceExpandPartial:
     nodes: list[PaperCitationNode]
     edges: list[PaperCitationEdge]
     parent_has_more_in_service: bool
-    # 펼칠 논문이 KCI 참고문헌을 아직 안 받은 국내 논문이면 True — 적재 후 다시 만든다
-    refs_pending: bool = False
 
 
 def _build_in_service_expand_sync(
@@ -497,16 +492,11 @@ def _build_in_service_expand_sync(
         full_excluded = excluded_set | fresh_cns
         more = repo.has_more_citation_neighbors_batch(list(fresh_cns), direction=direction, excluded_cns=list(full_excluded))
         for node, c in zip(nodes, fresh):
-            node.has_more = more.get(c["cn"], False) or _refs_pending(c, direction)
+            node.has_more = more.get(c["cn"], False)
 
         parent_has_more_in_service = repo.has_more_citation_neighbors(node_key, direction=direction, excluded_cns=list(full_excluded))
 
-        return _InServiceExpandPartial(
-            nodes=nodes,
-            edges=edges,
-            parent_has_more_in_service=parent_has_more_in_service,
-            refs_pending=_refs_pending(node_dict, direction),
-        )
+        return _InServiceExpandPartial(nodes=nodes, edges=edges, parent_has_more_in_service=parent_has_more_in_service)
     finally:
         driver.close()
 
@@ -534,7 +524,7 @@ async def expand_citation_node(
     partial = await asyncio.to_thread(
         _build_in_service_expand_sync, node_key, direction, list(excluded), fetch_limit, new_tier
     )
-    if partial is None or partial.refs_pending:
+    if partial is None or (direction == "reference" and await _refs_pending(db, [node_key])):
         # 참고문헌 목록에서 들어온 국내 논문(ART…)을 처음 펼치는 경우 — KCI에서 받아 적재한 뒤 펼친다
         paper_id = await materialize_domestic_paper(db, node_key)
         if paper_id is not None:

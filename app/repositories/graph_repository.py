@@ -448,15 +448,7 @@ class GraphRepository:
         if record is None:
             return None
 
-        return self._citation_paper_dict(record["paper"])
-
-    @classmethod
-    def _citation_paper_dict(cls, paper: Any) -> dict[str, Any]:
-        """인용관계 그래프용 — refs_loaded는 KCI 참고문헌을 받아 연결까지 끝낸 논문인지
-        (app/services/domestic_paper_service.py가 표시). 안 끝났으면 확장할 때 받아 온다."""
-        data = cls._paper_to_dict(paper)
-        data["refs_loaded"] = dict(paper).get("refs_loaded_at") is not None
-        return data
+        return self._paper_to_dict(record["paper"])
 
     def find_citation_neighbors(
         self,
@@ -482,7 +474,7 @@ class GraphRepository:
                 session.run(query, cn=cn, limit=limit, excluded_cns=excluded_cns or [])
             )
 
-        return [self._citation_paper_dict(record["paper"]) for record in records]
+        return [self._paper_to_dict(record["paper"]) for record in records]
 
     def has_more_citation_neighbors_batch(
         self,
