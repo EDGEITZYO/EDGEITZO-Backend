@@ -1,18 +1,13 @@
 import logging
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.response import success_response
 from app.integrations.crossref.client import get_references as crossref_get_references
-from app.integrations.scienceon.client import ScienceOnClient
-from app.integrations.scienceon.parser import (
-    ScienceOnApiError,
-    ScienceOnReference,
-    parse_cited_references,
-)
+from app.integrations.scienceon.parser import ScienceOnReference
 from app.repositories.paper_repository import (
     get_paper_meta,
     get_paper_with_journal,
@@ -40,8 +35,6 @@ from app.services.domestic_paper_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/papers", tags=["Paper"])
-
-_scienceon = ScienceOnClient()
 
 
 @router.get(
@@ -210,7 +203,7 @@ async def get_paper_similar(
         "- KCI 논문 ID 보유(`paper_id`가 `ART…`이거나 KCI ID가 따로 있는 논문) → KCI articleDetail 참고문헌. 참고문헌에 KCI 논문 ID가 있으면 "
         "`in_service=true`(국내 논문, 인용관계 그래프와 같은 기준)이고 `paper_id`로 상세 조회 가능 — "
         "서비스 DB에 아직 없는 논문은 상세 조회 시 적재됨\n"
-        "- 그 외 `db_code = JAKO` (KCI ID 없음) → ScienceON browse API (CitedDocumentInfo). `CitedDOI`로만 서비스 DB 매칭 "
+        "- 그 외 `db_code = JAKO` (KCI ID 없음) → 미리 저장한 ScienceON 참고문헌(CitedDocumentInfo, 실행 중 ScienceON 호출 없음). `CitedDOI`로만 서비스 DB 매칭 "
         "(ScienceON의 `CitedCn`은 논문 CN이 아니라 항목 일련번호라 쓸 수 없음 — DOI 없는 참고문헌은 항상 `in_service=false`)\n"
         "- 그 외 논문 중 **DOI 보유** → CrossRef API. DOI로 서비스 DB 매칭 (JAFO가 대부분이지만 db_code로 거르지 않음)\n"
         "- 그 외 (DOI 없음, DIKO 학위논문 등) → 빈 리스트\n\n"
@@ -218,7 +211,7 @@ async def get_paper_similar(
         "- `in_service: true` — 서비스 papers 테이블에 있는 논문 (`paper_id`로 상세 이동 가능)\n"
         "- `in_service: false` — 서비스 외 논문\n"
         "- `unstructured` — CrossRef 경로에서만 채워지는 원문 인용 문자열. ScienceON 경로는 항상 null\n\n"
-        "**502** — KCI(ART… 경로) 또는 ScienceON(JAKO 경로) 호출 실패에만 해당합니다. 참고문헌이 실제로 없는 경우(빈 리스트)와 구분하기 위한 것입니다.\n"
+        "**502** — KCI 경로 호출 실패에만 해당합니다. 참고문헌이 실제로 없는 경우(빈 리스트)와 구분하기 위한 것입니다.\n"
         "⚠️ CrossRef 경로는 호출이 실패해도 502가 아니라 **빈 리스트**로 반환되므로, 프론트에서 "
         "\'참고문헌 없음\'과 구분할 수 없습니다"
     ),
@@ -250,18 +243,29 @@ async def get_paper_references(
             )
         return await _build_kci_response(db, fetched.references)
 
-    # ── JAKO: ScienceON browse CitedDocumentInfo ──────────────────────────
+    # ── JAKO (KCI ID 없음): 미리 저장한 ScienceON 참고문헌 ─────────────────
+    # ScienceON 토큰은 몇 시간마다 만료돼 실행 중에 부르지 않는다. scripts/load_scienceon_references.py가
+    # 대상 논문 전부를 paper_references에 저장해 두므로 행이 없으면 참고문헌이 없는 논문이다.
     if db_code == "JAKO":
-        try:
-            xml = await _scienceon.browse_article(paper_id)
-            refs = parse_cited_references(xml)
-        except (httpx.HTTPError, ScienceOnApiError) as exc:
-            # 토큰 만료·호출 한도 초과를 "참고문헌 0건"으로 내려보내지 않는다
-            logger.warning("ScienceON 참고문헌 조회 실패 (paper_id=%s): %s", paper_id, exc)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="참고문헌 제공처(ScienceON) 호출에 실패했습니다",
-            ) from exc
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT title, author, journal, doi, pubyear FROM paper_references "
+                    "WHERE source_cn = :id ORDER BY id"
+                ),
+                {"id": paper_id},
+            )
+        ).all()
+        refs = [
+            ScienceOnReference(
+                title=r.title,
+                authors=[a.strip() for a in (r.author or "").split(";") if a.strip()],
+                year=r.pubyear,
+                journal=r.journal,
+                doi=r.doi,
+            )
+            for r in rows
+        ]
         return await _build_scienceon_response(db, refs)
 
     # ── JAFO / 기타: CrossRef (DOI 보유 시) ──────────────────────────────
