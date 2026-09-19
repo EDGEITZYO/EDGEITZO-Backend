@@ -9,7 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.deps import get_current_user_optional
 from app.core.response import success_response
+from app.models.user import User
 from app.models.user_keyword_map import UserKeywordMap
 from app.schemas.common import ApiResponse
 from app.schemas.paper import PaperListResponse
@@ -100,6 +102,7 @@ async def get_last_anchor(user_id: str, db: AsyncSession = Depends(get_db)):
 async def search_papers_by_keyword(
     request: KeywordPaperRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     result = await get_node_papers(
         keyword=request.keyword,
@@ -112,6 +115,7 @@ async def search_papers_by_keyword(
         user_id=request.user_id,
         map_session_id=request.map_session_id,
         research_field=request.research_field,
+        bookmark_user_id=str(current_user.id) if current_user else None,
         db=db,
     )
     return success_response(data=result, message="keyword papers found")

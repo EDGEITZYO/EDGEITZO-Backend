@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import AsyncSessionLocal, get_db
 from app.core.rate_limit import limit_llm_calls
 from app.core.deps import get_current_user_optional
 from app.core.redis import get_redis
@@ -40,6 +40,7 @@ from app.schemas.search import (
     SelectionReasonRequest,
     SelectionReasonResponse,
 )
+from app.services.bookmark_service import get_bookmarked_paper_ids
 from app.services.search_service import search_papers_service
 from app.services.selection_reason_service import get_or_create_reasons
 
@@ -545,6 +546,28 @@ def _to_chat_response(session_id: str, state: SearchState) -> ChatResponse:
     )
 
 
+async def _refresh_bookmarks(response: ChatResponse, current_user: Optional[User]) -> ChatResponse:
+    """응답의 북마크 여부를 지금 기준으로 다시 채운다.
+
+    채팅 검색은 결과를 Redis 세션 상태에 저장해 두고, 검색을 다시 돌리지 않는 턴(검색과 무관한 말 →
+    off_topic)이나 이전 턴 기록(history[].result_items)에서는 저장된 결과를 그대로 돌려준다. 그 사이
+    누른 북마크가 반영되지 않아 화면 상태가 어긋났다. 북마크는 세션에 두지 않고 응답마다 조회한다."""
+    items = list(response.result_items) + [it for step in response.history for it in step.result_items]
+    if not items:
+        return response
+    bookmarked: set[str] = set()
+    if current_user is not None:
+        try:
+            async with AsyncSessionLocal() as db:
+                bookmarked = await get_bookmarked_paper_ids(db, current_user.id, list({it.paper_id for it in items}))
+        except Exception:
+            logger.warning("채팅 검색 북마크 여부 조회 실패", exc_info=True)
+            return response
+    for it in items:
+        it.is_bookmarked = it.paper_id in bookmarked
+    return response
+
+
 @router.post(
     "/search/chat",
     dependencies=[Depends(limit_llm_calls)],
@@ -594,7 +617,8 @@ async def chat_search(
 
     _save_state(session_id, result_state)
     _record_search_history(current_user, session_id, result_state)
-    return success_response(data=_to_chat_response(session_id, result_state), message="chat processed")
+    response = await _refresh_bookmarks(_to_chat_response(session_id, result_state), current_user)
+    return success_response(data=response, message="chat processed")
 
 
 async def _collect_selection_reasons(result_state: SearchState) -> list[str]:
@@ -762,7 +786,7 @@ async def stream_chat(
                 yield _sse("token", {"text": ai_summary[i:i + settings.sse_chunk_size]})
                 await asyncio.sleep(settings.sse_chunk_delay_seconds)
 
-            response = _to_chat_response(session_id, result_state)
+            response = await _refresh_bookmarks(_to_chat_response(session_id, result_state), current_user)
             # 카드를 먼저 내보낸다. 선정 사유를 여기서 기다리면 사유 생성이 끝날 때까지
             # 카드가 화면에 아예 안 뜬다(초기 10건이면 수 초). 사유는 아래에서 뒤따라 흘린다.
             yield _sse("done", response.model_dump())

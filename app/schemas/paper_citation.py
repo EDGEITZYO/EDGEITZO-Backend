@@ -110,7 +110,11 @@ class PaperCitationCard(BaseModel):
     sci_indexed: Optional[bool] = Field(default=None, description="in_service=true일 때만. 없으면 null")
     citation_count: Optional[int] = Field(default=None, description="in_service=true일 때만. 없으면 null")
     trust_badge: Optional[PaperCardTrustBadge] = Field(default=None, description="in_service=true일 때만. 없으면 null")
-    is_bookmarked: Optional[bool] = Field(default=None, description="in_service=true일 때만. 없으면 null")
+    is_bookmarked: Optional[bool] = Field(
+        default=None,
+        description="요청자의 북마크 여부. in_service=true일 때만 true/false(비로그인이면 항상 false), "
+        "해외 논문(in_service=false)은 null",
+    )
 
     model_config = {
         "json_schema_extra": {

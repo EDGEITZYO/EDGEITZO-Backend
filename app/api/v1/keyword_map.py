@@ -9,8 +9,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.deps import get_current_user_optional
 from app.core.rate_limit import limit_llm_calls
 from app.core.response import success_response
+from app.models.user import User
 from app.models.user_keyword_map import UserKeywordMap
 from app.schemas.common import ApiErrorResponse, ApiResponse
 from app.schemas.keyword_map import (
@@ -158,6 +160,8 @@ async def expand_node_in_place(node_key: str, request: KeywordMapExpandRequest):
 
 **탐색 이력**
 - `user_id` 제공 시 탐색 이력 자동 저장
+
+**북마크 여부 (`papers[].is_bookmarked`)**: 로그인 토큰의 사용자 기준. 토큰이 없으면 `user_id` 기준(하위 호환), 둘 다 없으면 false
 """,
 )
 async def get_keyword_map_node_papers(
@@ -174,6 +178,7 @@ async def get_keyword_map_node_papers(
     map_session_id: Optional[str] = Query(None, description="키워드맵 탐색 세션 ID"),
     research_field: Optional[str] = Query(None, description="최상위 연구 분야 (탐색 이력 제목용)"),
     db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     # node_key는 "ko:관리" 같은 내부 저장용 key 포맷이라, 화면에 노출되는 title/keyword_path/
     # keyword 필드에 그대로 쓰면 안 됨 — 사람이 읽는 이름(name_ko/name_en)으로 변환해서 넘긴다.
@@ -193,6 +198,7 @@ async def get_keyword_map_node_papers(
         keyword_path=keyword_path,
         map_session_id=map_session_id,
         research_field=research_field,
+        bookmark_user_id=str(current_user.id) if current_user else None,
         db=db,
     )
     return success_response(data=result, message="node papers fetched")

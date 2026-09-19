@@ -419,11 +419,15 @@ async def get_node_papers(
     keyword_path: Optional[str] = None,
     map_session_id: Optional[str] = None,
     research_field: Optional[str] = None,
+    bookmark_user_id: Optional[str] = None,
     db: AsyncSession,
 ) -> PaperListResponse:
     """키워드 노드 클릭 시 논문 리스트 조회 — keyword_map.py(GET, path param)와
     keyword_search.py(POST, body) 양쪽에서 공용으로 호출 (기존에 두 파일에 따로 구현돼 있던 로직 통합).
-    페이지네이션 없이 필터링된 전체 결과를 한 번에 반환한다."""
+    페이지네이션 없이 필터링된 전체 결과를 한 번에 반환한다.
+
+    user_id는 탐색 이력 저장용, bookmark_user_id는 카드의 북마크 여부 조회용(로그인 토큰의 사용자).
+    예전엔 북마크 여부도 user_id 쿼리로만 봐서, 토큰만 보내면 항상 false였다."""
     service = get_chroma_search_service()
     paper_ids = await get_paper_ids_by_keyword(keyword)
 
@@ -436,7 +440,7 @@ async def get_node_papers(
     items = apply_filters(items, year=year, paper_type=paper_type, kci=kci, sci=sci)
     items = apply_sort(items, sort)
 
-    all_cards = await build_paper_cards(items, db, user_id=user_id)
+    all_cards = await build_paper_cards(items, db, user_id=bookmark_user_id or user_id)
     all_cards = apply_paper_type_postfilter(all_cards, paper_type)
 
     saved_search_id = None

@@ -16,6 +16,7 @@ from app.schemas.bookmark import (
 )
 from app.schemas.common import ApiErrorResponse, ApiResponse
 from app.services.bookmark_service import (
+    BookmarkTargetNotFound,
     add_bookmark,
     check_bookmark,
     get_bookmarks,
@@ -88,16 +89,26 @@ async def list_bookmarks(
 @router.post(
     "",
     response_model=ApiResponse[BookmarkResponse],
-    responses={401: {"model": ApiErrorResponse}, 422: {"model": ApiErrorResponse}},
+    responses={401: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}, 422: {"model": ApiErrorResponse}},
     summary="북마크 추가",
-    description="논문을 북마크에 추가합니다. **Authorization 헤더에 Bearer 토큰 필요.** 이미 북마크된 경우 200을 반환합니다 (idempotent). `folder_id` 미지정 시 폴더 없이 저장됩니다.",
+    description=(
+        "논문을 북마크에 추가합니다. **Authorization 헤더에 Bearer 토큰 필요.**\n\n"
+        "- 이미 북마크된 경우 200 (idempotent). 이때 `folder_id`를 주면 그 폴더로 옮기고, "
+        "생략하면 기존 폴더를 유지합니다\n"
+        "- `folder_id` 미지정 시 폴더 없이 저장됩니다\n"
+        "- 서비스 DB에 아직 없는 국내 논문(KCI ID `ART…`, 인용관계 그래프 카드 등)은 KCI에서 받아 적재한 뒤 저장합니다\n"
+        "- **404**: 논문이 없거나, 폴더가 없거나 본인 폴더가 아닌 경우"
+    ),
 )
 async def create_bookmark(
     body: BookmarkCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    bm = await add_bookmark(db, current_user.id, body.paper_id, body.folder_id)
+    try:
+        bm = await add_bookmark(db, current_user.id, body.paper_id, body.folder_id)
+    except BookmarkTargetNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message) from exc
     return success_response(
         data=BookmarkResponse.model_validate(bm),
         message="북마크에 추가되었습니다",
@@ -107,18 +118,19 @@ async def create_bookmark(
 @router.delete(
     "/{paper_id}",
     response_model=ApiResponse[None],
-    responses={401: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
+    responses={401: {"model": ApiErrorResponse}},
     summary="북마크 삭제",
-    description="논문 북마크를 삭제합니다. **Authorization 헤더에 Bearer 토큰 필요.** 북마크가 없으면 404 반환.",
+    description=(
+        "논문 북마크를 삭제합니다. **Authorization 헤더에 Bearer 토큰 필요.** "
+        "이미 북마크가 없어도 200을 반환합니다 (idempotent) — 결과 상태(북마크 없음)가 같기 때문입니다."
+    ),
 )
 async def delete_bookmark(
     paper_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    deleted = await remove_bookmark(db, current_user.id, paper_id)
-    if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="북마크가 없습니다")
+    await remove_bookmark(db, current_user.id, paper_id)
     return success_response(message="북마크가 삭제되었습니다")
 
 

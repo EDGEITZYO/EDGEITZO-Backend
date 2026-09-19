@@ -308,3 +308,27 @@ async def test_materialize_loads_refs_when_other_environment_already_linked_grap
     assert await svc.materialize_domestic_paper(_db(), "ART002295537") == "ART002295537"
     patched.fetch.assert_awaited_once()
     assert patched.link.await_args.kwargs["mark_loaded"] is True
+
+
+@pytest.mark.asyncio
+async def test_cards_show_real_bookmark_state_for_logged_in_user(monkeypatch):
+    """예전엔 인용관계 그래프 카드의 is_bookmarked가 항상 false였다."""
+    import uuid as _uuid
+    from app.services import paper_citation_service as pcs
+
+    async def fake_in_service_cards(db, cns):
+        return {}
+
+    async def fake_bookmarked(db, user_id, ids):
+        return {"ART009999999"}
+
+    monkeypatch.setattr(pcs, "_build_in_service_cards", fake_in_service_cards)
+    monkeypatch.setattr(pcs, "get_bookmarked_paper_ids", fake_bookmarked)
+    foreign = _ref("REF045167936")
+    nodes = [
+        pcs.PaperCitationNode(key="ART009999999", in_service=True, paper_id="ART009999999", title="a", tier=1, side="child"),
+        pcs.PaperCitationNode(key="ART008888888", in_service=True, paper_id="ART008888888", title="b", tier=1, side="child"),
+        _node_from_external(foreign, tier=1, side="child", direction="reference"),
+    ]
+    cards = await pcs._build_cards_for_nodes(None, nodes, {foreign.external_id: foreign}, _uuid.uuid4())
+    assert [c.is_bookmarked for c in cards] == [True, False, None]

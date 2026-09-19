@@ -13,6 +13,7 @@ from app.models.paper import Paper
 from app.schemas.bookmark import BookmarkedPaper, BookmarkListItem, BookmarkListResponse
 from app.schemas.bookmark_folder import BookmarkFolderResponse
 from app.schemas.paper import PaperCardTrustBadge
+from app.services.domestic_paper_service import is_domestic_key, materialize_domestic_paper
 from app.services.credibility_service import (
     JournalEvidence,
     _journal_to_evidence,
@@ -31,19 +32,56 @@ _JOURNAL_JOIN = or_(
 )
 
 
+class BookmarkTargetNotFound(Exception):
+    """북마크할 논문이나 폴더가 없음(또는 남의 폴더). 라우터가 404로 바꾼다."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+async def resolve_bookmark_paper_id(db: AsyncSession, paper_id: str) -> str | None:
+    """북마크할 논문의 papers.id. 아직 적재 전인 국내 논문(KCI ID, 인용관계 그래프 카드 등)은
+    상세페이지와 같은 방식으로 KCI에서 받아 적재한 뒤 저장한다 — 코퍼스 논문과 똑같이 다뤄진다."""
+    exists = (await db.execute(select(Paper.id).where(Paper.id == paper_id))).scalar()
+    if exists:
+        return exists
+    if is_domestic_key(paper_id):
+        return await materialize_domestic_paper(db, paper_id)
+    return None
+
+
 async def add_bookmark(
     db: AsyncSession,
     user_id: UUID,
     paper_id: str,
     folder_id: UUID | None = None,
 ) -> Bookmark:
-    """북마크 추가. 이미 존재하면 기존 레코드 반환 (idempotent)."""
-    stmt = (
-        insert(Bookmark)
-        .values(user_id=user_id, paper_id=paper_id, folder_id=folder_id)
-        .on_conflict_do_nothing(constraint="uq_bookmarks_user_paper")
-        .returning(Bookmark.id)
-    )
+    """북마크 추가 (idempotent).
+
+    이미 북마크된 논문에 folder_id를 주면 그 폴더로 옮긴다 — 예전엔 기존 레코드를 그대로 돌려줘서
+    "추가되었습니다" 응답인데 폴더가 안 바뀌었다. folder_id 없이 다시 누르면 기존 폴더를 유지한다.
+    논문이 없거나, 폴더가 없거나 남의 폴더면 BookmarkTargetNotFound (예전엔 FK 위반으로 500).
+    """
+    resolved = await resolve_bookmark_paper_id(db, paper_id)
+    if resolved is None:
+        raise BookmarkTargetNotFound("해당 논문을 찾을 수 없습니다")
+    paper_id = resolved
+
+    if folder_id is not None:
+        owned = (
+            await db.execute(
+                select(BookmarkFolder.id).where(BookmarkFolder.id == folder_id, BookmarkFolder.user_id == user_id)
+            )
+        ).scalar()
+        if owned is None:
+            raise BookmarkTargetNotFound("해당 폴더를 찾을 수 없습니다")
+
+    stmt = insert(Bookmark).values(user_id=user_id, paper_id=paper_id, folder_id=folder_id)
+    if folder_id is not None:
+        stmt = stmt.on_conflict_do_update(constraint="uq_bookmarks_user_paper", set_={"folder_id": folder_id})
+    else:
+        stmt = stmt.on_conflict_do_nothing(constraint="uq_bookmarks_user_paper")
     await db.execute(stmt)
     await db.commit()
 

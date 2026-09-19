@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.deps import get_current_user_optional
+from app.models.user import User
 from app.core.response import success_response
 from app.schemas.common import ApiErrorResponse, ApiResponse
 from app.schemas.paper_citation import (
@@ -50,8 +52,9 @@ async def get_paper_citation_graph(
         default="reference", description="'reference'=참고문헌(과거 방향) | 'citing'=피인용(미래 방향)"
     ),
     db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    result = await get_citation_graph(paper_id, direction, db)
+    result = await get_citation_graph(paper_id, direction, db, user_id=current_user.id if current_user else None)
     return success_response(data=result, message="paper citation graph loaded")
 
 
@@ -78,6 +81,7 @@ async def expand_paper_citation_node(
     node_key: str = Path(..., description="확장할 노드의 key (PaperCitationNode.key) — 국내 논문 노드만 유효, 아니면 404"),
     request: PaperCitationExpandRequest = ...,
     db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     result = await expand_citation_node(
         node_key,
@@ -85,6 +89,7 @@ async def expand_paper_citation_node(
         current_tier=request.current_tier,
         existing_node_keys=request.existing_node_keys,
         db=db,
+        user_id=current_user.id if current_user else None,
     )
     return success_response(data=result, message="paper citation node expanded")
 

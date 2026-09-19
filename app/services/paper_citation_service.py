@@ -5,6 +5,7 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
+from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -27,6 +28,7 @@ from app.schemas.paper_citation import (
     PaperCitationGraphResponse,
     PaperCitationNode,
 )
+from app.services.bookmark_service import get_bookmarked_paper_ids
 from app.services.domestic_paper_service import is_domestic_key, materialize_domestic_paper
 
 logger = logging.getLogger(__name__)
@@ -373,7 +375,12 @@ async def _mark_children_with_external_refs(
             node.has_more = True
 
 
-async def _build_cards_for_nodes(db: AsyncSession, nodes: list[PaperCitationNode], external_refs_by_key: dict[str, PaperCitationExternalRef]) -> list[PaperCitationCard]:
+async def _build_cards_for_nodes(
+    db: AsyncSession,
+    nodes: list[PaperCitationNode],
+    external_refs_by_key: dict[str, PaperCitationExternalRef],
+    user_id: Optional[UUID] = None,
+) -> list[PaperCitationCard]:
     in_service_keys = [n.key for n in nodes if n.in_service]
     in_service_cards = await _build_in_service_cards(db, in_service_keys)
 
@@ -390,6 +397,15 @@ async def _build_cards_for_nodes(db: AsyncSession, nodes: list[PaperCitationNode
             card = _card_from_node(node)
         if card:
             cards.append(card)
+
+    # 로그인했으면 실제 북마크 여부로 채운다(예전엔 항상 false라 북마크해도 안 된 것처럼 보였다).
+    # 비로그인은 false 그대로, 해외 논문(in_service=false)은 북마크 대상이 아니라 null 그대로.
+    if user_id is not None:
+        ids = [c.paper_id for c in cards if c.in_service and c.paper_id]
+        bookmarked = await get_bookmarked_paper_ids(db, user_id, ids)
+        for card in cards:
+            if card.in_service:
+                card.is_bookmarked = card.paper_id in bookmarked
     return cards
 
 
@@ -408,7 +424,9 @@ def _card_from_node(node: PaperCitationNode) -> PaperCitationCard:
 # 최초 로드
 # ---------------------------------------------------------------------------
 
-async def get_citation_graph(cn: str, direction: Direction, db: AsyncSession) -> PaperCitationGraphResponse:
+async def get_citation_graph(
+    cn: str, direction: Direction, db: AsyncSession, user_id: Optional[UUID] = None
+) -> PaperCitationGraphResponse:
     """Neo4j 드라이버가 동기(sync)이므로 스레드풀에서 실행해 이벤트 루프 블로킹을 방지."""
     partial = await asyncio.to_thread(_get_or_build_in_service_part, cn, direction)
     if partial is None or (direction == "reference" and await _refs_pending(db, [cn])):
@@ -449,7 +467,7 @@ async def get_citation_graph(cn: str, direction: Direction, db: AsyncSession) ->
 
     external_refs_by_key = {r.external_id: r for r in external_refs}
     child_nodes = nodes[1:]  # center 제외
-    papers = await _build_cards_for_nodes(db, child_nodes, external_refs_by_key)
+    papers = await _build_cards_for_nodes(db, child_nodes, external_refs_by_key, user_id)
 
     return PaperCitationGraphResponse(
         direction=direction,
@@ -508,6 +526,7 @@ async def expand_citation_node(
     current_tier: int,
     existing_node_keys: list[str],
     db: AsyncSession,
+    user_id: Optional[UUID] = None,
 ) -> PaperCitationExpandResponse:
     excluded = set(existing_node_keys) | {node_key}
     remaining_capacity = settings.paper_citation_max_nodes - len(excluded)
@@ -564,7 +583,7 @@ async def expand_citation_node(
     capped = remaining_capacity < settings.paper_citation_expand_max and parent_has_more
 
     external_refs_by_key = {r.external_id: r for r in external_refs}
-    papers = await _build_cards_for_nodes(db, nodes, external_refs_by_key)
+    papers = await _build_cards_for_nodes(db, nodes, external_refs_by_key, user_id)
 
     return PaperCitationExpandResponse(
         parent_key=node_key,
