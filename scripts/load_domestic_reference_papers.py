@@ -135,8 +135,8 @@ def _corpus_cns() -> list[str]:
     return [p["CN"] for p in data["papers"] if p.get("CN")]
 
 
-def _graph_nodes_needing_refs(corpus: list[str]) -> list[str]:
-    """참고문헌을 아직 안 받은 KCI ID 코퍼스 논문 + 코퍼스가 인용한 1단계 국내 논문 노드."""
+def _corpus_and_depth1_nodes(corpus: list[str]) -> list[str]:
+    """KCI ID 코퍼스 논문 + 코퍼스가 인용한 1단계 국내 논문 노드 (Neo4j)."""
     driver = get_neo4j_driver()
     try:
         with driver.session() as session:
@@ -145,7 +145,7 @@ def _graph_nodes_needing_refs(corpus: list[str]) -> list[str]:
                 for r in session.run(
                     """
                     MATCH (p:Paper)
-                    WHERE p.cn STARTS WITH 'ART' AND p.refs_loaded_at IS NULL
+                    WHERE p.cn STARTS WITH 'ART'
                       AND (p.cn IN $corpus OR EXISTS { MATCH (c:Paper)-[:CITES]->(p) WHERE c.cn IN $corpus })
                     RETURN p.cn AS cn ORDER BY cn
                     """,
@@ -154,6 +154,21 @@ def _graph_nodes_needing_refs(corpus: list[str]) -> list[str]:
             ]
     finally:
         driver.close()
+
+
+async def _graph_nodes_needing_refs(corpus: list[str]) -> list[str]:
+    """그중 이 환경에 KCI 참고문헌을 아직 안 받은 것(papers 행 없음 또는 kci_refs_loaded_at NULL).
+    Neo4j는 여러 환경이 같이 쓰므로 받았는지는 Postgres로 본다."""
+    nodes = await asyncio.to_thread(_corpus_and_depth1_nodes, corpus)
+    async with AsyncSessionLocal() as session:
+        loaded = set(
+            (
+                await session.execute(
+                    text("SELECT id FROM papers WHERE id = ANY(:ids) AND kci_refs_loaded_at IS NOT NULL"), {"ids": nodes}
+                )
+            ).scalars()
+        )
+    return [n for n in nodes if n not in loaded]
 
 
 async def main() -> None:
@@ -170,7 +185,7 @@ async def main() -> None:
     corpus = _corpus_cns()
     async with AsyncSessionLocal() as session:
         ref_targets = list((await session.execute(text(_ART_REFS_SQL), {"corpus": corpus})).scalars())
-    graph_targets = await asyncio.to_thread(_graph_nodes_needing_refs, corpus)
+    graph_targets = await _graph_nodes_needing_refs(corpus)
     targets = list(dict.fromkeys(graph_targets + ref_targets))
     if args.limit:
         targets = targets[: args.limit]

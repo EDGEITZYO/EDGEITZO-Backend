@@ -207,10 +207,10 @@ async def get_paper_similar(
     description=(
         "논문의 참고문헌 목록을 반환합니다.\n\n"
         "**조회 경로** (db_code가 아니라 아래 순서로 분기합니다)\n"
-        "- `paper_id`가 KCI 논문 ID(`ART…`) → KCI articleDetail 참고문헌. 참고문헌에 KCI 논문 ID가 있으면 "
+        "- KCI 논문 ID 보유(`paper_id`가 `ART…`이거나 KCI ID가 따로 있는 논문) → KCI articleDetail 참고문헌. 참고문헌에 KCI 논문 ID가 있으면 "
         "`in_service=true`(국내 논문, 인용관계 그래프와 같은 기준)이고 `paper_id`로 상세 조회 가능 — "
         "서비스 DB에 아직 없는 논문은 상세 조회 시 적재됨\n"
-        "- `db_code = JAKO` → ScienceON browse API (CitedDocumentInfo). `CitedDOI`로만 서비스 DB 매칭 "
+        "- 그 외 `db_code = JAKO` (KCI ID 없음) → ScienceON browse API (CitedDocumentInfo). `CitedDOI`로만 서비스 DB 매칭 "
         "(ScienceON의 `CitedCn`은 논문 CN이 아니라 항목 일련번호라 쓸 수 없음 — DOI 없는 참고문헌은 항상 `in_service=false`)\n"
         "- 그 외 논문 중 **DOI 보유** → CrossRef API. DOI로 서비스 DB 매칭 (JAFO가 대부분이지만 db_code로 거르지 않음)\n"
         "- 그 외 (DOI 없음, DIKO 학위논문 등) → 빈 리스트\n\n"
@@ -227,9 +227,9 @@ async def get_paper_references(
     paper_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    db_code, _, doi = await get_paper_meta(db, paper_id)
+    db_code, kci_art_id, doi = await get_paper_meta(db, paper_id)
     if db_code is None and is_domestic_key(paper_id) and await materialize_domestic_paper(db, paper_id) == paper_id:
-        db_code, _, doi = await get_paper_meta(db, paper_id)
+        db_code, kci_art_id, doi = await get_paper_meta(db, paper_id)
 
     if db_code is None:
         raise HTTPException(
@@ -237,10 +237,12 @@ async def get_paper_references(
             detail="해당 논문을 찾을 수 없습니다",
         )
 
-    # ── KCI 논문 ID(ART…): KCI articleDetail referenceInfo ────────────────
-    # ScienceON browse는 ScienceON CN으로만 조회되므로 KCI ID 논문은 KCI에서 받는다
-    if is_domestic_key(paper_id):
-        fetched = await fetch_kci_paper(paper_id)
+    # ── KCI 논문 ID 보유(id가 ART…이거나 kci_art_id 있음): KCI articleDetail referenceInfo ──
+    # KCI는 고정 API 키라 만료가 없다. ScienceON은 몇 시간마다 토큰을 재발급해야 해서, KCI로
+    # 받을 수 있는 논문은 전부 KCI로 받고 ScienceON은 KCI ID가 없는 논문에만 쓴다.
+    kci_id = paper_id if is_domestic_key(paper_id) else (kci_art_id if is_domestic_key(kci_art_id) else None)
+    if kci_id:
+        fetched = await fetch_kci_paper(kci_id)
         if fetched is None:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
