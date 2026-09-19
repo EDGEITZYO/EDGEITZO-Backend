@@ -10,9 +10,12 @@
 
 실행: python scripts/embed_abstract_sentences.py
       (논문 데이터나 임베딩 모델이 바뀌면 다시 실행해서 캐시 갱신)
+      python scripts/embed_abstract_sentences.py --only-missing
+      (코퍼스에 논문만 추가된 경우 — 캐시에 없는 논문만 인코딩하고, 코퍼스에서 빠진 논문은 캐시에서 지운다)
 """
 from __future__ import annotations
 
+import argparse
 import pickle
 import sys
 import time
@@ -39,6 +42,10 @@ BATCH_SIZE = 16  # 운영 서버(vCPU 2 / RAM 3.7GB)에서 256이면 스와핑�
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--only-missing", action="store_true", help="캐시에 없는 논문만 인코딩해 기존 캐시에 합친다")
+    args = parser.parse_args()
+
     print("논문 데이터 로딩 중...")
     _, papers = _load_papers()
     print(f"{len(papers)}건 로드됨")
@@ -52,6 +59,19 @@ def main() -> None:
         sentences = _split_sentences(abstract) if abstract else []
         if sentences:
             doc_sentences[paper_id] = sentences
+
+    existing: dict[str, tuple[list[str], np.ndarray]] = {}
+    if args.only_missing and _SENTENCE_CACHE_PATH.exists():
+        with open(_SENTENCE_CACHE_PATH, "rb") as f:
+            existing = pickle.load(f)
+        existing = {k: v for k, v in existing.items() if k in doc_sentences}
+        doc_sentences = {k: v for k, v in doc_sentences.items() if k not in existing}
+        print(f"기존 캐시 {len(existing)}건 유지, 신규 인코딩 {len(doc_sentences)}건")
+        if not doc_sentences:
+            with open(_SENTENCE_CACHE_PATH, "wb") as f:
+                pickle.dump(existing, f, protocol=pickle.HIGHEST_PROTOCOL)
+            print("인코딩할 신규 논문이 없습니다 (코퍼스에서 빠진 논문만 캐시에서 정리).")
+            return
 
     total_sentences = sum(len(s) for s in doc_sentences.values())
     print(f"초록 있는 논문 {len(doc_sentences)}건, 총 문장 {total_sentences}개")
@@ -76,7 +96,7 @@ def main() -> None:
     )
     print(f"인코딩 완료: {round(time.time() - t0, 1)}초")
 
-    cache: dict[str, tuple[list[str], np.ndarray]] = {}
+    cache: dict[str, tuple[list[str], np.ndarray]] = dict(existing)
     idx = 0
     for paper_id, sentences in doc_sentences.items():
         n = len(sentences)
