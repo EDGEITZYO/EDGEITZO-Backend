@@ -146,8 +146,21 @@ data: {"type": "<event_type>", ...payload}\n\n
 | `narrow_chips` / `expand_chips` | 좁히기/확장 칩. `chip_id`+`chip_type`을 다음 턴에 그대로 보내면 적용된다. `total_count`가 4 이하면 `narrow_chips`는 빈 배열 |
 | `keyword_map_anchor` | **선택 필드.** 이 검색 결과에 대응하는 키워드맵 앵커 노드. 검색 결과에서 키워드맵으로 넘어가는 동선이 있을 때 `GET /api/v1/keyword-map?key={key}`로 넘기면 404 없이 그래프를 받는다. 그런 동선이 없으면 무시해도 된다. 결과 0건이거나 못 찾으면 `null` |
 | `ai_summary` / `summary_failed` | 요약 문장과 그 실패 여부. `summary_failed=true`라도 검색 자체는 성공이다 |
-| `fallback` | `null`(정상) / `clarify`(검색어가 비어 명확화 필요) / `no_result`(0건) / `off_topic`(검색과 무관한 발화라 재검색 안 함) / `topic_change`(주제 전환으로 판단해 새 주제로 재검색함) |
+| `fallback` | 정상 결과가 아닌 상황 표시. 화면 문구를 이 값으로 분기한다 (아래 표 참고) |
 | `remaining_new_chats` / `remaining_turns` | 남은 이용 횟수. 한도가 꺼져 있으면 `null` |
+
+**`fallback` 값별 화면 처리**
+
+| 값 | 뜻 | `result_items` |
+|---|---|---|
+| `null` | 정상 결과 | 이번 턴의 결과 |
+| `clarify` | 첫 턴부터 검색어가 잡히지 않음("안녕?" 등) | **빈 배열** — 보여줄 게 없으니 안내 문구만 |
+| `no_result` | 검색은 했으나 조건에 맞는 게 0건 | 빈 배열 |
+| `off_topic` | 검색과 무관한 발화라 재검색하지 않음 | **직전 결과가 그대로 유지됨** — 카드를 지우지 말고 문구만 얹을 것 |
+| `topic_change` | 주제 전환으로 판단해 새 주제로 이미 재검색함 | 새 주제의 결과 |
+
+`clarify`/`no_result`/`off_topic`에서는 `ai_summary`가 `null`이다. 사용자에게 보여줄 문장은
+클라이언트가 이 `fallback` 값에 맞춰 직접 준비해야 한다.
 
 > **`keyword_map_anchor`는 언제 쓰나**: 키워드 탐색이 AI 검색과 무관한 독립 화면이라면 쓸 일이 없다.
 > 기존 `GET /keyword-map?keyword=<사용자가 고른 키워드>` 방식이 그대로 동작하며, 이 필드 때문에
