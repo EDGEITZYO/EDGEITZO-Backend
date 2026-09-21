@@ -144,12 +144,15 @@ data: {"type": "<event_type>", ...payload}\n\n
 | `history` | 탐색 경로(검색→좁히기→확장). 각 스텝이 그 시점의 `result_items`를 들고 있다 |
 | `result_items` | 결과 논문 목록. `sort_order` 기준 정렬 |
 | `narrow_chips` / `expand_chips` | 좁히기/확장 칩. `chip_id`+`chip_type`을 다음 턴에 그대로 보내면 적용된다. `total_count`가 4 이하면 `narrow_chips`는 빈 배열 |
-| `keyword_map_anchor` | **키워드맵 앵커.** `GET /api/v1/keyword-map?key={key}`로 그대로 넘기면 그래프를 받는다. 사용자 입력 문장이나 `filters.keywords`를 `?keyword=`로 보내면 대부분 404다 — 상세는 아래 참고. 결과 0건이거나 앵커를 못 찾으면 `null`이며, 이때는 키워드맵을 호출하지 말고 빈 상태로 둔다 |
+| `keyword_map_anchor` | **선택 필드.** 이 검색 결과에 대응하는 키워드맵 앵커 노드. 검색 결과에서 키워드맵으로 넘어가는 동선이 있을 때 `GET /api/v1/keyword-map?key={key}`로 넘기면 404 없이 그래프를 받는다. 그런 동선이 없으면 무시해도 된다. 결과 0건이거나 못 찾으면 `null` |
 | `ai_summary` / `summary_failed` | 요약 문장과 그 실패 여부. `summary_failed=true`라도 검색 자체는 성공이다 |
 | `fallback` | `null`(정상) / `clarify`(검색어가 비어 명확화 필요) / `no_result`(0건) / `off_topic`(검색과 무관한 발화라 재검색 안 함) / `topic_change`(주제 전환으로 판단해 새 주제로 재검색함) |
 | `remaining_new_chats` / `remaining_turns` | 남은 이용 횟수. 한도가 꺼져 있으면 `null` |
 
-> **`keyword_map_anchor`를 써야 하는 이유**: Neo4j 키워드 노드는 논문 원본 키워드로 만들어져 있어
+> **`keyword_map_anchor`는 언제 쓰나**: 키워드 탐색이 AI 검색과 무관한 독립 화면이라면 쓸 일이 없다.
+> 기존 `GET /keyword-map?keyword=<사용자가 고른 키워드>` 방식이 그대로 동작하며, 이 필드 때문에
+> `/search/chat`을 따로 호출할 이유는 없다. 검색 결과에서 키워드맵으로 **이어지는 동선이 있을 때만**
+> 쓰는 값이다. Neo4j 키워드 노드는 논문 원본 키워드로 만들어져 있어
 > 사용자 어휘·LLM 키워드와 어휘가 다르다. 실측으로, 검색이 정상 성공한 턴의 `filters.keywords`
 > 3개(치매 조기진단 / 인지기능 저하 / 신경영상 바이오마커)가 **하나도** 노드로 존재하지 않았다.
 > `keyword_map_anchor`는 검색 결과 논문들의 원본 키워드에서 뽑으므로 노드가 반드시 존재한다.

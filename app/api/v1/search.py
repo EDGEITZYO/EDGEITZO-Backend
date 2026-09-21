@@ -328,12 +328,16 @@ class ChatResponse(BaseModel):
     keyword_map_anchor: Optional[KeywordMapAnchorSchema] = Field(
         None,
         description=(
-            "키워드맵 화면 중앙에 고정할 앵커. `GET /api/v1/keyword-map?key={key}` 로 그대로 넘기면 그래프를 받는다. "
-            "**사용자가 입력한 문장이나 filters.keywords를 `?keyword=`로 보내지 말 것** — Neo4j 키워드 노드는 논문 "
-            "원본 키워드라 사용자 어휘·LLM 키워드와 거의 매칭되지 않아 404가 난다(실측: 검색이 성공한 턴에서도 "
-            "filters.keywords 3개가 모두 노드로 존재하지 않음). 이 값은 검색 결과 논문들의 원본 키워드에서 뽑으므로 "
-            "노드가 반드시 존재한다. "
-            "결과가 0건이거나 앵커를 찾지 못하면 null — 이때는 키워드맵을 호출하지 말고 빈 상태로 두면 된다."
+            "**선택 필드.** 이 검색 결과에 대응하는 키워드맵 앵커 노드다. "
+            "AI 검색 결과 화면에서 키워드맵으로 넘어가는 동선이 있을 때, 이 값을 "
+            "`GET /api/v1/keyword-map?key={key}` 로 넘기면 그 결과와 맞는 그래프를 404 없이 받는다. "
+            "그런 동선이 없다면(키워드 탐색이 독립 화면이면) **무시해도 된다** — 이 필드 때문에 "
+            "/search/chat을 따로 호출할 이유는 없고, 키워드맵의 기존 `?keyword=` 호출도 그대로 동작한다. "
+            "\n\n"
+            "필요한 이유: Neo4j 키워드 노드는 논문 원본 키워드로 만들어져 있어 사용자 어휘·LLM 키워드와 "
+            "어휘가 다르다(실측: 검색이 성공한 턴에서도 filters.keywords 3개가 모두 노드로 존재하지 않음). "
+            "이 값은 검색 결과 논문들의 원본 키워드에서 뽑으므로 노드가 반드시 존재한다. "
+            "결과가 0건이거나 앵커를 찾지 못하면 null."
         ),
     )
     ai_summary: Optional[str] = Field(None, description="LLM이 생성한 검색 결과 요약. 요약 생성 실패 시 null (이 경우 summary_failed=true)")
