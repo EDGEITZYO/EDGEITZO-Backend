@@ -14,7 +14,11 @@ Neo4j가 필요한 조회는 여기서 가짜 repo로 대체한다 — 검증 �
 import pytest
 
 from app.langgraph.search_graph import _build_expand_chips_sync, _to_anchor
-from app.services.keywords.keyword_db import KEYWORD_ANCHOR_NAME_MAX_LEN, is_usable_anchor_name
+from app.services.keywords.keyword_db import (
+    KEYWORD_ANCHOR_MAX_WORDS,
+    KEYWORD_ANCHOR_NAME_MAX_LEN,
+    is_usable_anchor_name,
+)
 from app.services.keywords.text_tokens import extract_nouns
 
 # 적재 때 구분자 분리가 실패해 논문 한 편의 키워드 목록이 통째로 한 노드가 된 실제 사례
@@ -104,9 +108,20 @@ def test_영문_노드는_name_en에_담긴다():
 
 # ── 앵커 이름 가드 ───────────────────────────────────────────────────────
 
-def test_앵커_이름_길이_경계():
-    assert is_usable_anchor_name("치매")
-    assert is_usable_anchor_name("가" * KEYWORD_ANCHOR_NAME_MAX_LEN)
+def test_단어가_너무_많으면_앵커로_쓰지_않는다():
+    """오염 노드의 표식은 길이가 아니라 단어 수다 — 논문 키워드 목록이 통째로 들어간 것."""
+    assert is_usable_anchor_name(" ".join(["단어"] * KEYWORD_ANCHOR_MAX_WORDS))
+    assert not is_usable_anchor_name(" ".join(["단어"] * (KEYWORD_ANCHOR_MAX_WORDS + 1)))
+    assert not is_usable_anchor_name(_POLLUTED_NAME)
+
+
+def test_정상적인_긴_학술용어는_앵커로_쓸_수_있다():
+    """길이로만 자르면 이런 용어까지 빠진다 — 실제 코퍼스에 있는 키워드다."""
+    assert is_usable_anchor_name("Saturated-absorption cavity ring-down spectroscopy")
+    assert is_usable_anchor_name("Astragalus membranaceus and Zanthoxylum schinifolium 1:1 mix")
+
+
+def test_띄어쓰기_없는_과도하게_긴_이름도_제외():
     assert not is_usable_anchor_name("가" * (KEYWORD_ANCHOR_NAME_MAX_LEN + 1))
     assert not is_usable_anchor_name("")
     assert not is_usable_anchor_name(None)
