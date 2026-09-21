@@ -11,13 +11,13 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from kiwipiepy import Kiwi
 from langgraph.graph import END, StateGraph
 
 from app.constants.purpose_keywords import CITATION_KEYWORDS, RECENCY_KEYWORDS
 from app.core.settings import settings
 from app.langgraph.search_state import (
     ExpandChip,
+    KeywordMapAnchor,
     NarrowChip,
     RefinementStep,
     SearchState,
@@ -32,6 +32,8 @@ from app.schemas.search import CredibilityInfo
 from app.services.bookmark_service import get_bookmarked_paper_ids
 from app.services.chroma_search_service import get_chroma_search_service
 from app.services.credibility_service import enrich_items_with_credibility, paper_type_label, resolve_paper_type
+from app.services.keywords.keyword_db import is_usable_anchor_name
+from app.services.keywords.text_tokens import get_kiwi
 from app.services.llm.client import chat
 from app.services.search_service import _apply_sort_order, _SORT_LABELS, _sort_items
 
@@ -40,7 +42,7 @@ logger = logging.getLogger(__name__)
 _MODEL = settings.llm_model_fast
 # 사용자에게 직접 노출되는 자연어 요약이라 quality 등급 (settings.llm_model_quality 주석 참고)
 _SUMMARY_MODEL = settings.llm_model_quality
-_kiwi = Kiwi()  # 모듈 로드 시 1회 초기화 (싱글턴)
+# kiwi는 app.services.keywords.text_tokens의 공용 싱글턴을 쓴다 (키워드맵 앵커 해석과 같은 인스턴스)
 
 _KEYWORD_SYSTEM = """학술 키워드·필터 추출기. 사용자 입력에서 연구 키워드와 필터 조건(연도/논문유형/인용수)을 추출해 JSON만 반환. 절대 설명하지 말 것. JSON 외 텍스트 금지."""
 
@@ -74,7 +76,7 @@ async def _llm_json(system: str, user: str, max_tokens: int = 1000) -> dict:
 def _classify_research_purpose(user_query: str) -> str:
     """kiwipiepy로 명사(NNG/NNP) 추출 후 RECENCY/CITATION 키워드셋과 교집합 비교.
     동시 매칭 시 recency 우선. 매칭 없으면 중립."""
-    tokens = _kiwi.tokenize(user_query)
+    tokens = get_kiwi().tokenize(user_query)
     nouns = {t.form for t in tokens if t.tag in ("NNG", "NNP")}
     if nouns & set(RECENCY_KEYWORDS):
         return "recency"
@@ -331,6 +333,19 @@ def _build_narrow_chips(
     return [chip for _, chip in candidates[:3]]
 
 
+def _to_anchor(node: dict) -> KeywordMapAnchor:
+    """Neo4j Keyword 노드 → 응답용 앵커. 이름은 lang에 따라 ko/en 한쪽에만 담긴다
+    (keyword_map_service._split_name과 같은 규칙)."""
+    name = node.get("name")
+    is_ko = node.get("lang") == "ko"
+    return KeywordMapAnchor(
+        key=node["key"],
+        name_ko=name if is_ko else None,
+        name_en=None if is_ko else name,
+        paper_count=node.get("paper_count", 0),
+    )
+
+
 def _top_result_keywords(
     result_items: list[dict],
     top_n_papers: int = 10,
@@ -353,8 +368,14 @@ def _top_result_keywords(
     return ranked[:top_k_keywords]
 
 
-async def _build_expand_chips(keywords: list[str], existing_keywords: Optional[list[str]] = None) -> List[ExpandChip]:
-    """매칭 키워드별 find_related_keywords 호출 후 합산(sum) 병합, 상위 3개.
+async def _build_expand_chips_and_anchor(
+    keywords: list[str], existing_keywords: Optional[list[str]] = None
+) -> tuple[List[ExpandChip], Optional[KeywordMapAnchor]]:
+    """매칭 키워드별 find_related_keywords 호출 후 합산(sum) 병합, 상위 3개 + 키워드맵 앵커.
+
+    앵커를 여기서 같이 뽑는 이유는 비용이다. 이 함수는 이미 keywords(=검색 결과 상위 논문의
+    원본 키워드, 빈도순)를 하나씩 find_keyword로 그래프에서 찾고 있다. 앵커는 그중 "처음으로
+    찾아진 노드"이므로 Neo4j 왕복이 한 번도 늘지 않는다.
 
     Neo4j 드라이버가 동기 클라이언트라 그대로 await하면 이벤트 루프를 통째로 막는다.
     (실측: 이 함수와 LLM 요약을 asyncio.gather로 묶어도 6.8초로, 순차 실행 6.6초와 같았다 —
@@ -362,11 +383,13 @@ async def _build_expand_chips(keywords: list[str], existing_keywords: Optional[l
     같은 이유로, 이 함수가 도는 동안 다른 요청까지 멈추던 문제도 함께 해소된다.
     """
     if not keywords:
-        return []
+        return [], None
     return await asyncio.to_thread(_build_expand_chips_sync, keywords, existing_keywords)
 
 
-def _build_expand_chips_sync(keywords: list[str], existing_keywords: Optional[list[str]] = None) -> List[ExpandChip]:
+def _build_expand_chips_sync(
+    keywords: list[str], existing_keywords: Optional[list[str]] = None
+) -> tuple[List[ExpandChip], Optional[KeywordMapAnchor]]:
     """위 함수의 동기 본체. Neo4j 호출은 전부 여기서 일어난다.
     existing_keywords(현재 세션에 이미 반영된 검색 키워드)와 같은 그래프 노드는 후보에서 제외 —
     안 그러면 방금 확장으로 추가한 키워드가 다른 키워드들과 계속 연관도가 높아 다음 턴에도
@@ -376,6 +399,7 @@ def _build_expand_chips_sync(keywords: list[str], existing_keywords: Optional[li
 
     driver = get_neo4j_driver()
     merged: dict[str, dict] = {}
+    anchor: Optional[KeywordMapAnchor] = None
     try:
         repo = GraphRepository(driver)
         excluded_keys: set[str] = set()
@@ -388,6 +412,9 @@ def _build_expand_chips_sync(keywords: list[str], existing_keywords: Optional[li
             center = repo.find_keyword(kw)
             if not center:
                 continue
+            # 키워드맵 앵커 — 빈도 1위부터 보므로 처음 찾아진 노드가 결과를 가장 잘 대표한다.
+            if anchor is None and is_usable_anchor_name(center.get("name")):
+                anchor = _to_anchor(center)
             related = repo.find_related_keywords(center["key"], limit=10, min_paper_count=1)
             for item in related:
                 node = item["node"]
@@ -403,7 +430,7 @@ def _build_expand_chips_sync(keywords: list[str], existing_keywords: Optional[li
         driver.close()
 
     top3 = sorted(merged.values(), key=lambda x: x["count"], reverse=True)[:3]
-    return [
+    chips = [
         ExpandChip(
             chip_id=f"expand_{i}",
             chip_type="expand",
@@ -413,6 +440,7 @@ def _build_expand_chips_sync(keywords: list[str], existing_keywords: Optional[li
         )
         for i, item in enumerate(top3)
     ]
+    return chips, anchor
 
 
 @contextlib.contextmanager
@@ -508,6 +536,7 @@ async def node_response_builder(state: SearchState) -> SearchState:
             "type_distribution": {},
             "narrow_chips": [],
             "expand_chips": [],
+            "keyword_map_anchor": None,
             "ai_summary": None,
             "summary_failed": False,
             "is_broad_result": False,
@@ -611,8 +640,8 @@ async def node_response_builder(state: SearchState) -> SearchState:
     # 확장 칩(Neo4j)과 요약 문장(LLM)은 서로의 결과를 쓰지 않는다. 순차로 돌리면
     # 2.5초 + 4.1초가 그대로 더해지는데, 함께 돌리면 느린 쪽 하나로 끝난다.
     with _stage("chips_and_summary", timings):
-        expand_chips, (ai_summary, summary_failed) = await asyncio.gather(
-            _build_expand_chips(_top_result_keywords(result_items), filters.get("keywords")),
+        (expand_chips, keyword_map_anchor), (ai_summary, summary_failed) = await asyncio.gather(
+            _build_expand_chips_and_anchor(_top_result_keywords(result_items), filters.get("keywords")),
             _build_summary(
                 topic=state.get("user_query", ""),
                 total_count=total_count,
@@ -639,6 +668,7 @@ async def node_response_builder(state: SearchState) -> SearchState:
         "type_distribution": type_distribution,
         "narrow_chips": narrow_chips,
         "expand_chips": expand_chips,
+        "keyword_map_anchor": keyword_map_anchor,
         "ai_summary": ai_summary,
         "summary_failed": summary_failed,
         "is_broad_result": is_broad_result,

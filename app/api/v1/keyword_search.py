@@ -21,7 +21,7 @@ router = APIRouter()
 
 
 class LastAnchorResponse(BaseModel):
-    """세션 재개용 '마지막 조회 앵커'. 그래프 자체는 GET /keyword-map?keyword=(last_anchor_name_ko)로 재조회."""
+    """세션 재개용 '마지막 조회 앵커'. 그래프 자체는 GET /keyword-map?key=(last_anchor_key)로 재조회."""
     last_anchor_key: str = Field(description="마지막으로 조회한 앵커 키워드의 Neo4j key")
     last_anchor_name_ko: Optional[str] = Field(None, description="한글 표시명. 없으면 null")
     last_anchor_name_en: Optional[str] = Field(None, description="영문 표시명. 없으면 null")
@@ -49,7 +49,10 @@ class KeywordPaperRequest(BaseModel):
     description="""사용자가 마지막으로 조회한 키워드맵 앵커를 반환합니다 (그래프 트리 자체는 저장하지 않음).
 
 - `user_id`가 유효한 UUID가 아니거나 저장된 이력이 없으면 404 반환
-- 반환된 `last_anchor_name_ko`(또는 `_en`)로 `GET /api/v1/keyword-map?keyword=...`를 호출해 그래프를 다시 계산하면 됨
+- 반환된 **`last_anchor_key`**로 `GET /api/v1/keyword-map?key=...`를 호출해 그래프를 다시 계산하면 됨
+- `last_anchor_name_ko`/`_en`은 화면 표시용이다. 이 이름을 `?keyword=`로 다시 찾게 하면 안 된다 —
+  문자열로 다시 찾는 과정에서 원래 보던 노드가 아닌 다른 노드가 잡히거나 404가 날 수 있다
+  (Neo4j 키워드 노드에는 이름이 비슷한 것, 적재 오류로 이름이 통째로 긴 것이 섞여 있다).
 """,
 )
 async def get_last_anchor(user_id: str, db: AsyncSession = Depends(get_db)):

@@ -7,7 +7,7 @@ from app.core.settings import settings
 
 # 드라이버는 프로세스당 하나만 두고 재사용한다. 호출할 때마다 새로 만들면 매 요청에
 # TCP 연결 + 인증 핸드셰이크가 발생하고 내부 커넥션 풀도 매번 버려진다
-# (검색 한 턴에서 _build_expand_chips가 이 비용을 그대로 물고 있었음).
+# (검색 한 턴에서 _build_expand_chips_and_anchor가 이 비용을 그대로 물고 있었음).
 _driver = None
 _lock = threading.Lock()
 

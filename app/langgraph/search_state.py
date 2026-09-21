@@ -52,6 +52,15 @@ class ExpandChip(TypedDict):
     co_occurrence_count: int
 
 
+class KeywordMapAnchor(TypedDict):
+    """키워드맵 화면 중앙에 고정할 노드. 검색 결과 논문들의 원본 키워드에서 뽑으므로
+    Neo4j에 반드시 존재한다 — 사용자 문장이나 LLM 키워드로 다시 찾을 필요가 없다."""
+    key: str
+    name_ko: Optional[str]
+    name_en: Optional[str]
+    paper_count: int
+
+
 class SearchState(TypedDict):
     user_query: str
     session_id: str
@@ -72,6 +81,7 @@ class SearchState(TypedDict):
     type_distribution: Dict[str, int]
     narrow_chips: List[NarrowChip]
     expand_chips: List[ExpandChip]
+    keyword_map_anchor: Optional[KeywordMapAnchor]  # 키워드맵 앵커. 결과가 없거나 못 찾으면 None
     ai_summary: Optional[str]
     summary_failed: bool  # 부분 실패 표시용
     fallback: Optional[str]  # "clarify" | "no_result" | "topic_change" | None

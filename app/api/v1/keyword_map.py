@@ -4,7 +4,7 @@ import uuid as _uuid
 from typing import Literal, Optional
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,7 @@ from app.schemas.paper import PaperListResponse
 from app.services.keyword_definition_service import get_keyword_definition
 from app.services.keyword_map_service import (
     expand_node,
+    get_anchor_map_by_key,
     get_initial_anchor_map,
     get_keyword_names,
     get_node_papers,
@@ -72,7 +73,16 @@ async def _save_last_anchor(db: AsyncSession, user_id: str, anchor: KeywordMapNo
     response_model=ApiResponse[KeywordMapGraphResponse],
     responses={404: {"model": ApiErrorResponse}},
     summary="키워드맵 최초 앵커 로드",
-    description="""검색어를 화면 중앙 앵커로 고정하고, 빈도/동시출현 데이터로 하위 그래프를 즉시 계산합니다 (LLM 미사용).
+    description="""앵커를 화면 중앙에 고정하고, 빈도/동시출현 데이터로 하위 그래프를 즉시 계산합니다 (LLM 미사용).
+
+**앵커 지정 방법은 두 가지이고, `key` 쪽을 쓰세요.**
+- `key` (권장) — 채팅 응답(`/search/chat`, `/search/chat/stream`의 `done`)의 `keyword_map_anchor.key`를 그대로 전달.
+  그 값은 검색 결과 논문들의 원본 키워드에서 뽑혀 노드가 반드시 존재하므로 404가 나지 않습니다.
+- `keyword` — 검색어 문자열로 찾습니다. 사용자가 입력한 문장이나 `filters.keywords`를 여기 넣으면 대부분 404입니다.
+  Neo4j 키워드 노드는 논문 원본 키워드라 사용자 어휘·LLM 키워드와 어휘가 다르기 때문입니다
+  (실측: 검색이 성공한 턴에서도 `filters.keywords` 3개가 모두 노드로 존재하지 않음).
+  문장이 들어오면 서버가 명사를 뽑아 재시도하지만 어디까지나 차선책입니다. 딥링크·세션 재개용으로만 쓰세요.
+- 둘 다 주면 `key`가 이깁니다. 둘 다 없으면 422.
 
 - 하위 분류: 후보 빈도가 앵커 이하인 것만 채택 (앵커보다 빈도 높은 후보는 노출하지 않음)
 - 정렬: 동시출현 수(유사도) 내림차순
@@ -83,11 +93,17 @@ async def _save_last_anchor(db: AsyncSession, user_id: str, anchor: KeywordMapNo
 """,
 )
 async def get_keyword_map(
-    keyword: str = Query(..., min_length=1, description="검색어 (앵커로 고정될 키워드)"),
+    keyword: str = Query(default="", description="검색어 (앵커로 고정될 키워드). key가 있으면 무시됨"),
+    key: str = Query(default="", description="키워드 노드 key (예: 'ko:치매'). 채팅 응답의 keyword_map_anchor.key를 그대로 전달 — 권장"),
     user_id: str = Query(default="", description="세션 재개용 저장할 user_id (선택)"),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await get_initial_anchor_map(keyword)
+    if not key and not keyword:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="key 또는 keyword 중 하나는 필요합니다",
+        )
+    result = await get_anchor_map_by_key(key) if key else await get_initial_anchor_map(keyword)
 
     if user_id:
         await _save_last_anchor(db, user_id, result.anchor)

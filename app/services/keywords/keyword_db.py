@@ -18,6 +18,19 @@ _MISSED_QUERIES_LOG = _PROJECT_ROOT / "data" / "keyword_search_misses.log"
 # 쿼리 문법으로 오인되는 것을 막는다 (예: "유전체(genome)" 의 괄호).
 _LUCENE_RESERVED_RE = re.compile(r'[+\-&|!(){}\[\]^"~*?:\\/]')
 
+# 앵커로 쓸 수 있는 키워드 이름의 최대 길이.
+# 적재 때 구분자 분리가 실패해 논문 한 편의 키워드 목록이 통째로 한 노드가 된 것들이 있다
+# (실측: Keyword 6,391개 중 81자 이상 42개. 예 "Antimicrobial peptides (AMPs) Multidrug-resistant
+# bacteria Time-killing kinetics …"). 이런 노드는 토큰을 많이 물고 있어 풀텍스트에서 흔한
+# 검색어를 가로챈다 — "노화"가 이 중 하나(논문 1편)에 걸려 화면 중앙 앵커가 그 긴 문자열이 됐다.
+# 데이터를 고치기 전까지 앵커 후보에서만 빼둔다(검색·확장 칩 경로는 건드리지 않는다).
+KEYWORD_ANCHOR_NAME_MAX_LEN = 40
+
+
+def is_usable_anchor_name(name: Optional[str]) -> bool:
+    return bool(name) and len(name) <= KEYWORD_ANCHOR_NAME_MAX_LEN
+
+
 # 완전 일치/AND 매칭으로 못 찾는 동의어·이표기 쌍.
 # 아래 실패 로그(_MISSED_QUERIES_LOG)를 보고 계속 채워 넣는다.
 _SYNONYMS: dict[str, list[str]] = {

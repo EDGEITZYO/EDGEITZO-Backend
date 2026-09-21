@@ -19,7 +19,8 @@ from app.repositories.graph_repository import GraphRepository
 from app.schemas.keyword_map import KeywordMapEdge, KeywordMapExpandResponse, KeywordMapGraphResponse, KeywordMapNode
 from app.schemas.paper import PaperListResponse
 from app.services.chroma_search_service import get_chroma_search_service
-from app.services.keywords.keyword_db import search_keywords
+from app.services.keywords.keyword_db import is_usable_anchor_name, search_keywords
+from app.services.keywords.text_tokens import extract_nouns
 from app.services.neo4j_search_service import get_paper_ids_by_keyword
 from app.services.paper_filter_service import (
     apply_filters,
@@ -218,12 +219,42 @@ def _get_or_build_anchor_subgraph(repo: GraphRepository, anchor: _AnchorInfo) ->
     return result
 
 
+def _pick_anchor(text: str) -> Optional[_AnchorInfo]:
+    """검색어 하나로 앵커 후보를 찾는다. 적재 오류로 이름이 비정상적으로 긴 노드는 건너뛴다."""
+    for kw in search_keywords(text, limit=5):
+        if is_usable_anchor_name(kw.name_ko or kw.name_en):
+            return _AnchorInfo(key=kw.key, name_ko=kw.name_ko, name_en=kw.name_en, paper_count=kw.paper_count)
+    return None
+
+
+def _resolve_anchor_from_text(text: str) -> Optional[_AnchorInfo]:
+    """사용자가 입력한 **문장**까지 받아 앵커로 푼다.
+
+    이 경로는 검색 세션 없이 키워드맵에 직접 들어오는 경우(딥링크·세션 재개·구버전 프런트)용
+    안전망이다. 검색을 거쳐 왔다면 채팅 응답의 keyword_map_anchor.key를 그대로 쓰는 쪽이
+    정확하다 — Neo4j 키워드 노드는 논문 원본 키워드라 사용자 어휘와 거의 안 맞기 때문이다
+    (실측: 검색이 성공한 턴에서도 filters.keywords 3개가 모두 노드로 존재하지 않음).
+
+    원문으로 먼저 찾아보고, 실패하면 명사만 뽑아 구체적인 것부터 재시도한다.
+    """
+    anchor = _pick_anchor(text)
+    if anchor:
+        return anchor
+    nouns = extract_nouns(text)
+    if len(nouns) == 1 and nouns[0] == text.strip():
+        return None  # 원문이 이미 그 명사 하나였음 — 같은 조회를 반복하지 않는다
+    for noun in nouns:
+        anchor = _pick_anchor(noun)
+        if anchor:
+            logger.info("키워드맵 앵커를 명사로 재해석: %r → %r", text, noun)
+            return anchor
+    return None
+
+
 def _get_initial_anchor_map_sync(keyword_text: str) -> KeywordMapGraphResponse:
-    matches = search_keywords(keyword_text, limit=1)
-    if not matches:
+    anchor = _resolve_anchor_from_text(keyword_text)
+    if anchor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"keyword not found: {keyword_text}")
-    kw = matches[0]
-    anchor = _AnchorInfo(key=kw.key, name_ko=kw.name_ko, name_en=kw.name_en, paper_count=kw.paper_count)
 
     driver = get_neo4j_driver()
     try:
@@ -243,6 +274,34 @@ def _get_initial_anchor_map_sync(keyword_text: str) -> KeywordMapGraphResponse:
 async def get_initial_anchor_map(keyword_text: str) -> KeywordMapGraphResponse:
     """Neo4j 드라이버가 동기(sync)이므로 스레드풀에서 실행해 이벤트 루프 블로킹을 방지 (get_paper_ids_by_keyword와 동일 패턴)."""
     return await asyncio.to_thread(_get_initial_anchor_map_sync, keyword_text)
+
+
+def _get_anchor_map_by_key_sync(node_key: str) -> KeywordMapGraphResponse:
+    driver = get_neo4j_driver()
+    try:
+        repo = GraphRepository(driver)
+        node = repo.find_keyword(node_key)
+        if node is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"keyword not found: {node_key}")
+        result = _get_or_build_anchor_subgraph(repo, _anchor_from_repo_dict(node))
+    finally:
+        driver.close()
+
+    return KeywordMapGraphResponse(
+        anchor=result.anchor,
+        nodes=result.nodes,
+        edges=result.edges,
+        has_more_children=result.has_more_children,
+    )
+
+
+async def get_anchor_map_by_key(node_key: str) -> KeywordMapGraphResponse:
+    """노드 key로 바로 앵커 그래프를 만든다 — 문자열 매칭 단계가 아예 없다.
+
+    채팅 응답의 keyword_map_anchor.key가 이 경로용이다. 그 key는 검색 결과 논문들의
+    원본 키워드에서 뽑혀 그래프에 반드시 존재하므로, 여기서 404가 나는 건 노드가 지워진
+    경우뿐이다."""
+    return await asyncio.to_thread(_get_anchor_map_by_key_sync, node_key)
 
 
 def _recenter_keyword_map_sync(new_anchor_key: str, existing_node_keys: list[str]) -> KeywordMapGraphResponse:

@@ -304,6 +304,13 @@ class ExpandChipSchema(BaseModel):
     co_occurrence_count: int = Field(description="현재 검색 결과 상위 논문들과의 키워드 동시출현 빈도 (Neo4j 기준)")
 
 
+class KeywordMapAnchorSchema(BaseModel):
+    key: str = Field(description="Neo4j 키워드 노드 key (예: 'ko:치매'). `GET /api/v1/keyword-map?key=` 에 그대로 전달")
+    name_ko: Optional[str] = Field(None, description="한글 키워드명. 노드가 영문이면 null")
+    name_en: Optional[str] = Field(None, description="영문 키워드명. 노드가 한글이면 null")
+    paper_count: int = Field(description="이 키워드에 연결된 논문 수")
+
+
 class ChatResponse(BaseModel):
     session_id: str = Field(description="세션 ID. 다음 턴 요청 시 재사용")
     filters: FilterStateSchema = Field(description="현재까지 누적된 검색 조건")
@@ -318,6 +325,17 @@ class ChatResponse(BaseModel):
     total_count: int = Field(description="전체 결과 수")
     narrow_chips: List[NarrowChipSchema] = Field(description="좁히기 칩 (연도/논문유형/인용수 중 최대 3개). total_count가 4 이하면 항상 빈 배열")
     expand_chips: List[ExpandChipSchema] = Field(description="확장 칩 (연관 키워드 최대 3개). 매칭되는 연관 키워드가 없으면 빈 배열")
+    keyword_map_anchor: Optional[KeywordMapAnchorSchema] = Field(
+        None,
+        description=(
+            "키워드맵 화면 중앙에 고정할 앵커. `GET /api/v1/keyword-map?key={key}` 로 그대로 넘기면 그래프를 받는다. "
+            "**사용자가 입력한 문장이나 filters.keywords를 `?keyword=`로 보내지 말 것** — Neo4j 키워드 노드는 논문 "
+            "원본 키워드라 사용자 어휘·LLM 키워드와 거의 매칭되지 않아 404가 난다(실측: 검색이 성공한 턴에서도 "
+            "filters.keywords 3개가 모두 노드로 존재하지 않음). 이 값은 검색 결과 논문들의 원본 키워드에서 뽑으므로 "
+            "노드가 반드시 존재한다. "
+            "결과가 0건이거나 앵커를 찾지 못하면 null — 이때는 키워드맵을 호출하지 말고 빈 상태로 두면 된다."
+        ),
+    )
     ai_summary: Optional[str] = Field(None, description="LLM이 생성한 검색 결과 요약. 요약 생성 실패 시 null (이 경우 summary_failed=true)")
     summary_failed: bool = Field(description="true면 검색 자체는 성공했고 result_items도 정상 채워져 있으나, 요약(ai_summary) 생성만 실패한 상태 (전체 실패 아님)")
     fallback: Optional[str] = Field(
@@ -375,12 +393,34 @@ def _new_state(session_id: str, user_query: str) -> SearchState:
         type_distribution={},
         narrow_chips=[],
         expand_chips=[],
+        keyword_map_anchor=None,
         ai_summary=None,
         summary_failed=False,
         fallback=None,
         is_broad_result=False,
         messages=[],
     )
+
+
+def _set_user_query(state: SearchState, message: str) -> SearchState:
+    """이번 턴의 입력을 user_query에 반영할지 결정한다.
+
+    user_query는 '이 세션이 무엇을 검색 중인가'를 담는 값이라 원칙적으로 첫 검색어를 유지한다
+    (요약 문장의 주제, 검색 기록 제목, 최초 검색 경로의 입력이 전부 이 값을 읽는다).
+    그래서 좁히기/확장 턴의 "2022년 것만" 같은 입력으로 덮이면 안 된다.
+
+    단 **첫 검색이 아직 성립하지 않은 세션**(키워드도 history도 없음)은 예외다. 그런 세션은
+    다음 턴도 _entry_router가 최초 검색 경로(intent_extractor)로 다시 보내고, 그 경로는
+    messages가 아니라 user_query를 읽는다. 여기서 갱신하지 않으면 "안녕?" 같은 첫 발화가
+    세션 내내 재사용되어, 이후 어떤 검색어를 넣어도 키워드가 안 잡히고 세션이 영구히 막힌다.
+    """
+    if not message:
+        return state
+    filters = state.get("filters") or {}
+    started = bool(filters.get("keywords")) or bool(state.get("history"))
+    if started and state.get("user_query"):
+        return state
+    return {**state, "user_query": message}
 
 
 def _find_chip(state: SearchState, chip_id: str, chip_type: str) -> Optional[dict]:
@@ -577,6 +617,7 @@ def _to_chat_response(session_id: str, state: SearchState) -> ChatResponse:
         total_count=state.get("total_count", 0),
         narrow_chips=list(state.get("narrow_chips") or []),
         expand_chips=list(state.get("expand_chips") or []),
+        keyword_map_anchor=state.get("keyword_map_anchor"),
         ai_summary=state.get("ai_summary"),
         summary_failed=state.get("summary_failed", False),
         fallback=state.get("fallback"),
@@ -640,7 +681,7 @@ async def chat_search(
 
     if request.message:
         state["messages"] = (state.get("messages") or []) + [{"role": "user", "content": request.message}]
-    state["user_query"] = state.get("user_query") or request.message
+    state = _set_user_query(state, request.message)
 
     if request.sort_order:
         state["sort_order"] = request.sort_order
@@ -798,7 +839,7 @@ async def stream_chat(
             state["user_id"] = str(current_user.id) if current_user else ""
             if request.message:
                 state["messages"] = (state.get("messages") or []) + [{"role": "user", "content": request.message}]
-            state["user_query"] = state.get("user_query") or request.message
+            state = _set_user_query(state, request.message)
 
             if request.sort_order:
                 state["sort_order"] = request.sort_order
