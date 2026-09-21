@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from app.core.neo4j_client import get_neo4j_driver
 from app.services.keywords.keyword_embedding_search import embedding_search
@@ -107,7 +107,12 @@ def _record_miss(query: str) -> None:
         logger.warning("키워드 검색 실패 로그 기록 실패", exc_info=True)
 
 
-def search_keywords(query: str, lang: str | None = None, limit: int = 5) -> list[Keyword]:
+def search_keywords(
+    query: str,
+    lang: str | None = None,
+    limit: int = 5,
+    accept: Optional[Callable[[Keyword], bool]] = None,
+) -> list[Keyword]:
     """Neo4j fulltext 인덱스(keyword_name_fulltext)로 키워드 검색
 
     1. Lucene 예약문자(괄호, 콜론 등)를 공백으로 치환해 쿼리 문법으로 오인되지 않게 함
@@ -116,30 +121,43 @@ def search_keywords(query: str, lang: str | None = None, limit: int = 5) -> list
     4. 그래도 실패하면 동의어 사전(_SYNONYMS)에서 대체어로 재시도
     5. 그래도 실패하면 임베딩(BGE-m3-ko) 기반 의미 검색으로 재시도 (임계값 미만은 결과 없음 처리)
     6. 전부 실패하면 추후 동의어 사전 보강을 위해 검색어를 로그로 남김
+
+    accept: 호출부가 쓸 수 있는 후보인지 판단하는 조건. **각 단계마다 적용되며, 통과한 게
+    하나도 없으면 그 단계는 실패로 보고 다음 단계로 넘어간다.** 호출부가 결과를 받아서
+    거르면 안 되는 이유가 여기 있다 — 앞 단계에서 못 쓸 후보가 하나라도 잡히면 함수가
+    거기서 끝나버려 뒤의 동의어·임베딩 단계에 아예 도달하지 못한다.
+    (실제 사고: "노화"가 풀텍스트에서 오염 노드 하나에만 걸렸는데, 호출부가 그걸 걸러내자
+     임베딩 검색을 못 타고 404가 됐다. "aging"은 Anti-aging으로 잘 풀리는데도.)
     """
     sanitized = _sanitize_query(query)
     if not sanitized:
         return []
 
+    def _usable(records: list) -> list[Keyword]:
+        keywords = [_to_keyword(dict(r["k"]), r["paper_count"]) for r in records]
+        return [k for k in keywords if accept is None or accept(k)]
+
     tokens = sanitized.split()
-    records = _run_fulltext_query(_to_ft_query(sanitized), lang, limit)
+    found = _usable(_run_fulltext_query(_to_ft_query(sanitized), lang, limit))
 
-    if not records and len(tokens) > 1:
+    if not found and len(tokens) > 1:
         and_query = " ".join(f"+{token}" for token in tokens)
-        records = _run_fulltext_query(and_query, lang, limit)
+        found = _usable(_run_fulltext_query(and_query, lang, limit))
 
-    if not records:
+    if not found:
         for synonym in _SYNONYMS.get(sanitized, []):
-            records = _run_fulltext_query(_to_ft_query(synonym), lang, limit)
-            if records:
+            found = _usable(_run_fulltext_query(_to_ft_query(synonym), lang, limit))
+            if found:
                 break
 
-    if records:
-        return [_to_keyword(dict(r["k"]), r["paper_count"]) for r in records]
+    if found:
+        return found
 
     matches = embedding_search(sanitized, lang=lang, limit=limit)
-    if matches:
-        return [_to_keyword(m, m.get("paper_count", 0)) for m in matches]
+    candidates = [_to_keyword(m, m.get("paper_count", 0)) for m in matches]
+    candidates = [k for k in candidates if accept is None or accept(k)]
+    if candidates:
+        return candidates
 
     _record_miss(query)
     return []

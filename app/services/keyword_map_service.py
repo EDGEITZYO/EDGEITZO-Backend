@@ -220,11 +220,19 @@ def _get_or_build_anchor_subgraph(repo: GraphRepository, anchor: _AnchorInfo) ->
 
 
 def _pick_anchor(text: str) -> Optional[_AnchorInfo]:
-    """검색어 하나로 앵커 후보를 찾는다. 적재 오류로 이름이 비정상적으로 긴 노드는 건너뛴다."""
-    for kw in search_keywords(text, limit=5):
-        if is_usable_anchor_name(kw.name_ko or kw.name_en):
-            return _AnchorInfo(key=kw.key, name_ko=kw.name_ko, name_en=kw.name_en, paper_count=kw.paper_count)
-    return None
+    """검색어 하나로 앵커 후보를 찾는다.
+
+    오염 노드 제외는 search_keywords에 accept로 넘긴다 — 결과를 받아서 거르면, 풀텍스트
+    단계에서 오염 노드 하나만 잡혔을 때 그게 '성공'으로 처리되어 동의어·임베딩 단계까지
+    못 간다. 실제로 "노화"가 그래서 404였다.
+    """
+    matches = search_keywords(
+        text, limit=10, accept=lambda kw: is_usable_anchor_name(kw.name_ko or kw.name_en)
+    )
+    if not matches:
+        return None
+    kw = matches[0]
+    return _AnchorInfo(key=kw.key, name_ko=kw.name_ko, name_en=kw.name_en, paper_count=kw.paper_count)
 
 
 def _resolve_anchor_from_text(text: str) -> Optional[_AnchorInfo]:

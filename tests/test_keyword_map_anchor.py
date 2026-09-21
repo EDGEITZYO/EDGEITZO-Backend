@@ -153,3 +153,58 @@ def test_같은_길이면_원문_순서를_따른다():
 
 def test_명사가_없으면_빈_목록():
     assert extract_nouns("안녕?") == []
+
+
+# ── 단계 폴스루 (accept) ──────────────────────────────────────────────────
+#
+# search_keywords는 풀텍스트에서 뭐라도 잡히면 거기서 끝난다. 호출부가 결과를 받아서
+# 거르는 방식이면, 오염 노드 하나만 잡힌 단계가 '성공'으로 처리되어 동의어·임베딩
+# 단계에 도달하지 못한다. "노화"가 실제로 그래서 404였다 — "aging"은 Anti-aging으로
+# 잘 풀리는데도. 그래서 조건을 함수 안으로 넣었다.
+
+def _record(key, name, lang="ko", paper_count=1):
+    return {"k": {"key": key, "name": name, "lang": lang}, "paper_count": paper_count}
+
+
+@pytest.fixture
+def fake_keyword_search(monkeypatch):
+    def _install(fulltext: list, embedding: list):
+        calls = {"embedding": 0}
+
+        def _ft(ft_query, lang, limit):
+            return fulltext
+
+        def _emb(query, lang=None, limit=5):
+            calls["embedding"] += 1
+            return embedding
+
+        monkeypatch.setattr("app.services.keywords.keyword_db._run_fulltext_query", _ft)
+        monkeypatch.setattr("app.services.keywords.keyword_db.embedding_search", _emb)
+        return calls
+
+    return _install
+
+
+def test_풀텍스트가_못_쓸_후보만_주면_임베딩까지_간다(fake_keyword_search):
+    from app.services.keywords.keyword_db import search_keywords
+
+    calls = fake_keyword_search(
+        fulltext=[_record("ko:polluted", _POLLUTED_NAME)],
+        embedding=[{"key": "ko:노인", "name": "노인", "lang": "ko", "paper_count": 4}],
+    )
+    got = search_keywords("노화", accept=lambda k: is_usable_anchor_name(k.name_ko or k.name_en))
+    assert [k.key for k in got] == ["ko:노인"]
+    assert calls["embedding"] == 1
+
+
+def test_accept가_없으면_기존_동작_그대로(fake_keyword_search):
+    """다른 호출부(키워드 검색·확장 칩)의 동작은 바뀌면 안 된다."""
+    from app.services.keywords.keyword_db import search_keywords
+
+    calls = fake_keyword_search(
+        fulltext=[_record("ko:polluted", _POLLUTED_NAME)],
+        embedding=[{"key": "ko:노인", "name": "노인", "lang": "ko"}],
+    )
+    got = search_keywords("노화")
+    assert [k.key for k in got] == ["ko:polluted"]
+    assert calls["embedding"] == 0
