@@ -74,6 +74,18 @@ EMAIL_CKPT = CHECKPOINT_DIR / "researcher_email.json"
 KEYWORD_CKPT = CHECKPOINT_DIR / "researcher_keywords.json"
 THESIS_CKPT = CHECKPOINT_DIR / "researcher_thesis.json"
 ADJUDICATE_CKPT = CHECKPOINT_DIR / "researcher_adjudicate.json"
+# coauthor 단계가 승격시킨 연구자 목록. prune이 "누가 승격분인지" 판단하는 유일한 근거다
+# (스키마에 표식 컬럼을 두지 않으려고 체크포인트를 쓴다).
+COAUTHOR_CKPT = CHECKPOINT_DIR / "researcher_coauthor.json"
+
+# 2차 적재(공저자 확장) 기준. §"적재 기준" 참조.
+#   사전 필터 — 우리 연구자들의 외부 논문 저자배열에 (이름+소속)으로 몇 번 등장하는가.
+#   실측(자기 논문 제외, 이름+소속 일치): 20회+ → 94%가 8편 이상, 10-19회 → 55%, 그 아래는 30%대.
+#   10회로 자르면 풀 1,007명 중 약 71%가 실측 필터를 통과한다.
+COAUTHOR_MIN_APPEARANCES = 10
+#   실측 필터 — expand로 실제 편수를 확인한 뒤 이 편수 미만이면 지운다.
+#   8편은 연구 흐름이 2묶음 이상 나오는 하한이다(표본 실측: 8-14편에서 평균 3.1묶음).
+COAUTHOR_MIN_PAPERS = 8
 
 KCI_PACING = 0.25
 SCI_PACING = 0.2
@@ -144,8 +156,16 @@ async def stage_anchor(limit: int | None) -> None:
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, kci_art_id, title, pubyear FROM papers "
-                    "WHERE kci_art_id IS NOT NULL ORDER BY id"
+                    # **검색 코퍼스로 범위를 한정한다.** 연구자는 코퍼스 저자만 적재한다.
+                    # papers에는 인용관계·참고문헌으로 끌어온 논문이 28,369편 더 있고(2026-09 기준)
+                    # 그중 대부분이 KCI 출신이라 kci_art_id를 갖고 있다. 범위를 안 막으면
+                    # 대상이 778편이 아니라 29,147편이 되고, 코퍼스와 무관한 저자가 연구자로
+                    # 쏟아져 들어와 "코퍼스 저자 중심"이라는 선정 기준이 통째로 무너진다.
+                    # 코퍼스 표식은 source다 — knowledge_base(970) + kci_reference_expansion(30) = 1,000편.
+                    "SELECT id, kci_art_id, title, pubyear FROM papers p "
+                    "WHERE p.kci_art_id IS NOT NULL "
+                    "  AND p.source IN ('knowledge_base', 'kci_reference_expansion') "
+                    "ORDER BY id"
                 )
             )
         ).all()
@@ -328,9 +348,21 @@ async def stage_thesis(limit: int | None) -> None:
                     # 학위논문·학술대회 + anchor(KCI)·OpenAlex 어느 경로에도 안 걸린 논문.
                     # 후자는 국내 학술지라 OpenAlex에 없고, KCI 제목 검색은 특수문자·표기차로
                     # 22편 중 7편만 맞았다(실측). ScienceON은 CN으로 바로 조회하므로 확실하다.
+                    #
+                    # **검색 코퍼스로 범위를 한정한다.** 연구자는 코퍼스 저자만 적재하는데,
+                    # papers에는 인용관계·참고문헌으로 끌어온 논문이 28,369편 더 있다(2026-09 기준).
+                    # 그것들은 researcher_papers 링크가 없으므로 NOT EXISTS 조건에 전부 걸려,
+                    # 범위를 안 막으면 대상이 303편이 아니라 28,672편이 된다. ScienceON은 순차
+                    # 호출 고정이라 그대로 돌리면 쓸모없는 조회에 2시간 넘게 쓴다.
+                    # 코퍼스 표식은 source다 — knowledge_base(970) + kci_reference_expansion(30) = 1,000편.
+                    #
+                    # scienceon_cn이 없으면 조회할 키가 없다(cn=None으로 요청이 나간다).
                     "SELECT id, scienceon_cn, authors, keywords_ko, degree, pubyear "
-                    "FROM papers p WHERE (db_code IN ('DIKO','CFKO') "
-                    "  OR NOT EXISTS (SELECT 1 FROM researcher_papers rp WHERE rp.paper_id = p.id)) "
+                    "FROM papers p "
+                    "WHERE p.source IN ('knowledge_base', 'kci_reference_expansion') "
+                    "  AND p.scienceon_cn IS NOT NULL "
+                    "  AND (db_code IN ('DIKO','CFKO') "
+                    "       OR NOT EXISTS (SELECT 1 FROM researcher_papers rp WHERE rp.paper_id = p.id)) "
                     "ORDER BY id"
                 )
             )
@@ -476,6 +508,179 @@ async def stage_thesis(limit: int | None) -> None:
     print("[thesis] DB 반영 완료")
 
 
+# ──────────────────────── coauthor (2차 적재) ────────────────────────
+
+# 사람 이름이 아닌 값이 저자 칸에 들어오는 경우가 있다 — ScienceON은 기관명을 저자로
+# 싣기도 한다("(주)유스풀제스트"). 승격시키면 기관이 연구자 프로필을 갖게 된다.
+_NOT_A_PERSON = re.compile(r"[()（）\[\]{}]|주식회사|\(주\)|연구소$|대학교$|센터$|재단$|협회$|공사$")
+
+
+def _looks_like_person(name: str) -> bool:
+    """한글 이름 2~6자. 로마자 표기는 동명이인을 못 갈라 승격 대상에서 뺀다
+    (코퍼스 저자는 anchor가 KCI 구조화 정보로 받으므로 이 제약이 없다)."""
+    name = (name or "").strip()
+    if not name or _NOT_A_PERSON.search(name):
+        return False
+    return bool(re.fullmatch(r"[가-힣]{2,6}", name))
+
+
+async def stage_coauthor(limit: int | None, *, min_appearances: int = COAUTHOR_MIN_APPEARANCES) -> None:
+    """코퍼스 저자들의 공저자 중 자주 등장하는 사람을 연구자로 승격시킨다(2차 적재).
+
+    **연구자 레코드를 1차와 똑같이 만든다** — 공저자 데이터를 더 쌓는 게 아니다.
+    공저 등장 횟수는 '누구를 고를지'의 기준일 뿐이고, 여기서 만든 행은 이어지는
+    expand/keywords/email 단계를 1차 적재분과 동일하게 통과한다.
+
+    편수는 expand 전에는 알 수 없으므로 2단으로 거른다:
+      1단 (여기)  등장 횟수 — 무료. 풀 40,919쌍을 1,007명으로 줄인다.
+      2단 (prune) 실제 편수 — expand 다음. 8편 미만을 지운다.
+    비용의 83%를 차지하는 keywords 단계는 2단을 통과한 사람에게만 돌린다.
+    """
+    print(f"[coauthor] 공저자 승격 대상 선별 (등장 {min_appearances}회 이상)")
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                text(
+                    # authors와 author_institutions는 인덱스가 맞춰져 있다(실측 32,677행 전부).
+                    "SELECT a.name, i.inst, count(*) AS appearances "
+                    "FROM researcher_external_papers e, "
+                    "     LATERAL unnest(e.authors) WITH ORDINALITY a(name, ord), "
+                    "     LATERAL unnest(e.author_institutions) WITH ORDINALITY i(inst, ord2) "
+                    "WHERE e.authors IS NOT NULL AND a.ord = i.ord2 "
+                    "  AND a.name IS NOT NULL AND btrim(a.name) <> '' "
+                    "  AND i.inst IS NOT NULL AND btrim(i.inst) <> '' "
+                    "GROUP BY a.name, i.inst "
+                    "HAVING count(*) >= :minapp "
+                    "ORDER BY count(*) DESC"
+                ),
+                {"minapp": min_appearances},
+            )
+        ).all()
+        existing = {
+            r[0] for r in (await session.execute(text("SELECT researcher_id FROM researchers"))).all()
+        }
+
+    print(f"[coauthor] 등장 {min_appearances}회 이상 (이름+소속) {len(rows):,}쌍")
+
+    candidates: dict[str, dict] = {}
+    stats = Counter()
+    for row in rows:
+        if not _looks_like_person(row.name):
+            stats["사람 이름 아님"] += 1
+            continue
+        institution = polish_institution(row.inst)
+        rid = researcher_id_for(row.name, institution)
+        if rid in existing:
+            stats["이미 적재됨"] += 1
+            continue
+        if rid in candidates:  # 같은 인물이 소속 표기만 달리해 두 번 잡힌 경우
+            candidates[rid]["appearances"] += row.appearances
+            continue
+        candidates[rid] = {
+            "researcher_id": rid,
+            "name": row.name,
+            "institution": institution,
+            "appearances": row.appearances,
+        }
+
+    if limit:
+        candidates = dict(list(candidates.items())[:limit])
+
+    print(
+        f"[coauthor] 승격 후보 {len(candidates):,}명 "
+        f"(제외: {dict(sorted(stats.items()))})"
+    )
+    if not candidates:
+        return
+
+    async with AsyncSessionLocal() as session:
+        for rid, person in candidates.items():
+            values = {
+                "researcher_id": rid,
+                "source": "kci",
+                "author_name_kor": person["name"],
+                "institution_current": person["institution"],
+                "institution_dept": institution_dept(person["institution"]),
+                "institution_history": [person["institution"]] if person["institution"] else None,
+                # 코퍼스 논문은 없다 — 있었으면 anchor/thesis가 이미 만들었다.
+                # prune이 "승격분이라 지워도 되는가"를 이 값으로 한 번 더 확인한다.
+                "corpus_paper_count": 0,
+            }
+            stmt = pg_insert(Researcher).values(**values)
+            await session.execute(stmt.on_conflict_do_nothing(index_elements=["researcher_id"]))
+        await session.commit()
+
+    _save_ckpt(COAUTHOR_CKPT, candidates)
+    print(f"[coauthor] {len(candidates):,}명 임시 적재 — 다음: --stage expand → --stage prune")
+
+
+async def stage_prune(*, min_papers: int = COAUTHOR_MIN_PAPERS, dry_run: bool = False) -> None:
+    """공저자 승격분 중 실제 논문 수가 기준 미만인 사람을 지운다(2단 필터).
+
+    코퍼스 저자는 절대 건드리지 않는다 — corpus_paper_count > 0이면 남긴다.
+    코퍼스 저자에게 편수 필터를 걸면 코퍼스 커버리지가 850→568편으로 무너진다(실측).
+    """
+    promoted = _load_ckpt(COAUTHOR_CKPT)
+    if not promoted:
+        print("[prune] 승격 기록이 없습니다 (--stage coauthor 를 먼저 실행하세요).")
+        return
+
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT r.researcher_id, r.author_name_kor, r.institution_current, "
+                    "       r.corpus_paper_count, "
+                    "       (SELECT count(*) FROM researcher_external_papers e "
+                    "        WHERE e.researcher_id = r.researcher_id) AS papers "
+                    "FROM researchers r WHERE r.researcher_id = ANY(:ids)"
+                ),
+                {"ids": list(promoted)},
+            )
+        ).all()
+
+    keep = [r for r in rows if r.papers >= min_papers or r.corpus_paper_count > 0]
+    drop = [r for r in rows if r.papers < min_papers and r.corpus_paper_count == 0]
+    print(
+        f"[prune] 승격분 {len(rows):,}명 중 유지 {len(keep):,}명 / 삭제 {len(drop):,}명 "
+        f"(기준: 논문 {min_papers}편 이상)"
+    )
+    if rows:
+        print(f"[prune] 통과율 {100 * len(keep) / len(rows):.1f}%")
+    if dry_run:
+        print("[prune] (모의실행) 삭제하지 않았습니다.")
+        return
+    if not drop:
+        return
+
+    ids = [r.researcher_id for r in drop]
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            text("DELETE FROM researcher_flow_cache WHERE researcher_id = ANY(:ids)"), {"ids": ids}
+        )
+        await session.execute(text("DELETE FROM researchers WHERE researcher_id = ANY(:ids)"), {"ids": ids})
+        await session.commit()
+
+    # ChromaDB 'researchers' 컬렉션에서도 뺀다. Postgres만 지우면 벡터가 남아
+    # 연구자 검색·유사 연구자 추천이 이미 없는 사람을 돌려준다(실측: 첫 실행에서 고아 94건).
+    try:
+        import chromadb
+
+        from app.core.settings import settings as _settings
+
+        collection = chromadb.HttpClient(
+            host=_settings.chroma_host, port=_settings.chroma_port
+        ).get_collection("researchers")
+        for start in range(0, len(ids), 200):
+            collection.delete(ids=ids[start : start + 200])
+        print(f"[prune] chroma 정리 후 {collection.count():,}건")
+    except Exception as exc:  # 컬렉션 없음·서버 미기동 등
+        print(f"[prune] chroma 정리 건너뜀 ({type(exc).__name__}: {str(exc)[:80]})")
+    # 살아남은 사람만 체크포인트에 남겨 재실행이 멱등이 되게 한다.
+    _save_ckpt(COAUTHOR_CKPT, {r.researcher_id: promoted[r.researcher_id] for r in keep if r.researcher_id in promoted})
+    print(f"[prune] {len(drop):,}명 삭제 완료")
+
+
 # ─────────────────────────────── expand ───────────────────────────────
 
 async def stage_expand(limit: int | None, *, refresh: bool = False) -> None:
@@ -483,11 +688,29 @@ async def stage_expand(limit: int | None, *, refresh: bool = False) -> None:
     async with AsyncSessionLocal() as session:
         people = (
             await session.execute(
+                # source='kci'가 기본 대상이다. 여기에 ScienceON 출신 중 **논문이 여러 편이라고
+                # ScienceON이 직접 말한 사람**(article_cnt > 1)을 더한다.
+                #
+                # §11의 학위논문 적재가 expand 다음에 들어오는 바람에 scienceon 253명은
+                # expanded_at이 전원 null이었다. 그중 237명은 article_cnt=1인 대학원생이라
+                # KCI에 학술지 논문이 없고, 이름으로 긁으면 동명이인만 나온다(§11 실측).
+                # article_cnt > 1인 21명만 골라야 그 함정을 피하면서 누락을 메운다.
+                #
+                # expand는 이름+소속으로 검색하고 인라인 소속으로 한 번 더 걸러내므로,
+                # 여기서 대상을 넓혀도 동명이인이 섞일 위험은 kci 대상과 같은 수준이다.
                 select(
                     Researcher.researcher_id,
                     Researcher.author_name_kor,
                     Researcher.institution_current,
-                ).where(Researcher.source == "kci").order_by(Researcher.researcher_id)
+                )
+                .where(
+                    sa.or_(
+                        Researcher.source == "kci",
+                        sa.and_(Researcher.source == "scienceon", Researcher.article_cnt > 1),
+                    ),
+                    Researcher.author_name_kor.isnot(None),
+                )
+                .order_by(Researcher.researcher_id)
             )
         ).all()
         art_map = dict(
@@ -586,6 +809,11 @@ async def stage_expand(limit: int | None, *, refresh: bool = False) -> None:
                     )
                 )
                 if articles:
+                    # 같은 art_id가 두 번 들어오면 ON CONFLICT DO UPDATE가 한 배치 안에서
+                    # 같은 행을 두 번 건드려 CardinalityViolationError로 죽는다(§4 함정 5와 같은 유형).
+                    # articleSearch가 페이지를 넘나들며 같은 논문을 중복으로 주는 경우가 있다.
+                    # 뒤에 온 것을 살린다 — 페이지가 뒤로 갈수록 최신 피인용이 실린다.
+                    articles = list({a["art_id"]: a for a in articles if a["art_id"]}.values())
                     payload = [
                         {
                             "researcher_id": rid,
@@ -1572,8 +1800,15 @@ async def run(stage: str, limit: int | None, *, refresh: bool = False, dry_run: 
         await stage_anchor(limit)
     if stage in ("thesis", "all"):
         await stage_thesis(limit)
+    # coauthor(승격) → expand(편수 확인) → prune(기준 미달 삭제) 순서가 지켜져야 한다.
+    # "all"에 넣은 이유는 이 순서를 코드가 강제하기 위해서다 — 사람이 손으로 돌리면
+    # prune을 빠뜨린 채 keywords로 넘어가 비용의 83%를 기준 미달자에게 쓰게 된다.
+    if stage in ("coauthor", "all"):
+        await stage_coauthor(limit)
     if stage in ("expand", "all"):
         await stage_expand(limit, refresh=refresh)
+    if stage in ("prune", "all"):
+        await stage_prune(dry_run=dry_run)
     if stage in ("merge", "all"):
         await stage_merge()
     if stage in ("keywords", "all"):
@@ -1589,7 +1824,7 @@ async def run(stage: str, limit: int | None, *, refresh: bool = False, dry_run: 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="연구자 데이터 적재 (KCI 백본 + ScienceON 이메일)")
-    parser.add_argument("--stage", choices=["anchor", "thesis", "expand", "merge", "keywords", "adjudicate", "email", "verify-email", "all"], default="all")
+    parser.add_argument("--stage", choices=["anchor", "thesis", "coauthor", "expand", "prune", "merge", "keywords", "adjudicate", "email", "verify-email", "all"], default="all")
     parser.add_argument("--limit", type=int, default=None, help="처리 건수 제한 (시범 적재용)")
     parser.add_argument("--report", action="store_true", help="적재하지 않고 검증 리포트만 출력")
     parser.add_argument("--refresh", action="store_true", help="체크포인트를 무시하고 다시 수집")
