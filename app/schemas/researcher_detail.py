@@ -223,6 +223,17 @@ class ResearchFlowResponse(BaseModel):
 
     researcher_id: str
     total_papers: int = Field(description="그래프에 포함된 논문 수")
+    flow_level: Literal["none", "single", "flow"] = Field(
+        description=(
+            "이 응답으로 무엇까지 보여줄 수 있는지. 논문 수에 따라 갈린다.\n"
+            "- `none` (0~1편): 묶을 것이 없다. nodes가 0~1개이고 clusters도 그만큼이다\n"
+            "- `single` (2~4편): 묶음이 1개로 고정된다. 분야 구분이 아니라 **하나의 연구 주제**다. "
+            "연도 흐름은 있지만 '분야가 옮겨갔다'는 말은 성립하지 않는다\n"
+            "- `flow` (5편 이상): 묶음이 2개 이상 나올 수 있는 구간. 분야 단위 흐름이 성립한다\n\n"
+            "묶음 개수 공식이 `round(논문수 / 3)`이라 4편까지는 계산상 1묶음이다. "
+            "백엔드가 낼 수 있는 것을 알리는 값이고, 화면을 어떻게 그릴지는 프런트가 정한다."
+        )
+    )
     summary: Optional[str] = Field(
         None,
         description="연구 흐름 요약 1문장. 논문이 없거나 LLM 생성에 실패하면 null",

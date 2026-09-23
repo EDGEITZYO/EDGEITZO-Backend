@@ -20,6 +20,8 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
+from collections import Counter
 from typing import Any, Optional
 
 import numpy as np
@@ -39,12 +41,27 @@ from app.services.researcher_detail_service import fetch_paper_rows
 logger = logging.getLogger(__name__)
 
 # 클러스터링 규칙이나 프롬프트를 바꾸면 올린다 — 기존 캐시가 자동으로 재생성된다.
-PROMPT_VERSION = "v2"
+# v3: _PAPERS_PER_CLUSTER 4→3, 1편 묶음 흡수(_absorb_small) 추가 (2026-09-23)
+PROMPT_VERSION = "v3"
 
 # 요약 카드 개수. 와이어프레임이 4장 안팎이고, 카드가 너무 잘게 쪼개지면
 # "연구 흐름"이 아니라 논문 목록이 된다.
-_PAPERS_PER_CLUSTER = 4
+#
+# 4에서 3으로 내렸다(2026-09-23). k = round(n/4)라 5편 이하는 묶음이 무조건 1개가 되어
+# "분야 단위 패널"이 성립하지 않았다. 연구자 150명·논문 2,516편 표본 실측:
+#
+#   논문 수   ppc=4              ppc=3 + 1편 묶음 흡수
+#   3-5편     1.0묶음            1.1묶음 · 실루엣 0.195 · 키워드 분리 8.4배
+#   8-14편    2.7묶음 (1편 8%)   3.1묶음 (1편 0%)
+#   15-29편   5.2묶음 (1편 2%)   5.6묶음 (1편 0%)
+#
+# ppc=2도 재봤으나 6-7편 구간에서 키워드 분리배수가 12.1→3.3으로 무너져 채택하지 않았다.
+_PAPERS_PER_CLUSTER = 3
 _MAX_CLUSTERS = 6
+
+# 논문 1편짜리 묶음은 카드 한 장에 논문 한 편이라 "흐름"이 아니라 목록이다.
+# 이보다 작은 묶음은 가장 가까운 묶음에 흡수시킨다.
+_MIN_CLUSTER_SIZE = 2
 
 _MODEL = settings.llm_model_fast
 _MAX_TOKENS = 900
@@ -58,6 +75,20 @@ def _order_key(row: Any) -> tuple[int, int]:
 
 def _node_id(row: Any) -> str:
     return row.internal_paper_id or row.external_id or ""
+
+
+def _flow_level(paper_count: int) -> str:
+    """이 논문 수로 무엇까지 말할 수 있는지. 묶음 공식에서 그대로 따라 나온다.
+
+    k = round(n / _PAPERS_PER_CLUSTER)이므로 ppc=3에서는 5편부터 2묶음이 가능하다.
+    4편까지는 계산상 반드시 1묶음이라 "분야가 옮겨갔다"고 말할 수 없다 — 그런데도
+    지금까지 같은 응답을 내보내서, 화면에는 "연구 흐름"이라 써 있고 내용은 논문 목록이었다.
+    """
+    if paper_count <= 1:
+        return "none"
+    if paper_count < _PAPERS_PER_CLUSTER * 2 - 1:  # ppc=3 → 5편 미만
+        return "single"
+    return "flow"
 
 
 def _paper_signature(rows: list[Any]) -> str:
@@ -98,7 +129,35 @@ def _cluster(vectors: np.ndarray) -> np.ndarray:
     from sklearn.cluster import AgglomerativeClustering
 
     k = max(1, min(_MAX_CLUSTERS, round(n / _PAPERS_PER_CLUSTER), n))
-    return AgglomerativeClustering(n_clusters=k, linkage="ward").fit_predict(vectors)
+    labels = AgglomerativeClustering(n_clusters=k, linkage="ward").fit_predict(vectors)
+    return _absorb_small(labels, vectors)
+
+
+def _absorb_small(labels: np.ndarray, vectors: np.ndarray) -> np.ndarray:
+    """_MIN_CLUSTER_SIZE 미만인 묶음을 중심이 가장 가까운 묶음에 흡수시킨다.
+
+    ward가 고른 크기로 나눠주긴 하지만 주제가 동떨어진 논문 한 편은 그대로 홀로 남는다.
+    그 카드는 "연구 흐름"이 아니라 논문 한 편을 가리키는 제목표라 화면에서 값이 없다.
+    표본 실측으로 1편 묶음이 6-7편 구간 11% · 8-14편 8%였고, 흡수를 넣으면 전 구간 0%가 된다.
+
+    한 번에 하나씩 흡수하고 다시 센다 — 작은 묶음 둘이 서로를 최근접으로 지목하면
+    한꺼번에 처리할 때 둘 다 사라지거나 엉뚱하게 합쳐진다.
+    """
+    labels = labels.copy()
+    while True:
+        sizes = Counter(labels.tolist())
+        if len(sizes) <= 1:
+            return labels
+        small = [lab for lab, count in sizes.items() if count < _MIN_CLUSTER_SIZE]
+        if not small:
+            return labels
+        centroids = {lab: vectors[labels == lab].mean(axis=0) for lab in sizes}
+        source = small[0]
+        target = max(
+            (lab for lab in sizes if lab != source),
+            key=lambda lab: float(centroids[source] @ centroids[lab]),
+        )
+        labels[labels == source] = target
 
 
 def _embed_and_cluster(rows: list[Any]) -> tuple[np.ndarray, np.ndarray]:
@@ -217,9 +276,26 @@ def _parse_llm(raw: str) -> tuple[dict[int, str], Optional[str]]:
     if start < 0 or end < 0:
         raise ValueError("JSON 객체를 찾지 못함")
     data = json.loads(body[start : end + 1])
-    topics = {int(k): str(v).strip() for k, v in (data.get("topics") or {}).items() if v}
+    topics = {}
+    for key, value in (data.get("topics") or {}).items():
+        cluster_id = _cluster_id_from_key(key)
+        if cluster_id is not None and value:
+            topics[cluster_id] = str(value).strip()
     summary = (data.get("summary") or "").strip() or None
     return topics, summary
+
+
+def _cluster_id_from_key(raw: Any) -> Optional[int]:
+    """주제 키에서 묶음 번호를 꺼낸다.
+
+    int(k)를 바로 부르면 안 된다 — 사용자 프롬프트가 묶음을 `[묶음 0]`, `[묶음 1]`로
+    표시하기 때문에 모델이 그 라벨을 그대로 키로 돌려주는 경우가 있다("묶음 1").
+    그러면 ValueError가 나고 **주제명과 요약 문장이 통째로 버려져** 규칙 기반으로 폴백한다.
+    응답 자체는 멀쩡한데 파서가 못 읽어서 버리는 게 가장 아까운 실패라(§13과 같은 교훈),
+    숫자만 뽑아 쓴다. 2026-09-23 예열에서 2,742명 중 11명이 이 경우였다.
+    """
+    match = re.search(r"-?\d+", str(raw))
+    return int(match.group()) if match else None
 
 
 async def _write_sentences(
@@ -330,6 +406,7 @@ async def get_research_flow(
         return ResearchFlowResponse(
             researcher_id=researcher_id,
             total_papers=0,
+            flow_level="none",
             summary=None,
             summary_source="none",
             nodes=[],
@@ -384,6 +461,7 @@ async def get_research_flow(
     result = ResearchFlowResponse(
         researcher_id=researcher_id,
         total_papers=len(rows),
+        flow_level=_flow_level(len(rows)),
         summary=summary,
         summary_source=source,
         nodes=nodes,

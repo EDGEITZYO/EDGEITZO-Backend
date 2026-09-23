@@ -54,19 +54,50 @@ from app.services.researcher_flow_service import PROMPT_VERSION, get_research_fl
 # API는 그런 연구자도 정상 응답하므로(계산이 1초 안에 끝난다) 예열만 건너뛴다.
 _DEFAULT_MIN_PAPERS = 2
 
+# 규칙 기반 문장이 이만큼 연속으로 저장되면 멈춘다. LLM이 죽은 채로 계속 도는 것을 막는 안전장치다.
+# 정상 동작 중에도 rule은 드물게 나오지만(응답 거부·파싱 실패) 연속으로 쌓이지는 않는다.
+_RULE_STREAK_LIMIT = 10
+
 # 이미 유효한 캐시가 있는 연구자는 제외한다. 서명 비교는 get_research_flow가 하므로
 # 여기서는 '이 프롬프트 버전으로 만든 행이 아예 없는' 연구자만 1차로 거른다.
+# 편수는 **외부 논문 + 코퍼스 논문**을 합쳐서 센다. 흐름 계산(fetch_paper_rows)이
+# 두 테이블을 합집합으로 읽기 때문이다. 예전에는 researcher_external_papers만
+# INNER JOIN해서 셌는데, 그러면 두 가지가 어긋났다:
+#   - 외부 논문 0편·코퍼스 논문 3편인 연구자가 JOIN에서 통째로 빠져 영영 예열되지 않는다
+#   - --min-papers 5로 걸러도 실제 흐름에 들어가는 논문 수는 그보다 많을 수 있다
+# 중복(같은 논문이 두 테이블에 다 있는 경우)은 fetch_paper_rows가 제거하므로
+# 여기서도 코퍼스 논문 중 외부 테이블에 없는 것만 더한다.
 _TARGET_SQL = """
-SELECT r.researcher_id, count(e.external_id) AS paper_count
+SELECT r.researcher_id,
+       (
+           (SELECT count(*) FROM researcher_external_papers e
+            WHERE e.researcher_id = r.researcher_id)
+         + (SELECT count(*) FROM researcher_papers rp
+            WHERE rp.researcher_id = r.researcher_id
+              AND NOT EXISTS (
+                  SELECT 1 FROM researcher_external_papers e2
+                  WHERE e2.researcher_id = r.researcher_id
+                    AND e2.internal_paper_id = rp.paper_id
+              ))
+       ) AS paper_count
 FROM researchers r
-JOIN researcher_external_papers e ON e.researcher_id = r.researcher_id
 WHERE NOT EXISTS (
     SELECT 1 FROM researcher_flow_cache c
     WHERE c.researcher_id = r.researcher_id AND c.prompt_version = :ver
 )
 GROUP BY r.researcher_id
-HAVING count(e.external_id) >= :min_papers
-ORDER BY count(e.external_id) DESC
+HAVING (
+           (SELECT count(*) FROM researcher_external_papers e
+            WHERE e.researcher_id = r.researcher_id)
+         + (SELECT count(*) FROM researcher_papers rp
+            WHERE rp.researcher_id = r.researcher_id
+              AND NOT EXISTS (
+                  SELECT 1 FROM researcher_external_papers e2
+                  WHERE e2.researcher_id = r.researcher_id
+                    AND e2.internal_paper_id = rp.paper_id
+              ))
+       ) >= :min_papers
+ORDER BY paper_count DESC
 """
 
 
@@ -102,6 +133,7 @@ async def main() -> None:
         return
 
     stats = {"llm": 0, "rule": 0, "none": 0, "실패": 0}
+    rule_streak = 0
     started = time.time()
 
     # LLM 호출과 임베딩이 섞여 있어 동시 실행해도 이득이 적고, 예산 초과를 빨리 감지하려면
@@ -111,6 +143,7 @@ async def main() -> None:
             try:
                 flow = await get_research_flow(session, rid)
                 stats[flow.summary_source] = stats.get(flow.summary_source, 0) + 1
+                rule_streak = rule_streak + 1 if flow.summary_source == "rule" else 0
             except Exception as exc:
                 await session.rollback()
                 stats["실패"] += 1
@@ -119,6 +152,22 @@ async def main() -> None:
                 if type(exc).__name__ == "LLMBudgetExceededError":
                     print("  월 LLM 예산 소진 — 중단합니다. 다음 달 또는 한도 상향 후 재실행하세요.")
                     break
+
+        # LLM이 연속으로 실패하면 남은 시간을 규칙 기반 문장을 쌓는 데 쓰게 된다.
+        # 그렇게 저장된 행은 paper_signature가 같아 다음 실행에서 캐시로 반환되므로,
+        # 나중에 문장만 다시 만들 수가 없다 — 행을 지우고 임베딩·클러스터링부터 재계산해야 한다.
+        # (2026-09-23 실측: Anthropic 크레딧 소진으로 962건이 rule로 쌓였다. 그때 이 가드가
+        #  없어서 LLMBudgetExceededError 분기에 안 걸렸다 — 계정 잔액 부족은 우리 예산
+        #  카운터가 아니라 API가 BadRequestError로 던진다.)
+        if rule_streak >= _RULE_STREAK_LIMIT:
+            print(
+                f"\n  규칙 기반 문장이 {_RULE_STREAK_LIMIT}건 연속 저장됐습니다 — 중단합니다.\n"
+                "  LLM 호출이 계속 실패하고 있다는 뜻입니다 (API 키·크레딧 잔액·모델명 확인).\n"
+                "  지금까지 저장된 rule 행을 지우고 재실행해야 LLM 문장이 들어갑니다:\n"
+                f"    DELETE FROM researcher_flow_cache WHERE prompt_version = '{PROMPT_VERSION}' "
+                "AND summary_source = 'rule';"
+            )
+            break
 
         if idx % 20 == 0 or idx == len(targets):
             elapsed = time.time() - started
