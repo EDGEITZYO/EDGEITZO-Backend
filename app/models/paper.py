@@ -112,6 +112,14 @@ class PaperCitationExternalRef(Base):
     issn = Column(String(50), nullable=True)
     is_open_access = Column(Boolean, nullable=True)
     kci_registered = Column(Boolean, nullable=True)
+    # Crossref type을 그대로 쓴다 — 'journal-article' | 'proceedings-article' |
+    # 'book-chapter' | 'standard' 등. Crossref가 없으면 OpenAlex type이 폴백이다.
+    paper_type = Column(String(50), nullable=True)
+    # **정밀도가 제각각인 발행일.** "2007-04-15" / "2007-04" / "2007" / null.
+    # Crossref issued.date-parts의 자릿수를 그대로 따른다 — 원본에 일자가 없는 건이
+    # 절반이라(실측 48.9%) 01을 채워 넣으면 그만큼 틀린 날짜를 띄우게 된다.
+    # 자리를 채우지 않는 것이 이 컬럼의 규칙이다. pubyear(연도 정수)는 그대로 남는다.
+    published_at = Column(String(10), nullable=True)
     # 'ok' | 'no_abstract' | 'no_match' | 'error'. null이면 미적재
     enrich_status = Column(String(20), nullable=True)
     enriched_at = Column(DateTime(timezone=True), nullable=True)

@@ -40,7 +40,11 @@ from starlette import status
 from app.core.redis import get_redis
 from app.core.settings import settings
 from app.models.paper import PaperCitationExternalRef
-from app.schemas.paper_citation import PaperCitationExternalDetail
+from app.schemas.paper_citation import (
+    PaperCitationExternalDetail,
+    RelatedCorpusPaper,
+    RelatedCorpusPapersResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +100,7 @@ async def _load_stored_rows(db: AsyncSession, external_id: str) -> list[PaperCit
 _ENRICHED_FIELDS = (
     "abstract", "abstract_lang", "abstract_source", "title_en", "keywords", "resolved_doi",
     "external_url", "pdf_url", "citation_count", "publisher", "issn", "is_open_access",
-    "kci_registered", "enrich_status",
+    "kci_registered", "paper_type", "published_at", "enrich_status",
 )
 
 
@@ -136,6 +140,8 @@ def _detail_from_stored(external_id: str, stored: dict[str, Any]) -> PaperCitati
         abstract=stored.get("abstract"),
         abstract_lang=stored.get("abstract_lang"),
         keywords=list(stored["keywords"]) if stored.get("keywords") else None,
+        paper_type=stored.get("paper_type"),
+        published_at=stored.get("published_at"),
         citation_count=stored.get("citation_count"),
         kci_registered=stored.get("kci_registered"),
         external_url=stored.get("external_url") or (f"https://doi.org/{doi}" if doi else None),
@@ -352,8 +358,19 @@ async def _enrich(external_id: str, stored: dict[str, Any]) -> Optional[dict[str
     return None
 
 
+# 응답 스키마에 필드를 더하거나 의미를 바꾸면 올린다.
+#
+# 캐시에는 그 시점 스키마로 직렬화된 JSON이 들어 있고 TTL이 24시간이다. 버전을 안 올리면
+# 배포 후에도 최대 하루 동안 **새 필드가 빠진 옛 응답**이 그대로 나간다(Pydantic이 없는
+# 필드를 기본값 null로 채우므로 에러도 안 나고 조용히 비어 있다).
+# 배포 절차에 "Redis에서 paper_citation:external_detail:* 지우기"를 넣는 방법도 있지만,
+# 잊으면 증상이 조용해서 알아차리기 어렵다. 키에 버전을 박아 두면 잊을 수가 없다.
+# 옛 키는 참조되지 않은 채 TTL로 알아서 사라진다.
+_DETAIL_CACHE_VERSION = "v2"  # v2: paper_type / published_at 추가 (2026-09-24)
+
+
 def _cache_key(external_id: str) -> str:
-    return f"paper_citation:external_detail:{external_id}"
+    return f"paper_citation:external_detail:{_DETAIL_CACHE_VERSION}:{external_id}"
 
 
 def _cache_detail(external_id: str, detail: PaperCitationExternalDetail) -> None:
@@ -430,3 +447,143 @@ async def get_external_paper_detail(external_id: str, db: AsyncSession) -> Paper
 
     _cache_detail(external_id, detail)
     return detail
+
+
+# ---------------------------------------------------------------------------
+# 연관된 코퍼스 논문
+# ---------------------------------------------------------------------------
+
+def _related_cache_key(external_id: str) -> str:
+    return f"paper_citation:external_related:v1:{external_id}"
+
+
+def _select_related(hits: list[tuple[str, float]]) -> list[tuple[str, float]]:
+    """거리로 자른다. 개수를 먼저 정하지 않는다.
+
+    절대 임계값만 쓰면 같은 0.52가 서로 다른 뜻이 된다. 1위가 0.40인 질의는 진짜 관련
+    논문이 있는 경우라 2·3위도 쓸 만한데, 1위가 0.51인 질의는 간신히 걸린 것이라
+    2위부터는 대체로 무관하다. 그래서 **1위와의 상대 거리**로 한 번 더 자른다.
+
+    표본 120건 실측(2026-09-24) — 정답은 그 참고문헌을 인용한 코퍼스 논문과의 키워드 겹침:
+
+        절대 0.52 + 고정상한 5건     정밀도 46.5%
+        절대 0.52 + 상한 없음        정밀도 37.3%  (최대 20건까지 쏟아짐)
+        절대 0.52 + 상대 +0.05       정밀도 43.5%
+        위 + 안전상한 10건           정밀도 44.1%  ← 채택
+
+    고정 상한 5건은 근거가 없었다. 순위별 정밀도가 1위 59.6% / 4위 50.0% / 6위 33.3% /
+    8위 28.6%로 완만하게 떨어져 5에서 끊을 이유가 없고, 실제 통과 건수도 질의마다
+    0~20건으로 크게 다르다(절반은 0건). 안전상한 10건은 화면·페이로드 보호용이고
+    10건을 넘는 질의는 3.3%뿐이다.
+    """
+    passed = [h for h in hits if h[1] <= settings.paper_citation_related_max_distance]
+    if not passed:
+        return []
+    cutoff = passed[0][1] + settings.paper_citation_related_relative_band
+    return [h for h in passed if h[1] <= cutoff][: settings.paper_citation_related_limit]
+
+
+def _embed_and_search(text_to_embed: str, n_results: int) -> list[tuple[str, float]]:
+    """검색과 같은 모델·컬렉션을 쓴다. 코퍼스는 'passage: ' 접두로 임베딩돼 있고
+    질의는 'query: ' 접두를 붙이는 게 BGE-m3-ko 권장 사용법이라 그대로 맞춘다."""
+    import chromadb
+
+    from app.services.embedding_model import get_bge_model
+
+    vector = get_bge_model().encode(f"query: {text_to_embed}", convert_to_numpy=True).tolist()
+    collection = chromadb.HttpClient(
+        host=settings.chroma_host, port=settings.chroma_port
+    ).get_collection("papers")
+    result = collection.query(
+        query_embeddings=[vector], n_results=n_results, include=["distances"]
+    )
+    return list(zip(result["ids"][0], result["distances"][0]))
+
+
+async def get_related_corpus_papers(
+    external_id: str, db: AsyncSession
+) -> RelatedCorpusPapersResponse:
+    """해외 논문과 주제가 가까운 코퍼스 논문을 찾는다.
+
+    적재하지 않는다 — 제목(초록이 있으면 초록까지)을 요청 시점에 임베딩해 검색 코퍼스에서
+    가까운 것을 고른다. 비용은 검색 한 번과 같고, 코퍼스가 바뀌면 결과도 따라 바뀐다.
+
+    빈 배열이 정상 응답이다. 코퍼스가 1,000편뿐이라 관련 논문이 아예 없는 해외 문헌이
+    절반가량이고(실측 52.5%), 그중 상당수는 정부 연차보고서·교육과정 문서·법령이라
+    애초에 논문이 아니다. 임계값 없이 상위 5건을 그냥 내보내면 정밀도가 59.2%까지
+    떨어진다 — 5건 중 2건이 무관해진다.
+    """
+    try:
+        cached = get_redis(_REDIS_DB).get(_related_cache_key(external_id))
+        if cached:
+            return RelatedCorpusPapersResponse(**json.loads(cached))
+    except Exception:
+        logger.warning("연관 논문 캐시 조회 실패", exc_info=True)
+
+    rows = await _load_stored_rows(db, external_id)
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"external paper not found: {external_id}",
+        )
+    stored = _merge_stored(rows)
+
+    title = stored.get("title_en") or stored.get("title")
+    if not title:
+        return RelatedCorpusPapersResponse(external_id=external_id, items=[], used_abstract=False)
+
+    abstract = stored.get("abstract")
+    # s2_tldr은 사람이 쓴 초록이 아니라 모델 요약이지만, 주제를 담고 있어 검색에는 쓸모가 있다.
+    used_abstract = bool(abstract)
+    query_text = f"{title} {abstract}" if abstract else title
+
+    # 상대 기준으로 다시 자르므로 임계값 통과분을 넉넉히 받아와야 한다.
+    fetch = max(settings.paper_citation_related_limit * 2, 20)
+    try:
+        hits = await asyncio.to_thread(_embed_and_search, query_text, fetch)
+    except Exception:
+        # 연관 논문은 부가 기능이다. 실패해도 상세 화면 전체를 막지 않는다.
+        logger.warning("연관 논문 검색 실패 external_id=%s", external_id, exc_info=True)
+        return RelatedCorpusPapersResponse(external_id=external_id, items=[], used_abstract=used_abstract)
+
+    selected = _select_related(hits)
+    items: list[RelatedCorpusPaper] = []
+    if selected:
+        meta = await _load_corpus_meta(db, [pid for pid, _ in selected])
+        for paper_id, distance in selected:
+            row = meta.get(paper_id)
+            items.append(
+                RelatedCorpusPaper(
+                    paper_id=paper_id,
+                    title=row.title if row else None,
+                    journal_name=row.journal_name if row else None,
+                    pub_year=row.pubyear if row else None,
+                    distance=round(float(distance), 4),
+                )
+            )
+
+    response = RelatedCorpusPapersResponse(
+        external_id=external_id, items=items, used_abstract=used_abstract
+    )
+    try:
+        get_redis(_REDIS_DB).set(
+            _related_cache_key(external_id),
+            response.model_dump_json(),
+            ex=settings.paper_citation_related_cache_ttl_seconds,
+        )
+    except Exception:
+        logger.warning("연관 논문 캐시 저장 실패", exc_info=True)
+    return response
+
+
+async def _load_corpus_meta(db: AsyncSession, paper_ids: list[str]):
+    """Chroma는 id와 거리만 준다. 화면에 뿌릴 제목·학술지·연도는 Postgres에서 한 번에 읽는다."""
+    from sqlalchemy import text as sa_text
+
+    rows = (
+        await db.execute(
+            sa_text("SELECT id, title, journal_name, pubyear FROM papers WHERE id = ANY(:ids)"),
+            {"ids": paper_ids},
+        )
+    ).all()
+    return {row.id: row for row in rows}

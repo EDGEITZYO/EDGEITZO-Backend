@@ -211,6 +211,25 @@ class PaperCitationExternalDetail(BaseModel):
         default=None, description="초록 언어. 한글이 일정량 이상이면 'ko', 아니면 'en'. 초록이 없으면 null"
     )
     keywords: Optional[list[str]] = Field(default=None, description="키워드. KCI 경로에서만 대체로 채워짐")
+    paper_type: Optional[str] = Field(
+        default=None,
+        description="논문 유형. Crossref `type`을 그대로 쓴다 — `journal-article`(대다수), "
+        "`proceedings-article`, `book-chapter`, `standard` 등. Crossref에 없으면 OpenAlex "
+        "`type`이 폴백이라 어휘가 다를 수 있다. 확인 불가면 null",
+        example="journal-article",
+    )
+    published_at: Optional[str] = Field(
+        default=None,
+        description="발행일. **정밀도가 건마다 다르다** — `2007-04-15` / `2007-04` / `2007` 중 하나이고, "
+        "확인 불가면 null이다.\n\n"
+        "원본(Crossref `issued`)에 있는 자리까지만 담는다. 학술지가 \"2007년 4월호\"로 내고 "
+        "일자를 안 밝히는 경우가 절반이라(실측), 없는 자리를 01로 채우면 그만큼 사실이 아닌 "
+        "날짜가 된다. 그래서 채우지 않는다.\n\n"
+        "길이로 정밀도를 판단할 수 있다(4=연, 7=연월, 10=연월일). 사전순 정렬이 곧 시간순이다.\n\n"
+        "`pub_year`와 연도가 다를 수 있다 — `pub_year`는 참고문헌 문자열에서 뽑은 값이고 "
+        "이쪽은 Crossref 원본이다. 온라인 선공개와 인쇄본 호수가 해를 넘기면 1년 차이가 난다",
+        example="2007-04",
+    )
     citation_count: Optional[int] = Field(default=None, description="피인용 수 (KCI 또는 OpenAlex 기준)")
     kci_registered: Optional[bool] = Field(default=None, description="KCI 등재 여부. 확인 불가면 null")
     issn: Optional[str] = Field(default=None, description="학술지 ISSN. OpenAlex 경로 약 96%, KCI 경로는 대체로 제공")
@@ -312,4 +331,41 @@ class PaperCitationExpandResponse(BaseModel):
     )
     papers: list[PaperCitationCard] = Field(
         default_factory=list, description="new_nodes에 대응하는 카드 목록 (우측 리스트 증분 갱신용)"
+    )
+
+
+class RelatedCorpusPaper(BaseModel):
+    """해외 논문과 주제가 가까운 코퍼스 논문 한 건."""
+
+    paper_id: str = Field(..., description="코퍼스 논문 id. 논문 상세(`GET /papers/{paper_id}`)로 그대로 쓴다")
+    title: Optional[str] = Field(default=None, description="논문 제목")
+    journal_name: Optional[str] = Field(default=None, description="학술지명")
+    pub_year: Optional[int] = Field(default=None, description="발행연도")
+    distance: float = Field(
+        ...,
+        description="코사인 거리(0에 가까울수록 유사). 목록은 이 값 오름차순이다.\n\n"
+        "확신도 표기에 쓸 수 있다 — 실측상 0.45 이하는 대체로 정확하고, 0.52에 가까울수록 "
+        "주제가 스치는 정도다. 유사도로 바꾸려면 `1 - distance`를 쓰면 된다",
+        example=0.412,
+    )
+
+
+class RelatedCorpusPapersResponse(BaseModel):
+    """08-xx 해외 논문 상세의 「연관된 논문」.
+
+    해외 논문의 제목(초록이 있으면 초록까지)을 요청 시점에 임베딩해 검색 코퍼스에서
+    가까운 논문을 찾는다. 적재하지 않으므로 코퍼스가 바뀌면 결과도 따라 바뀐다.
+    """
+
+    external_id: str = Field(..., description="요청한 해외 논문 id, 그대로 반환")
+    items: list[RelatedCorpusPaper] = Field(
+        default_factory=list,
+        description="가까운 코퍼스 논문. **빈 배열이 정상 응답이다** — 코퍼스가 1,000편뿐이라 "
+        "관련 논문이 아예 없는 해외 문헌이 절반가량이고(실측 52.5%), 그중 상당수는 정부 "
+        "연차보고서·교육과정 문서·법령처럼 애초에 논문이 아니다. 억지로 채우지 않는다",
+    )
+    used_abstract: bool = Field(
+        ...,
+        description="초록까지 넣어 검색했는지. false면 제목만 쓴 것이다. "
+        "실측상 초록 유무에 따른 정확도 차이는 크지 않다(Recall@10 53.3% vs 48.3%)",
     )

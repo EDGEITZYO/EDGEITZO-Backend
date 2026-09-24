@@ -11,12 +11,16 @@ from app.models.user import User
 from app.core.response import success_response
 from app.schemas.common import ApiErrorResponse, ApiResponse
 from app.schemas.paper_citation import (
+    RelatedCorpusPapersResponse,
     PaperCitationExpandRequest,
     PaperCitationExpandResponse,
     PaperCitationExternalDetail,
     PaperCitationGraphResponse,
 )
-from app.services.paper_citation_external_service import get_external_paper_detail
+from app.services.paper_citation_external_service import (
+    get_external_paper_detail,
+    get_related_corpus_papers,
+)
 from app.services.paper_citation_service import expand_citation_node, get_citation_graph
 
 router = APIRouter()
@@ -138,3 +142,59 @@ async def get_external_paper(
 ):
     result = await get_external_paper_detail(external_id, db)
     return success_response(data=result, message="external paper detail loaded")
+
+
+@router.get(
+    "/papers/citation-graph/external/{external_id}/related",
+    response_model=ApiResponse[RelatedCorpusPapersResponse],
+    responses={404: {"model": ApiErrorResponse}},
+    summary="해외 논문과 연관된 코퍼스 논문",
+    description="""해외 논문(`in_service=false`)과 주제가 가까운 **우리 코퍼스 논문**을 돌려줍니다.
+`paper_id`로 `GET /papers/{paper_id}` 상세로 바로 이동할 수 있습니다.
+
+적재하지 않습니다 — 해외 논문의 제목(초록이 있으면 초록까지)을 요청 시점에 임베딩해
+검색과 같은 코퍼스에서 가까운 것을 고릅니다. 비용은 검색 한 번과 같습니다.
+
+### ⚠️ 빈 배열이 정상 응답입니다
+
+코퍼스가 1,000편뿐이라 **관련 논문이 아예 없는 해외 문헌이 절반가량**입니다(실측 52.5%).
+그중 상당수는 정부 연차보고서·교육과정 문서·법령 조항이라 애초에 논문이 아닙니다.
+빈 배열이면 "연관 논문 없음"으로 표시하면 됩니다.
+
+### 몇 건이 오는지는 질의마다 다릅니다
+
+고정 개수가 아닙니다. 거리로 자르기 때문에 0건부터 최대 10건까지 나옵니다
+(통과한 질의 기준 평균 2.5건). 화면은 가변 길이를 전제로 만들어야 합니다.
+
+선별 규칙은 두 단계입니다.
+
+1. 코사인 거리 **0.55 이하**만 후보로 둡니다
+2. 그중 **1위와의 거리 차가 0.05 이내**인 것만 남기고, 최대 10건으로 자릅니다
+
+2단계가 필요한 이유는 같은 거리라도 뜻이 다르기 때문입니다. 1위가 0.40인 질의는 진짜
+관련 논문이 있는 경우라 2·3위도 쓸 만하지만, 1위가 0.54인 질의는 간신히 걸린 것이라
+2위부터는 대체로 무관합니다.
+
+### 정확도 (표본 120건 실측, 2026-09-24)
+
+| 규칙 | 반환 | 정밀도 |
+|---|---|---|
+| 임계값 없이 상위 5건 | 233건 | 59.2% |
+| 절대 0.52 + 고정 5건 | 157건 | 46.5% |
+| **현재 규칙** | **145건** | **44.1%** |
+
+`distance`를 함께 내려주니 확신도 표기에 쓸 수 있습니다. 0.45 이하는 대체로 정확하고,
+0.52에 가까울수록 주제가 스치는 정도입니다.
+
+초록이 없어도 정확도 차이는 크지 않습니다(Recall@10 53.3% vs 48.3%) — `used_abstract`로
+구분은 되지만 이것만으로 결과를 감출 필요는 없습니다.
+
+응답은 24시간 캐시됩니다.
+""",
+)
+async def get_external_paper_related(
+    external_id: str = Path(..., description="그래프 노드의 key (PaperCitationNode.key)"),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await get_related_corpus_papers(external_id, db)
+    return success_response(data=result, message="related corpus papers loaded")

@@ -38,6 +38,7 @@ import os
 import re
 import sys
 import time
+import urllib.parse
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -89,6 +90,61 @@ CONCURRENCY = {"kci": 1, "openalex": 4, "crossref": 3, "s2": 1}
 # 초당 허용 건수. 동시성만 제한하면 응답이 빠를 때 순간 속도가 한도를 넘으므로
 # 간격도 함께 지킨다.
 RATE_PER_SEC = {"crossref": 3.0, "s2": 1.0 / 1.05}
+
+
+def _date_parts_depth(block: Optional[dict[str, Any]]) -> int:
+    """Crossref 날짜 블록이 몇 자리까지 알려주는지. 0=없음, 1=연, 2=연월, 3=연월일."""
+    parts = (block or {}).get("date-parts") or [[]]
+    if not parts or not parts[0]:
+        return 0
+    return len([x for x in parts[0] if x is not None])
+
+
+def _published_at_from_crossref(message: dict[str, Any]) -> Optional[str]:
+    """Crossref 레코드에서 발행일을 꺼낸다. **자리를 채우지 않는다.**
+
+    "2007-04-15" / "2007-04" / "2007" / None 중 하나를 그대로 돌려준다.
+    표본 45건 실측(2026-09-24): 연월일 46.7% · 연월 48.9% · 연도만 2.2% · 없음 2.2%.
+    학술지가 "2007년 4월호"로 내고 일자를 안 밝히는 게 흔해 연월이 절반이다. 원본에
+    일자가 없는 것이므로 01을 채우면 그 48.9%에 사실이 아닌 날짜를 띄우게 된다.
+
+    issued가 기준이다. published-print / published-online은 **issued와 같은 해일 때만**
+    더 정밀한 값으로 채택한다.
+
+    연도 조건이 핵심이다. 옛 논문은 published-online이 실제 발행일이 아니라 **전자화
+    등록일**인 경우가 있다. 실측(2026-09-24):
+
+        10.1111/j.1749-7345.1994.tb00811.x
+            issued           [1994, 3]      ← 맞는 값
+            published-online [2007, 4, 3]   ← Wiley 백파일 전자화 날짜
+
+    연도를 안 보고 "더 정밀한 쪽"만 고르면 1994년 논문이 2007년으로 바뀐다. 50건
+    시범 실행에서 6건이 기존 pubyear와 어긋났고 그중 3건이 이 경우였다.
+    같은 해 안에서 자릿수만 늘리는 건 안전하므로 그 경우에만 채택한다.
+    """
+    issued_depth = _date_parts_depth(message.get("issued"))
+    issued_year = (
+        message["issued"]["date-parts"][0][0] if issued_depth else None
+    )
+    best_block, best_depth = message.get("issued"), issued_depth
+    for field in ("published-print", "published-online", "published"):
+        depth = _date_parts_depth(message.get(field))
+        if depth <= best_depth:
+            continue
+        year = message[field]["date-parts"][0][0]
+        # issued가 아예 없으면 비교할 기준이 없으니 그대로 쓴다.
+        if issued_year is not None and year != issued_year:
+            continue
+        best_block, best_depth = message.get(field), depth
+    if not best_depth:
+        return None
+    parts = [x for x in best_block["date-parts"][0] if x is not None][:3]
+    out = f"{int(parts[0]):04d}"
+    if len(parts) >= 2:
+        out += f"-{int(parts[1]):02d}"
+    if len(parts) >= 3:
+        out += f"-{int(parts[2]):02d}"
+    return out
 
 
 def _norm_title(value: Optional[str]) -> str:
@@ -150,7 +206,7 @@ async def _openalex_by(client: httpx.AsyncClient, *, doi: str) -> Optional[dict[
             f"https://api.openalex.org/works/doi:{doi}",
             params={
                 "select": "id,title,abstract_inverted_index,authorships,primary_location,"
-                "open_access,publication_year,doi,cited_by_count,keywords"
+                "open_access,publication_year,doi,cited_by_count,keywords,type"
             },
         )
         if response.status_code == 404:
@@ -182,14 +238,23 @@ async def _openalex_by(client: httpx.AsyncClient, *, doi: str) -> Optional[dict[
         "publisher": source.get("host_organization_name") or None,
         "issn": source.get("issn_l") or (issn_list[0] if issn_list else None),
         "is_open_access": (work.get("open_access") or {}).get("is_oa"),
+        # Crossref type이 없을 때의 폴백. OpenAlex는 'article' 같은 자체 어휘를 쓰므로
+        # Crossref('journal-article')와 값이 다르다 — 둘을 섞지 않도록 우선순위를 지킨다.
+        "paper_type_openalex": work.get("type") or None,
+        # OpenAlex publication_date는 쓰지 않는다. 원본에 일자가 없어도 01을 채워 넣은
+        # 경우가 있어 "발행일"로 믿을 수 없다. 발행일은 Crossref만 기준으로 삼는다.
     }
 
 
 async def _crossref_match(
     client: httpx.AsyncClient, limiter: "_RateLimiter", ref: Ref
-) -> Optional[str]:
+) -> Optional[tuple[str, Optional[str], Optional[str]]]:
     """제목+저널+연도+저자를 한 문자열로 넘겨 DOI를 역으로 찾는다.
-    채택 여부는 Crossref가 주는 score가 아니라 제목 유사도로 판정한다."""
+    채택 여부는 Crossref가 주는 score가 아니라 제목 유사도로 판정한다.
+
+    반환은 (doi, paper_type, published_at). 예전에는 doi만 돌려줬는데, 매칭에 성공한
+    그 응답 안에 type과 issued가 이미 들어 있다 — 버리고 나중에 다시 부르면 호출이
+    두 배가 된다. 매칭 실패면 None."""
     if not ref.title:
         return None
     query = " ".join(
@@ -201,7 +266,13 @@ async def _crossref_match(
         try:
             response = await client.get(
                 "https://api.crossref.org/works",
-                params={"query.bibliographic": query, "rows": 3, "select": "DOI,title"},
+                params={
+                    "query.bibliographic": query,
+                    "rows": 3,
+                    # type·issued·published-*를 같이 받는다. 매칭된 그 레코드가 곧
+                    # 발행일·유형의 출처라, 여기서 안 받으면 DOI로 한 번 더 불러야 한다.
+                    "select": "DOI,title,type,issued,published-print,published-online",
+                },
             )
         except Exception:
             logger.warning("Crossref 요청 예외 %s", ref.external_id, exc_info=True)
@@ -220,14 +291,55 @@ async def _crossref_match(
         logger.warning("Crossref 429 반복으로 포기: %s", ref.external_id)
         return None
 
-    best_doi, best_score = None, 0.0
+    best_item, best_score = None, 0.0
     for item in items:
         candidate = (item.get("title") or [""])[0]
         score = _title_similarity(ref.title, candidate)
         if score > best_score:
-            best_score, best_doi = score, item.get("DOI")
-    if best_doi and best_score >= TITLE_SIMILARITY_THRESHOLD:
-        return _normalize_doi(best_doi)
+            best_score, best_item = score, item
+    if best_item and best_item.get("DOI") and best_score >= TITLE_SIMILARITY_THRESHOLD:
+        return (
+            _normalize_doi(best_item["DOI"]),
+            best_item.get("type") or None,
+            _published_at_from_crossref(best_item),
+        )
+    return None
+
+
+async def _crossref_by_doi(
+    client: httpx.AsyncClient, limiter: "_RateLimiter", doi: str
+) -> Optional[tuple[Optional[str], Optional[str]]]:
+    """DOI 단건 조회로 (paper_type, published_at)만 가져온다. --backfill-dates 전용.
+
+    이미 DOI를 아는 행이라 제목 유사도 매칭을 할 이유가 없다. 단건 조회는 정확하고,
+    query.bibliographic처럼 후보 3건을 받아 비교할 필요도 없다.
+
+    단건 엔드포인트(/works/{doi})는 select 파라미터를 받지 않는다 — 붙이면 요청이
+    실패한다(실측). 전체 레코드를 받아 필요한 칸만 꺼낸다.
+    """
+    for attempt in range(3):
+        await limiter.wait()
+        try:
+            response = await client.get(
+                "https://api.crossref.org/works/" + urllib.parse.quote(doi, safe="")
+            )
+        except Exception:
+            logger.warning("Crossref 단건조회 예외 doi=%s", doi, exc_info=True)
+            return None
+        if response.status_code == 404:
+            return None
+        if response.status_code == 429:
+            await asyncio.sleep(2.0 * (attempt + 1))
+            continue
+        if response.status_code != 200:
+            logger.warning("Crossref doi=%s → HTTP %s", doi, response.status_code)
+            return None
+        try:
+            message = response.json()["message"]
+        except Exception:
+            return None
+        return (message.get("type") or None, _published_at_from_crossref(message))
+    logger.warning("Crossref 429 반복으로 포기: doi=%s", doi)
     return None
 
 
@@ -315,11 +427,14 @@ async def _enrich_one(
     # doi 경로는 저장된 DOI를, match 경로는 Crossref로 찾아낸 DOI를 쓴다.
     doi = _normalize_doi(ref.doi)
     resolved_doi = None
+    crossref_type: Optional[str] = None
+    published_at: Optional[str] = None
     if ref.path == "match":
         async with sems["crossref"]:
-            doi = await _crossref_match(clients["crossref"], limiters["crossref"], ref)
-        if not doi:
+            matched = await _crossref_match(clients["crossref"], limiters["crossref"], ref)
+        if not matched:
             return {"enrich_status": "no_match"}
+        doi, crossref_type, published_at = matched
         resolved_doi = doi
 
     async with sems["openalex"]:
@@ -327,6 +442,13 @@ async def _enrich_one(
 
     result = dict(work or {})
     result["resolved_doi"] = resolved_doi
+    # 유형은 Crossref가 우선이고 OpenAlex는 폴백이다 — 어휘가 서로 달라서
+    # ('journal-article' vs 'article') 섞으면 집계할 때 같은 것이 둘로 갈린다.
+    result["paper_type"] = crossref_type or result.pop("paper_type_openalex", None)
+    result.pop("paper_type_openalex", None)
+    # 발행일은 Crossref에서만 온다. doi 경로(ref.path == "doi")는 Crossref를 부르지
+    # 않으므로 여기서는 비고, --backfill-dates가 DOI 단건조회로 채운다.
+    result["published_at"] = published_at
     # OpenAlex를 못 찾았어도 DOI가 있으면 최소한 doi.org 링크는 준다.
     if not result.get("external_url"):
         result["external_url"] = f"https://doi.org/{doi}"
@@ -375,6 +497,8 @@ _UPDATE = """
         issn            = :issn,
         is_open_access  = :is_open_access,
         kci_registered  = :kci_registered,
+        paper_type      = :paper_type,
+        published_at    = :published_at,
         enrich_status   = :enrich_status,
         enriched_at     = :enriched_at
     WHERE external_id = :external_id
@@ -383,8 +507,17 @@ _UPDATE = """
 _UPDATE_FIELDS = (
     "abstract", "abstract_lang", "abstract_source", "title_en", "keywords", "resolved_doi",
     "external_url", "pdf_url", "citation_count", "publisher", "issn", "is_open_access",
-    "kci_registered", "enrich_status",
+    "kci_registered", "paper_type", "published_at", "enrich_status",
 )
+
+# 백필 전용 UPDATE. **두 칸만 건드린다** — 초록·키워드·enrich_status는 이미 채워진
+# 값이라 다시 쓰면 안 된다(재수집 없이 도는 모드라 덮어쓰면 null로 날아간다).
+_UPDATE_DATES = """
+    UPDATE paper_citation_external_refs SET
+        paper_type   = coalesce(:paper_type, paper_type),
+        published_at = coalesce(:published_at, published_at)
+    WHERE external_id = :external_id
+"""
 
 
 async def _load_pending(retry_failed: bool, path: Optional[str], limit: Optional[int]) -> list[Ref]:
@@ -423,6 +556,95 @@ async def _write(external_id: str, result: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 # 실행
 # ---------------------------------------------------------------------------
+
+# 백필 대상 — 이미 enrich를 마쳤고 DOI를 아는데 발행일이 비어 있는 행.
+# enrich_status가 no_match인 행은 DOI 자체가 없어 Crossref를 칠 방법이 없다.
+# 그런 행은 published_at을 null로 둔다 — pubyear를 옮겨 담으면 출처가 다른 값이
+# 한 칸에 섞여 나중에 구분할 수 없게 된다.
+_SELECT_BACKFILL = """
+    SELECT DISTINCT ON (external_id)
+           external_id,
+           coalesce(resolved_doi, doi) AS doi
+    FROM paper_citation_external_refs
+    WHERE enrich_status IS NOT NULL
+      AND coalesce(resolved_doi, doi) IS NOT NULL
+      AND published_at IS NULL
+    ORDER BY external_id
+"""
+
+
+async def run_backfill(args: argparse.Namespace) -> None:
+    """이미 적재된 행에 발행일·논문유형만 채운다.
+
+    초록을 다시 받지 않는다 — DOI를 이미 아니 Crossref 단건조회 한 번이면 끝이고,
+    쓰기도 두 칸만 한다(_UPDATE_DATES). enrich_status는 건드리지 않으므로
+    이 모드를 몇 번 돌려도 기존 적재 결과가 바뀌지 않는다.
+    """
+    if not settings.openalex_mailto:
+        raise SystemExit("OPENALEX_MAILTO가 설정돼 있지 않습니다 (Crossref polite pool 식별자).")
+
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(text(_SELECT_BACKFILL))).all()
+    targets = [(r.external_id, r.doi) for r in rows]
+    if args.limit:
+        targets = targets[: args.limit]
+    if not targets:
+        logger.info("백필할 행이 없습니다.")
+        return
+
+    logger.info("백필 대상 %d건 (Crossref DOI 단건조회)", len(targets))
+    if args.dry_run:
+        for external_id, doi in targets[:10]:
+            logger.info("  %s | %s", external_id, doi)
+        logger.info("dry-run이라 외부 호출/쓰기를 하지 않았습니다.")
+        return
+
+    limiter = _RateLimiter(RATE_PER_SEC["crossref"])
+    sem = asyncio.Semaphore(CONCURRENCY["crossref"])
+    counts = {"날짜O": 0, "날짜X": 0, "조회실패": 0}
+    precision: dict[int, int] = {}
+    started = time.monotonic()
+    done = 0
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), headers=_user_agent(), follow_redirects=True) as client:
+
+        async def worker(external_id: str, doi: str) -> None:
+            nonlocal done
+            async with sem:
+                got = await _crossref_by_doi(client, limiter, doi)
+            if got is None:
+                counts["조회실패"] += 1
+            else:
+                paper_type, published_at = got
+                if published_at:
+                    counts["날짜O"] += 1
+                    depth = published_at.count("-") + 1
+                    precision[depth] = precision.get(depth, 0) + 1
+                else:
+                    counts["날짜X"] += 1
+                async with AsyncSessionLocal() as db:
+                    await db.execute(
+                        text(_UPDATE_DATES),
+                        {"external_id": external_id, "paper_type": paper_type, "published_at": published_at},
+                    )
+                    await db.commit()
+            done += 1
+            if done % 200 == 0:
+                rate = done / max(time.monotonic() - started, 1e-9)
+                left = (len(targets) - done) / max(rate, 1e-9) / 60
+                logger.info(
+                    "  %d/%d (%.1f%%) %s | %.1f건/초 | 남은 시간 약 %.0f분",
+                    done, len(targets), 100 * done / len(targets), counts, rate, left,
+                )
+
+        await asyncio.gather(*(worker(eid, doi) for eid, doi in targets))
+
+    lbl = {1: "연도만", 2: "연-월", 3: "연-월-일"}
+    logger.info("완료: %s / %.1f분", counts, (time.monotonic() - started) / 60)
+    for depth in sorted(precision):
+        logger.info("  %-8s %d건 (%.1f%%)", lbl.get(depth, depth), precision[depth],
+                    100 * precision[depth] / max(counts["날짜O"], 1))
+
 
 async def run(args: argparse.Namespace) -> None:
     # mailto가 없으면 Crossref/OpenAlex 익명 풀로 떨어진다(Crossref 기준 3 req/s → 1 req/s,
@@ -510,7 +732,13 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None, help="처리 건수 상한 (테스트용)")
     parser.add_argument("--path", choices=["art", "doi", "match"], default=None, help="특정 경로만 처리")
     parser.add_argument("--retry-failed", action="store_true", help="error/no_match 건도 다시 시도")
-    asyncio.run(run(parser.parse_args()))
+    parser.add_argument(
+        "--backfill-dates",
+        action="store_true",
+        help="이미 적재된 행에 발행일·논문유형만 채운다 (초록·enrich_status는 건드리지 않음)",
+    )
+    args = parser.parse_args()
+    asyncio.run(run_backfill(args) if args.backfill_dates else run(args))
 
 
 if __name__ == "__main__":
