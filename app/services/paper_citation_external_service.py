@@ -330,6 +330,10 @@ def _from_openalex_work(work: dict[str, Any]) -> dict[str, Any]:
         "keywords": [k["display_name"] for k in work.get("keywords") or [] if k.get("display_name")] or None,
         "citation_count": work.get("cited_by_count"),
         "kci_registered": None,
+        "paper_type": work.get("type") or None,
+        "published_at": work.get("publication_date") or (
+            str(work.get("publication_year")) if work.get("publication_year") else None
+        ),
         "external_url": external_url,
         "pdf_url": pdf_url,
         "issn": location.get("issn_l") or (issn_list[0] if issn_list else None),
@@ -341,7 +345,7 @@ def _from_openalex_work(work: dict[str, Any]) -> dict[str, Any]:
 
 _OPENALEX_SELECT = (
     "id,title,abstract_inverted_index,authorships,primary_location,open_access,"
-    "publication_year,doi,cited_by_count,keywords"
+    "publication_year,publication_date,doi,cited_by_count,keywords,type"
 )
 
 
@@ -467,6 +471,7 @@ async def get_external_paper_detail(external_id: str, db: AsyncSession) -> Paper
 
     # 외부 조회 결과를 우선하되, 비어 있는 필드는 저장된 서지정보로 메운다.
     enriched = enriched or {}
+    raw_paper_type = enriched.get("paper_type") or stored.get("paper_type")
     detail = PaperCitationExternalDetail(
         key=external_id,
         in_service=False,
@@ -479,6 +484,8 @@ async def get_external_paper_detail(external_id: str, db: AsyncSession) -> Paper
         abstract=enriched.get("abstract"),
         abstract_lang=enriched.get("abstract_lang"),
         keywords=enriched.get("keywords"),
+        paper_type=_paper_type_label(raw_paper_type),
+        published_at=enriched.get("published_at") or stored.get("published_at"),
         citation_count=enriched.get("citation_count"),
         kci_registered=enriched.get("kci_registered"),
         external_url=enriched.get("external_url") or (

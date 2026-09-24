@@ -4,14 +4,17 @@ from types import SimpleNamespace
 
 import pytest
 
+import app.services.paper_citation_external_service as svc
 from app.services.paper_citation_external_service import (
     _ENRICHED_FIELDS,
     _abstract_from_inverted,
     _detail_from_stored,
+    _from_openalex_work,
     _is_korean,
     _merge_stored,
     _normalize_doi,
     _openalex_id_of,
+    _paper_type_label,
 )
 
 
@@ -89,6 +92,31 @@ def _stored(**overrides):
     return base
 
 
+class _NoopRedis:
+    def get(self, key):
+        return None
+
+    def set(self, *args, **kwargs):
+        return None
+
+
+def test_from_openalex_work_includes_type_and_publication_date():
+    detail = _from_openalex_work({
+        "title": "Safety and Efficacy",
+        "authorships": [],
+        "primary_location": {},
+        "open_access": {},
+        "publication_year": 2020,
+        "publication_date": "2020-12-31",
+        "doi": "https://doi.org/10.1056/nejmoa2034577",
+        "cited_by_count": 10,
+        "keywords": [],
+        "type": "journal-article",
+    })
+    assert detail["paper_type"] == "journal-article"
+    assert detail["published_at"] == "2020-12-31"
+
+
 def test_detail_from_stored_uses_resolved_doi_over_stored_doi():
     """Crossref로 찾아낸 DOI가 있으면 그쪽을 쓴다 — KCI가 준 doi는 비어 있는 경우가 대부분이고,
     둘 다 있으면 실제로 조회에 성공한 resolved_doi가 더 신뢰할 만하다."""
@@ -102,6 +130,17 @@ def test_detail_from_stored_falls_back_to_doi_org_link():
     """external_url이 없어도 DOI가 있으면 최소한 논문에 도달할 링크는 준다."""
     detail = _detail_from_stored("REF1", _stored(resolved_doi="10.1234/abc", enrich_status="no_abstract"))
     assert detail.external_url == "https://doi.org/10.1234/abc"
+
+
+def test_detail_from_stored_exposes_type_label_and_published_at():
+    detail = _detail_from_stored("REF1", _stored(
+        paper_type="journal-article",
+        published_at="2020-12-31",
+        enrich_status="ok",
+        abstract="x",
+    ))
+    assert detail.paper_type == _paper_type_label("journal-article")
+    assert detail.published_at == "2020-12-31"
 
 
 def test_detail_from_stored_marks_tldr_source_distinctly():
@@ -129,3 +168,25 @@ def test_detail_from_stored_copies_list_fields_defensively():
     detail = _detail_from_stored("REF4", _stored(keywords=keywords, enrich_status="ok", abstract="x"))
     assert detail.keywords == ["a", "b"]
     assert detail.keywords is not keywords
+
+
+@pytest.mark.asyncio
+async def test_get_external_detail_keeps_stored_type_and_date_on_realtime_fallback(monkeypatch):
+    async def fake_load_stored_rows(db, external_id):
+        return [SimpleNamespace(**_stored(
+            doi="10.1234/abc",
+            paper_type="proceedings-article",
+            published_at="2021-05",
+        ))]
+
+    async def fake_enrich(external_id, stored):
+        return {}
+
+    monkeypatch.setattr(svc, "get_redis", lambda db: _NoopRedis())
+    monkeypatch.setattr(svc, "_load_stored_rows", fake_load_stored_rows)
+    monkeypatch.setattr(svc, "_enrich", fake_enrich)
+
+    detail = await svc.get_external_paper_detail("REF1", db=None)
+
+    assert detail.paper_type == _paper_type_label("proceedings-article")
+    assert detail.published_at == "2021-05"
