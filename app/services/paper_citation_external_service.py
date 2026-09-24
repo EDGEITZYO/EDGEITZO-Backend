@@ -121,6 +121,53 @@ def _merge_stored(rows: list[PaperCitationExternalRef]) -> dict[str, Any]:
     return merged
 
 
+# Crossref type → 화면 라벨. **해외 논문 상세에서만 쓴다.**
+#
+# 국내 논문은 db_code에서 파생한 별도 체계를 쓴다
+# (credibility_service.resolve_paper_type → paper_type_label). 두 체계를 합치지 않는
+# 이유는 코퍼스 1,000편에 단행본·보고서·프리프린트가 아예 없기 때문이다 — 국내 쪽에
+# 쓰이지도 않을 라벨을 넣으면 검색 드롭다운과 표시 어휘만 어긋난다.
+# 그래서 '학술 대회'도 여기서만 쓴다. 국내 CFKO 3편은 지금처럼 '학술 저널'로 둔다.
+#
+# DB에는 Crossref 원본을 그대로 저장하고 읽을 때 변환한다. 국내가 db_code를 저장하고
+# 라벨을 파생시키는 것과 같은 방식이다 — 매핑 규칙이 바뀌어도 재적재가 필요 없고,
+# 19가지 원본 값이 남아 있어 나중에 더 잘게 나눌 수도 있다.
+#
+# 실측 분포(11,587건): journal-article 94.3% / book-chapter 170 / proceedings-article 160
+_CROSSREF_TYPE_LABEL: dict[str, str] = {
+    "journal-article":     "학술 저널",
+    "proceedings-article": "학술 대회",
+    "proceedings":         "학술 대회",
+    "dissertation":        "학위논문",
+    "book":                "단행본",
+    "book-chapter":        "단행본",
+    "edited-book":         "단행본",
+    "monograph":           "단행본",
+    "reference-book":      "단행본",
+    "book-series":         "단행본",
+    "book-part":           "단행본",
+    "book-section":        "단행본",
+    "book-set":            "단행본",
+    "book-track":          "단행본",
+    "report":              "보고서",
+    "report-component":    "보고서",
+    "standard":            "보고서",
+    "posted-content":      "프리프린트",
+}
+
+
+def _paper_type_label(crossref_type: Optional[str]) -> Optional[str]:
+    """매핑에 없으면 null을 돌려준다 — '기타'로 뭉뚱그리지 않는다.
+
+    dataset·database·component(그림·표 같은 논문 구성요소)·peer-review(심사보고서)·
+    reference-entry 같은 값은 애초에 논문이 아니다(실측 72건). 라벨을 붙이면 논문 목록에
+    데이터셋이 논문인 척 섞인다. 값을 비워 화면이 '유형 미상'으로 처리하게 둔다.
+    """
+    if not crossref_type:
+        return None
+    return _CROSSREF_TYPE_LABEL.get(crossref_type.strip().lower())
+
+
 def _detail_from_stored(external_id: str, stored: dict[str, Any]) -> PaperCitationExternalDetail:
     """사전 적재된 값만으로 상세를 만든다. 외부 호출이 없어 1ms 미만이다.
 
@@ -140,7 +187,7 @@ def _detail_from_stored(external_id: str, stored: dict[str, Any]) -> PaperCitati
         abstract=stored.get("abstract"),
         abstract_lang=stored.get("abstract_lang"),
         keywords=list(stored["keywords"]) if stored.get("keywords") else None,
-        paper_type=stored.get("paper_type"),
+        paper_type=_paper_type_label(stored.get("paper_type")),
         published_at=stored.get("published_at"),
         citation_count=stored.get("citation_count"),
         kci_registered=stored.get("kci_registered"),

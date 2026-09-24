@@ -213,10 +213,15 @@ class PaperCitationExternalDetail(BaseModel):
     keywords: Optional[list[str]] = Field(default=None, description="키워드. KCI 경로에서만 대체로 채워짐")
     paper_type: Optional[str] = Field(
         default=None,
-        description="논문 유형. Crossref `type`을 그대로 쓴다 — `journal-article`(대다수), "
-        "`proceedings-article`, `book-chapter`, `standard` 등. Crossref에 없으면 OpenAlex "
-        "`type`이 폴백이라 어휘가 다를 수 있다. 확인 불가면 null",
-        example="journal-article",
+        description="논문 유형. 국내 논문과 같은 한글 라벨로 내려간다.\n\n"
+        "`학술 저널`(94.3%) · `학술 대회` · `학위논문` · `단행본` · `보고서` · `프리프린트`\n\n"
+        "Crossref `type`을 변환한 값이다. **매핑에 없으면 null**이다 — `dataset`·`component`"
+        "(그림·표 같은 논문 구성요소)·`peer-review`(심사보고서)처럼 애초에 논문이 아닌 항목은 "
+        "라벨을 붙이지 않는다(실측 72건). 화면에서 '유형 미상'으로 처리하면 된다.\n\n"
+        "⚠️ 국내 논문(`in_service=true`)에는 `단행본`·`보고서`·`프리프린트`·`학술 대회`가 "
+        "나오지 않는다. 코퍼스에 해당 유형이 없고, 국내 학술대회 논문(CFKO)은 `학술 저널`로 "
+        "표시된다 — 검색 드롭다운이 그 어휘를 쓰기 때문이다",
+        example="학술 저널",
     )
     published_at: Optional[str] = Field(
         default=None,
