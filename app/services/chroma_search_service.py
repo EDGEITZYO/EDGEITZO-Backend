@@ -24,6 +24,7 @@ from rank_bm25 import BM25Okapi
 
 from app.core.settings import settings
 from app.schemas.search import CredibilityInfo, PaperAuthor, PaperSearchItem
+from app.services.credibility_service import format_published_at
 from app.services.embedding_model import get_bge_model
 
 logger = logging.getLogger(__name__)
@@ -159,6 +160,9 @@ def _to_search_item(
         title=paper.get("Title", ""),
         authors=authors,
         year=year,
+        # 코퍼스 JSON이 Pubdate를 갖고 있어 Postgres 조회 없이 만든다.
+        # 형식이 제각각이라(20251230 / 2007.06.01 / 2015-01-01) 헬퍼가 흡수한다.
+        published_at=format_published_at(paper.get("Pubdate"), year),
         abstract=abstract,
         keywords=keywords,
         journal_name=paper.get("JournalName"),

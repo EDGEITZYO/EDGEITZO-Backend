@@ -57,6 +57,15 @@ class PaperSearchItem(BaseModel):
     title: str = Field(description="논문 제목")
     authors: list[PaperAuthor] = Field(default_factory=list, description="저자 목록")
     year: Optional[int] = Field(None, description="발행 연도. 정보 없으면 null")
+    published_at: Optional[str] = Field(
+        None,
+        description="발행일. **정밀도가 건마다 다르다** — `2025-06-30` / `2025` 중 하나이고, "
+        "확인 불가면 null이다. 길이로 판단할 수 있다(4=연, 10=연월일).\n\n"
+        "원본에 있는 자리까지만 담는다. 없는 날짜를 1월 1일로 채우지 않는다 — "
+        "코퍼스의 15%(학위논문)가 발행일 없이 연도만 있다.\n\n"
+        "`year`와 같은 값을 담되 더 정밀하다. 논문 상세·검색 카드의 `published_at`과 같은 규약이다",
+        example="2025-06-30",
+    )
     abstract: Optional[str] = Field(None, description="초록 원문. 정보 없으면 null")
     keywords: list[str] = Field(default_factory=list, description="논문 원본 키워드 목록")
     journal_name: Optional[str] = Field(None, description="학술지명. 학위논문 등은 null")
