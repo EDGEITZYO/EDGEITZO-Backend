@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -356,3 +357,35 @@ async def enrich_items_with_credibility(
             kci_hint=item.db_code == "JAKO",
         )
     return items
+
+
+_PUBDATE_DIGITS = re.compile(r"\d+")
+
+
+def format_published_at(pubdate: str | None, pubyear: int | None = None) -> str | None:
+    """발행일을 **있는 자리까지만** 담은 문자열로 만든다.
+
+    "2019-06-30" / "2019-06" / "2019" / None 중 하나를 돌려준다.
+
+    **없는 자리를 채우지 않는 것이 이 값의 규칙이다.** 예전에는 pubdate가 없으면
+    f"{pubyear}-01-01"로 만들어 내보냈는데, 그건 "1월 1일 발행"이라는 사실이 아닌
+    정보다. 운영 코퍼스 1,000편 중 202편(20%)이 이렇게 지어낸 날짜로 표시되고 있었다.
+    해외 논문의 published_at(paper_citation_external_refs)도 같은 규약을 쓴다.
+
+    입력 형식이 제각각이라 숫자만 뽑아 쓴다 — 원본에 세 종류가 섞여 있다:
+      "20251230"   코퍼스 JSON 648편 (구분자 없음)
+      "2007.06.01" 코퍼스 JSON 200편 (점)
+      "2015-01-01" 적재분 150편 (하이픈)
+      "2021" / "201908"  각 1편
+    """
+    if pubdate:
+        digits = "".join(_PUBDATE_DIGITS.findall(str(pubdate)))
+        if len(digits) >= 8:
+            return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+        if len(digits) >= 6:
+            return f"{digits[:4]}-{digits[4:6]}"
+        if len(digits) >= 4:
+            return digits[:4]
+    if pubyear:
+        return str(pubyear)
+    return None

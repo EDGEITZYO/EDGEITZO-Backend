@@ -24,6 +24,7 @@ from app.services.credibility_service import (
     calculate_thesis_credibility,
     paper_type_label,
     resolve_paper_type,
+    format_published_at,
 )
 from app.services.domestic_paper_service import (
     fetch_kci_paper,
@@ -101,12 +102,7 @@ async def get_paper_detail(
         kci_hint=paper.db_code == "JAKO",
     )
 
-    if paper.pubdate:
-        published_at = str(paper.pubdate).replace('.', '-')
-    elif paper.pubyear:
-        published_at = f"{paper.pubyear}-01-01"
-    else:
-        published_at = None
+    published_at = format_published_at(paper.pubdate, paper.pubyear)
 
     data = PaperDetailResponse(
         paper_id=paper.id,

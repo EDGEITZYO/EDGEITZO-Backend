@@ -1,5 +1,6 @@
 """홈 화면 API — 유저 정보, 최근 탐색, 최근 열람 논문."""
 from __future__ import annotations
+from app.services.credibility_service import format_published_at
 
 import json
 import random
@@ -147,12 +148,7 @@ async def get_home(
     for read, paper, journal in rows:
         kws = paper.keywords_ko or []
         db_code = paper.db_code or ""
-        if paper.pubdate:
-            published_at = str(paper.pubdate).replace('.', '-')
-        elif paper.pubyear:
-            published_at = f"{paper.pubyear}-01-01"
-        else:
-            published_at = None
+        published_at = format_published_at(paper.pubdate, paper.pubyear)
 
         degree = paper.degree or ""
         if db_code == "DIKO":

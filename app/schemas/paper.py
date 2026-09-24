@@ -33,6 +33,16 @@ class PaperCardResponse(BaseModel):
         description="발행 연도. ChromaDB Pubyear 기준. 없으면 null",
         example=2025,
     )
+    published_at: Optional[str] = Field(
+        None,
+        description="발행일. **정밀도가 건마다 다르다** — `2025-06-30` / `2025-06` / `2025` 중 하나이고, "
+        "확인 불가면 null이다. 길이로 정밀도를 판단할 수 있다(4=연, 7=연월, 10=연월일).\n\n"
+        "원본에 있는 자리까지만 담는다. 없는 날짜를 1월 1일로 채우지 않는다 — "
+        "코퍼스의 20%가 발행일 없이 연도만 있어서, 채우면 그만큼 사실이 아닌 날짜가 된다.\n\n"
+        "`pub_year`와 같은 값을 담되 더 정밀하다. 정렬은 사전순이 곧 시간순이다. "
+        "논문 상세(`PaperDetailResponse.published_at`)와 같은 규약이다",
+        example="2025-06-30",
+    )
     journal_name: Optional[str] = Field(
         None,
         description="학술지명. ChromaDB JournalName 기준. 학위논문/미등록 시 null",

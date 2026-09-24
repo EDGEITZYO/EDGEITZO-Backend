@@ -6,6 +6,7 @@ from typing import Literal, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.paper_repository import get_paper_cards_batch
+from app.services.credibility_service import format_published_at
 from app.schemas.paper import PaperCardResponse, PaperCardTrustBadge
 from app.schemas.search import PaperSearchItem
 from app.services.bookmark_service import get_bookmarked_paper_ids
@@ -137,6 +138,9 @@ async def build_paper_cards(
             title=item.title,
             authors=[a.name for a in item.authors],
             pub_year=item.year,
+            # Chroma 메타데이터에는 연도밖에 없어 Postgres pubdate로 보강한다.
+            # 적재 안 된 논문(extra가 비어 있음)은 연도만이라도 내보낸다.
+            published_at=format_published_at(extra.get("pubdate"), extra.get("pubyear") or item.year),
             journal_name=item.journal_name,
             paper_type=card_paper_type,
             abstract=item.abstract,

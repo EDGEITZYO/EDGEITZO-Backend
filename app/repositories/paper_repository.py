@@ -99,6 +99,11 @@ async def get_paper_cards_batch(
             Paper.citation_count,
             Paper.db_code,
             Paper.degree,
+            # 검색 카드의 발행일. ChromaDB 메타데이터에는 연도(Pubyear)밖에 없어서
+            # 카드가 연도만 보여주고 있었다(상세는 published_at으로 연월일까지 준다).
+            # 이 배치 쿼리에 한 컬럼 더하는 것뿐이라 쿼리 횟수는 그대로다.
+            Paper.pubdate,
+            Paper.pubyear,
             Journal.sci_indexed,
             Journal.kci_indexed,
         )
@@ -114,6 +119,8 @@ async def get_paper_cards_batch(
             "kci_registered": row.db_code == "JAKO" or bool(row.kci_indexed),
             "sci_indexed": bool(row.sci_indexed) if row.sci_indexed is not None else False,
             "degree": row.degree,
+            "pubdate": row.pubdate,
+            "pubyear": row.pubyear,
         }
         for row in result.fetchall()
     }

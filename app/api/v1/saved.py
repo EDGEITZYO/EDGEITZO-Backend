@@ -34,6 +34,7 @@ from app.services.credibility_service import (
     build_trust_badge,
     paper_type_label,
     resolve_paper_type,
+    format_published_at,
 )
 
 router = APIRouter(prefix="/saved", tags=["Saved"])
@@ -75,12 +76,7 @@ def _to_card(
         full_text_available=paper.fulltext_flag,
         kci_hint=paper.db_code == "JAKO",
     )
-    if paper.pubdate:
-        published_at = str(paper.pubdate).replace('.', '-')
-    elif paper.pubyear:
-        published_at = f"{paper.pubyear}-01-01"
-    else:
-        published_at = None
+    published_at = format_published_at(paper.pubdate, paper.pubyear)
 
     return SavedPaperCard(
         paper_id=paper.id,
@@ -398,12 +394,7 @@ async def get_recent_stats(
             full_text_available=p.fulltext_flag,
             kci_hint=p.db_code == "JAKO",
         )
-        if p.pubdate:
-            published_at = str(p.pubdate).replace('.', '-')
-        elif p.pubyear:
-            published_at = f"{p.pubyear}-01-01"
-        else:
-            published_at = None
+        published_at = format_published_at(p.pubdate, p.pubyear)
         chart_data.append(ChartPoint(
             paper_id=p.id,
             paper_type=paper_type_label(ptype),

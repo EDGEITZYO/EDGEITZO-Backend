@@ -20,6 +20,7 @@ from app.services.credibility_service import (
     build_trust_badge,
     paper_type_label,
     resolve_paper_type,
+    format_published_at,
 )
 
 SortOption = Literal["bookmark_latest", "bookmark_oldest", "pubyear_latest", "pubyear_oldest"]
@@ -128,12 +129,7 @@ def _build_paper(paper: Paper, journal: Journal | None) -> BookmarkedPaper:
     j_ev: JournalEvidence | None = _journal_to_evidence(journal)
     ptype = resolve_paper_type(paper.db_code, paper.degree)
 
-    if paper.pubdate:
-        published_at = str(paper.pubdate).replace('.', '-')
-    elif paper.pubyear:
-        published_at = f"{paper.pubyear}-01-01"
-    else:
-        published_at = None
+    published_at = format_published_at(paper.pubdate, paper.pubyear)
 
     trust_badge_full = build_trust_badge(
         ptype,
