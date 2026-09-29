@@ -106,11 +106,49 @@ def researcher_id_for(name: str, institution: str | None) -> str:
     return f"kci:{digest}"
 
 
+_INST_BOUNDARY = re.compile(r"[\s,/·()]+")  # 법인 표기를 먼저 떼므로 괄호도 경계로 쓴다
+# 법인 표기는 기관을 가리지 않는다. 남겨 두면 "(주)"만 단위로 남아 모든 회사와 맞거나,
+# 괄호가 경계로 잘려 "(주)한화 종합연구소"끼리도 안 맞는다(2026-09-29 시험 실행에서 12명이 0편이 될 뻔).
+_CORP_MARKERS = re.compile(r"\((?:주|재|사|유|합|학)\)|㈜|㈔|㈐|주식회사|재단법인|사단법인|유한회사")
+
+
+def strip_corp(raw: str | None) -> str:
+    return _CORP_MARKERS.sub(" ", raw or "").strip()
+_INST_PREFIXES = ("국립", "농촌진흥청")  # "국립공주대학교"="공주대학교", "농촌진흥청농업과학기술원"(붙은 표기)
+
+
+def _inst_starts(raw: str) -> list[str]:
+    """소속 문자열에서 '단어 경계로 시작하는' 모든 꼬리. 앞의 국립·상위기관 접두는 떼어낸 것도 넣는다."""
+    tokens = [t for t in _INST_BOUNDARY.split(raw or "") if t]
+    tails = []
+    for i in range(len(tokens)):
+        tail = _norm("".join(tokens[i:]))
+        tails.append(tail)
+        for prefix in _INST_PREFIXES:
+            if tail.startswith(prefix) and len(tail) > len(prefix):
+                tails.append(tail[len(prefix):])
+    return tails
+
+
 def _inst_match(a: str | None, b: str | None) -> bool:
-    a, b = _norm(a), _norm(b)
-    if not a or not b:
+    """두 소속이 같은 기관을 가리키는지. 한쪽이 다른 쪽의 **단어 경계에서 시작**해야 한다.
+
+    예전에는 부분 문자열이면 같다고 봤다. 그러면 "서울대학교"가 "남서울대학교" 안에 들어 있어
+    두 대학의 동명이인이 한 사람으로 합쳐졌다(정호영, 2026-09-29 실측).
+      "서울대학교" ↔ "서울대학교병원"               같음 (꼬리가 '서울대학교'로 시작)
+      "국립식량과학원" ↔ "농촌진흥청 국립식량과학원"  같음 (둘째 단어부터)
+      "서울대학교" ↔ "남서울대학교"                 다름
+    """
+    a, b = strip_corp(a), strip_corp(b)
+    na, nb = _norm(a), _norm(b)
+    if not na or not nb:
         return False
-    return a == b or a in b or b in a
+    if na == nb:
+        return True
+    strip = lambda s: s[2:] if s.startswith("국립") else s  # noqa: E731
+    return any(t.startswith(strip(na)) for t in _inst_starts(b)) or any(
+        t.startswith(strip(nb)) for t in _inst_starts(a)
+    )
 
 
 def _load_ckpt(path: Path) -> dict:

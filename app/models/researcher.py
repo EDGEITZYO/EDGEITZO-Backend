@@ -122,3 +122,16 @@ class ResearcherExternalPaper(Base):
     __table_args__ = (
         Index("ix_researcher_external_papers_rid_year", "researcher_id", "pubyear"),
     )
+
+
+class ResearcherIdAlias(Base):
+    """합쳐져 없어진 연구자 ID → 남은 ID. 옛 ID로 들어온 상세 요청을 이어주는 데 쓴다 (037)."""
+
+    __tablename__ = "researcher_id_aliases"
+
+    alias_id = Column(String(100), primary_key=True)
+    researcher_id = Column(
+        String(100), ForeignKey("researchers.researcher_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
