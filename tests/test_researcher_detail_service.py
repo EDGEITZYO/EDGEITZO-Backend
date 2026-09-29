@@ -47,15 +47,21 @@ class TestPublishedAt:
 
 
 class TestToItem:
-    def test_인용수_0은_null로_바꾼다(self):
-        # KCI는 미집계도 0으로 준다. 둘을 구분할 수 없으므로 '모른다'로 보낸다.
-        assert service._to_item(make_row(citation_count=0), {}, {}).citation_count is None
+    def test_인용수_0은_0으로_보낸다(self):
+        # 기존 논문 리스트와 같은 규칙 — 값이 없을 때만 null
+        assert service._to_item(make_row(citation_count=0), {}, {}).citation_count == 0
+        assert service._to_item(make_row(citation_count=None), {}, {}).citation_count is None
+
+    def test_기존_논문_카드와_같은_뱃지_구조(self):
+        item = service._to_item(make_row(citation_count=7), {}, {})
+        assert item.trust_badge.citation_count == 7
+        assert item.trust_badge.kci is item.kci_registered
 
     def test_인용수가_있으면_그대로_준다(self):
         assert service._to_item(make_row(citation_count=7), {}, {}).citation_count == 7
 
-    def test_papers에_없으면_북마크도_불가능하다(self):
-        item = service._to_item(make_row(internal_paper_id=None), {}, {})
+    def test_papers에_없고_KCI_ID도_없으면_북마크_불가능하다(self):
+        item = service._to_item(make_row(internal_paper_id=None, external_id=None), {}, {})
         assert item.is_internal is False
         assert item.can_bookmark is False
         assert item.is_bookmarked is False
@@ -179,3 +185,56 @@ class TestResolveResearcherId:
     @pytest.mark.asyncio
     async def test_없는_ID는_None(self):
         assert await service.resolve_researcher_id(_FakeDB(set(), {}), "kci:x") is None
+
+
+class TestDepartmentDisplay:
+    """전공이 없으면 소속으로 대체한다 — 원래 department 값은 그대로 둔다."""
+
+    def test_전공이_있으면_전공(self):
+        assert service._department_display("환경공학과", "충북대학교") == {
+            "department_display": "환경공학과", "department_source": "department"}
+
+    def test_전공이_없으면_소속(self):
+        assert service._department_display(None, "충북대학교") == {
+            "department_display": "충북대학교", "department_source": "institution"}
+
+    def test_둘_다_없으면_null(self):
+        assert service._department_display(" ", None) == {"department_display": None, "department_source": None}
+
+
+class TestDetailId:
+    """papers에 행이 없어도 KCI ID면 상세·북마크 API가 그 자리에서 적재한다."""
+
+    def test_우리_DB_논문이면_그_ID(self):
+        item = service._to_item(make_row(internal_paper_id="JAKO1", external_id="ART1"), {}, {})
+        assert item.detail_id == "JAKO1" and item.can_open_detail and item.can_bookmark
+
+    def test_DB에_없어도_KCI_ID면_상세로_갈_수_있다(self):
+        item = service._to_item(make_row(internal_paper_id=None, external_id="ART002780520"), {}, {})
+        assert item.detail_id == "ART002780520" and item.can_open_detail and item.can_bookmark
+        assert item.is_internal is False
+
+    def test_둘_다_없으면_막는다(self):
+        item = service._to_item(make_row(internal_paper_id=None, external_id=None), {}, {})
+        assert item.detail_id is None and not item.can_open_detail and not item.can_bookmark
+
+
+class TestFilters:
+    """키워드맵 논문 목록과 같은 이름·의미의 필터."""
+
+    rows = [
+        make_row(external_id="ART1", pubyear=2020, sci_indexed=True, db_code=None),
+        make_row(external_id="ART2", pubyear=2021, sci_indexed=False, db_code=None),
+        make_row(external_id=None, internal_paper_id="DIKO1", pubyear=2021, db_code="DIKO", degree="박사", sci_indexed=None),
+    ]
+
+    def test_연도는_그_해만(self):
+        assert [r.external_id for r in service.apply_filters(self.rows, year=2020)] == ["ART1"]
+
+    def test_논문_유형(self):
+        assert len(service.apply_filters(self.rows, paper_type="박사학위 논문")) == 1
+        assert len(service.apply_filters(self.rows, paper_type="전체")) == 3
+
+    def test_KCI_SCI(self):
+        assert len(service.apply_filters(self.rows, kci=True)) == 2
+        assert [r.external_id for r in service.apply_filters(self.rows, sci=True)] == ["ART1"]

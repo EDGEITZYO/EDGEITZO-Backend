@@ -156,8 +156,8 @@ async def _resolve(db: AsyncSession, researcher_id: str) -> str:
     description=(
         "연구자 핵심 정보.\n\n"
         "- 미확보 값은 **null**로 내려갑니다 (숫자 필드에 '데이터 없음' 같은 문자열을 넣지 않습니다)\n"
-        "- `department`(전공): 3,923명 중 833명(21%)만 보유 — 대부분 null. "
-        "KCI가 학과를 안 주는 논문이 많아 적재로는 더 올라가지 않습니다\n"
+        "- `department`(전공): 3,688명 중 2,074명(56%) 보유. KCI가 학과를 따로 주지 않아, "
+        "본인 최근 논문의 소속 문자열(예: '충북대학교 환경공학과')에서 뽑아 채운 값이 포함됩니다\n"
         "- `email`: 출처 신뢰도가 `confirmed`/`domain_verified`인 423건만 내려갑니다(전체의 10.8%). "
         "추정(`inferred`) 56건은 동명이인일 때 다른 사람의 주소일 수 있어 null 처리합니다. "
         "ScienceON 연구자 색인이 불완전해(매칭률 46%) 적재를 늘려도 이 비율은 잘 오르지 않습니다\n"
@@ -186,13 +186,16 @@ async def get_researcher_profile(
         "- `sort=citations`: `citation_sort_available`이 false(인용수 보유 논문 3편 미만)면 "
         "요청해도 최신순으로 되돌려 응답합니다 (명세 08-02)\n"
         "- `coauthor_id`: 그 연구자와 공동 작성한 논문만 남깁니다\n"
-        "- `is_internal`: papers에 행이 있는지. false면 논문 상세·북마크·읽음이 성립하지 않고 "
-        "`external_url`(KCI 원문)만 있습니다. 현재 연구자 논문의 **28.1%가 false**입니다 "
-        "(2026-09-23 실측). 국내 참고문헌 확장으로 papers가 1,000편에서 29,369편이 되면서 "
-        "연구자 논문이 내부 논문에 매칭되는 비율이 크게 올랐습니다\n"
+        "- **논문 상세 이동은 `detail_id`로** 합니다. 우리 DB 논문 ID가 있으면 그 값, 없으면 KCI 논문 ID(ART…)이고, "
+        "KCI ID면 상세·북마크 API가 첫 요청 때 KCI에서 받아 적재합니다. `can_open_detail`·`can_bookmark`는 "
+        "detail_id가 있으면 true입니다\n"
+        "- `is_internal`: papers에 행이 **이미** 있는지. 연구자 논문의 96.4%가 true(2026-09-30)\n"
         "- `abstract`: 내부 논문으로 연결된 건의 97.0%에 있습니다(전체의 69.8%). "
         "is_internal이 false면 papers에 행이 없어 초록도 없습니다\n"
-        "- `citation_count`: null은 미집계(34%), 0은 집계 결과 0 — 다른 의미입니다\n"
+        "- 항목 모양은 기존 논문 카드(`PaperCardResponse` — 키워드 검색·키워드맵 논문 목록)와 같은 필드명·의미이고 "
+        "`trust_badge`도 같은 구조입니다. `paper_id`는 상세·북마크에 바로 넣을 수 있는 ID입니다\n"
+        "- 필터 `year`·`paper_type`·`kci`·`sci`는 키워드맵 논문 목록과 같은 이름·의미입니다. `total`은 필터 적용 후 건수입니다\n"
+        "- `citation_count`: 0이면 0, 값이 없을 때만 null(기존 논문 리스트와 같은 규칙)\n"
         "- `sci_indexed`: null은 학술지 매칭 실패(9%), false는 비SCI 확정. is_internal과 무관하게 채워집니다\n"
         "- 논문이 없으면 `items: []`, `total: 0`\n\n"
         "합쳐져 없어진 옛 ID로 요청하면 남은 연구자로 응답하고, 응답의 `researcher_id`는 남은 ID입니다.\n\n"
@@ -205,6 +208,10 @@ async def get_researcher_papers(
     page: int = Query(1, ge=1),
     size: int = Query(6, ge=1, le=100, description="한 번에 반환할 논문 수"),
     coauthor_id: Optional[str] = Query(None, description="이 연구자와 공동 작성한 논문만 필터링"),
+    year: Optional[int] = Query(None, description="발행 연도. 그 해 논문만. null이면 전체"),
+    paper_type: Optional[str] = Query(None, description="'학술 저널'|'박사학위 논문'|'석사학위 논문'. null·'전체'면 필터 없음"),
+    kci: Optional[bool] = Query(None, description="true면 KCI 등재 논문만, false면 비등재만. null이면 전체"),
+    sci: Optional[bool] = Query(None, description="true면 SCI 계열 논문만, false면 그 외만. null이면 전체"),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db),
 ):
@@ -220,6 +227,10 @@ async def get_researcher_papers(
             if coauthor_id else None
         ),
         user_id=current_user.id if current_user else None,
+        year=year,
+        paper_type=paper_type,
+        kci=kci,
+        sci=sci,
     )
     return success_response(data=result, message="researcher papers loaded")
 
@@ -245,6 +256,10 @@ async def get_researcher_papers_by_year(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100, description="한 번에 반환할 논문 수. 연도 그룹으로 묶이므로 기본값이 더 큽니다"),
     coauthor_id: Optional[str] = Query(None, description="이 연구자와 공동 작성한 논문만 필터링"),
+    year: Optional[int] = Query(None, description="발행 연도. 그 해 논문만. null이면 전체"),
+    paper_type: Optional[str] = Query(None, description="'학술 저널'|'박사학위 논문'|'석사학위 논문'. null·'전체'면 필터 없음"),
+    kci: Optional[bool] = Query(None, description="true면 KCI 등재 논문만, false면 비등재만. null이면 전체"),
+    sci: Optional[bool] = Query(None, description="true면 SCI 계열 논문만, false면 그 외만. null이면 전체"),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db),
 ):
@@ -259,6 +274,10 @@ async def get_researcher_papers_by_year(
             if coauthor_id else None
         ),
         user_id=current_user.id if current_user else None,
+        year=year,
+        paper_type=paper_type,
+        kci=kci,
+        sci=sci,
     )
     return success_response(data=result, message="researcher papers by year loaded")
 
@@ -279,7 +298,8 @@ async def get_researcher_papers_by_year(
         "외부 논문 쪽에서 관계가 잡혀 전원 공저자를 갖습니다\n"
         "- 명세 08-04가 요구하는 항목을 목록 응답에 모두 담아 항목별 추가 조회가 필요 없습니다\n"
         "- 함께 쓴 논문 목록은 `GET /researchers/{researcher_id}/papers?coauthor_id=<공저자 id>`\n"
-        "- `department`(전공)는 커버리지 17%라 대부분 null입니다\n"
+        "- `department`(전공)는 연구자의 56%만 있습니다. `department_display`는 전공이 없으면 소속 기관을 담고, "
+        "`department_source`가 어느 쪽인지 알려줍니다\n"
         "- 공저자가 없으면 `total: 0` (연구자의 95.0%는 1명 이상 보유)\n\n"
         "합쳐져 없어진 옛 ID로 요청하면 남은 연구자로 응답하고, 응답의 `researcher_id`는 남은 ID입니다.\n\n"
         "**404** — 없는 researcher_id"

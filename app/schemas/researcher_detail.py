@@ -8,6 +8,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.paper import PaperCardTrustBadge
+
 
 PaperSortKey = Literal["recent", "citations"]
 
@@ -27,7 +29,7 @@ class ResearcherProfileResponse(BaseModel):
     institution: Optional[str] = Field(None, description="현재 소속 기관. 없으면 null", example="서울여자대학교")
     department: Optional[str] = Field(
         None,
-        description="전공(학과). 적재 커버리지 17%(2,993명 중 497명)라 대부분 null",
+        description="전공(학과). 연구자의 56%가 보유(2026-09-30, 논문 속 본인 소속에서 뽑은 값 포함). 없으면 null",
         example="화학과",
     )
     keywords: list[str] = Field(default_factory=list, description="대표 연구 분야 키워드")
@@ -60,7 +62,15 @@ class ResearcherPaperItem(BaseModel):
     우리 논문 상세·북마크·읽음이 성립하지 않고, 이동 대상은 external_url뿐이다.
     """
 
-    paper_id: Optional[str] = Field(None, description="우리 DB 논문 ID. 코퍼스 밖이면 null", example="JAKO202509339655899")
+    paper_id: Optional[str] = Field(
+        None,
+        description=(
+            "논문 상세·북마크에 넣을 ID(기존 논문 카드 PaperCardResponse.paper_id와 같은 역할). "
+            "우리 DB 논문 ID가 있으면 그 값, 없으면 KCI 논문 ID(ART…) — 상세·북마크 API가 KCI ID를 받으면 그 자리에서 적재한다. "
+            "둘 다 없으면 null. detail_id와 같은 값이다"
+        ),
+        example="JAKO202509339655899",
+    )
     external_id: Optional[str] = Field(
         None,
         description="KCI 논문 ID. 코퍼스에만 있고 KCI 식별자가 없는 논문(372편)은 null",
@@ -83,7 +93,7 @@ class ResearcherPaperItem(BaseModel):
     keywords: list[str] = Field(default_factory=list, description="논문 키워드")
     citation_count: Optional[int] = Field(
         None,
-        description="인용 수. KCI 미집계분(34%)은 null. 0과 null은 다른 의미다",
+        description="인용 수. 0이면 0, 값이 없을 때만 null(기존 논문 리스트와 같은 규칙)",
         example=110,
     )
     paper_type: Optional[str] = Field(None, description="논문 유형. '학술 저널' | '박사학위 논문' | '석사학위 논문' | null")
@@ -96,10 +106,22 @@ class ResearcherPaperItem(BaseModel):
         ),
     )
     doi: Optional[str] = Field(None, description="DOI. 없으면 null")
-    external_url: Optional[str] = Field(None, description="KCI 원문 링크. 코퍼스 밖 논문의 이동 대상")
-    is_internal: bool = Field(description="papers에 행이 있는지. 논문 상세 조회 가능 여부와 같다")
+    trust_badge: Optional[PaperCardTrustBadge] = Field(
+        None, description="신뢰도 뱃지 — 기존 논문 카드와 같은 구조(kci / sci / citation_count / degree_type)"
+    )
+    external_url: Optional[str] = Field(None, description="KCI 원문 링크")
+    is_internal: bool = Field(description="papers에 행이 이미 있는지")
+    detail_id: Optional[str] = Field(
+        None,
+        description=(
+            "논문 상세(GET /papers/{paper_id})·북마크에 넣을 ID. paper_id가 있으면 그 값, 없으면 KCI 논문 ID(ART…). "
+            "KCI ID면 상세 API가 첫 조회 때 KCI에서 받아 적재한다. 둘 다 없으면 null"
+        ),
+        example="ART002780520",
+    )
+    can_open_detail: bool = Field(False, description="detail_id가 있는지 — 논문 상세로 이동 가능한지")
     can_bookmark: bool = Field(
-        description="북마크·읽음 기록 가능 여부. bookmarks.paper_id가 papers를 FK로 보므로 is_internal과 같은 값이다"
+        description="북마크 가능 여부. detail_id가 있으면 true — 북마크 API도 KCI ID면 논문을 적재한 뒤 저장한다"
     )
     is_bookmarked: bool = Field(False, description="요청자의 북마크 여부. 비로그인 시 false")
     read_at: Optional[str] = Field(None, description="요청자가 읽은 시각(ISO8601). 안 읽었거나 비로그인이면 null")
@@ -149,7 +171,18 @@ class CoauthorItem(BaseModel):
     researcher_id: str = Field(description="공저자 연구자 ID. 이 값으로 다시 상세 조회가 가능하다")
     name: Optional[str] = Field(None, description="이름")
     institution: Optional[str] = Field(None, description="소속 기관")
-    department: Optional[str] = Field(None, description="학과. 커버리지 17%라 대부분 null")
+    department: Optional[str] = Field(
+        None,
+        description="전공(학과). 연구자의 56%가 보유(2026-09-30). 논문 속 본인 소속 문자열에서 뽑은 값을 포함한다. 없으면 null",
+    )
+    department_display: Optional[str] = Field(
+        None,
+        description="전공이 있으면 전공, 없으면 소속 기관. 둘 다 없으면 null",
+        example="환경공학과",
+    )
+    department_source: Optional[Literal["department", "institution"]] = Field(
+        None, description="department_display가 전공(department)인지 소속(institution)인지. 둘 다 없으면 null"
+    )
     keywords: list[str] = Field(default_factory=list, description="연구 키워드")
     co_paper_count: int = Field(description="함께 쓴 논문 수. papers?coauthor_id= 필터 결과 건수와 같다", example=5)
 
@@ -177,8 +210,11 @@ class ResearchFlowPaper(BaseModel):
     published_at: Optional[str] = Field(
         None, description="발행일. 'YYYY-MM-DD' / 'YYYY-MM' / 'YYYY' — 출처가 준 정밀도까지만"
     )
-    is_internal: bool = Field(description="papers에 행이 있는지. 논문 상세 조회 가능 여부와 같다")
-    external_url: Optional[str] = Field(None, description="KCI 원문 링크. is_internal이 false일 때의 이동 대상")
+    is_internal: bool = Field(description="papers에 행이 이미 있는지")
+    detail_id: Optional[str] = Field(
+        None, description="논문 상세에 넣을 ID. paper_id가 있으면 그 값, 없으면 KCI 논문 ID(ART…). 둘 다 없으면 null"
+    )
+    external_url: Optional[str] = Field(None, description="KCI 원문 링크")
 
 
 class ResearchFlowCluster(BaseModel):

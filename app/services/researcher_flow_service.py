@@ -31,7 +31,7 @@ from app.schemas.researcher_detail import (
     ResearchFlowPaper,
     ResearchFlowResponse,
 )
-from app.services.researcher_detail_service import _published_at, fetch_paper_rows
+from app.services.researcher_detail_service import _published_at, detail_id, fetch_paper_rows
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,8 @@ logger = logging.getLogger(__name__)
 # v4: 개수 공식(round(n/3), 최대 6) → 유사도 임계값, 1편 분야 허용, 분야 설명·논문 목록 추가 (2026-09-29)
 # v5: 카드 순서(마지막 연구가 최근인 순), 카드 설명을 흐름 문장으로, 인용 0 표기, 요약 100자 (2026-09-29)
 # v6: 논문 1편짜리 분야는 제목만 쓰고 설명(description)을 만들지 않는다 — 기획 확정 (2026-09-29)
-PROMPT_VERSION = "v6"
+# v7: 논문에 detail_id 추가(캐시 payload 구조가 바뀌어 올림) (2026-09-30)
+PROMPT_VERSION = "v7"
 
 # 두 묶음을 같은 분야로 합치는 기준: 두 묶음 논문 사이 코사인 거리의 평균이 이 값 미만.
 # 즉 평균 유사도가 0.40 이상이면 같은 분야다. 논문 수로 개수를 정하지 않는다 —
@@ -165,6 +166,7 @@ def _flow_paper(row: Any) -> ResearchFlowPaper:
         pub_year=row.pubyear,
         published_at=_published_at(row.pubyear, row.pubmonth, row.pubdate, row.paper_source),
         is_internal=row.internal_paper_id is not None,
+        detail_id=detail_id(row),
         external_url=row.url,
     )
 

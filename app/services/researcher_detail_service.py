@@ -26,7 +26,9 @@ from app.schemas.researcher_detail import (
     ResearcherPaperYearListResponse,
     ResearcherProfileResponse,
 )
+from app.schemas.paper import PaperCardTrustBadge
 from app.services.credibility_service import paper_type_label, resolve_paper_type
+from app.services.domestic_paper_service import is_domestic_key
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +178,18 @@ def _published_at(
     return None
 
 
+def detail_id(row: Any) -> Optional[str]:
+    """논문 상세·북마크에 넣을 ID. 우리 DB 논문 ID가 있으면 그것, 없으면 KCI 논문 ID.
+
+    papers에 행이 없어도 KCI ID(ART…)면 상세 API와 북마크 API가 그 자리에서 KCI에서 받아 적재한다
+    (paper.py get_paper_detail, bookmark_service). 그래서 is_internal=false라도 상세로 갈 수 있다 —
+    예전에는 is_internal을 '상세 가능 여부'로 내보내 이런 논문(연구자 논문의 3.6%)을 막고 있었다.
+    """
+    if row.internal_paper_id:
+        return row.internal_paper_id
+    return row.external_id if is_domestic_key(row.external_id) else None
+
+
 def _paper_key(row: Any) -> str:
     return row.internal_paper_id or row.external_id
 
@@ -245,17 +259,48 @@ async def _decorate(
     )
 
 
+def _paper_type(row: Any) -> Optional[str]:
+    if row.db_code:
+        return paper_type_label(resolve_paper_type(row.db_code, row.degree))
+    if row.external_id:
+        return "학술 저널"  # KCI articleSearch는 학술지 논문만 반환한다
+    return None
+
+
+def _kci_registered(row: Any) -> bool:
+    return bool(row.external_id) or row.db_code == "JAKO"
+
+
+def apply_filters(
+    rows: list[Any],
+    *,
+    year: Optional[int] = None,
+    paper_type: Optional[str] = None,
+    kci: Optional[bool] = None,
+    sci: Optional[bool] = None,
+) -> list[Any]:
+    """논문 리스트 필터. 키워드맵 논문 목록(paper_filter_service.apply_filters)과 같은 이름·의미다.
+    year는 그 해만, paper_type '전체'·null은 필터 없음, kci/sci는 true·false일 때만 거른다."""
+    if year is not None:
+        rows = [r for r in rows if r.pubyear == year]
+    if paper_type and paper_type != "전체":
+        rows = [r for r in rows if _paper_type(r) == paper_type]
+    if kci is not None:
+        rows = [r for r in rows if _kci_registered(r) == kci]
+    if sci is not None:
+        rows = [r for r in rows if bool(r.sci_indexed) == sci]
+    return rows
+
+
 def _to_item(row: Any, bookmarked: dict[str, bool], reads: dict[str, str]) -> ResearcherPaperItem:
     internal_id = row.internal_paper_id
     is_internal = internal_id is not None
-    label = None
-    if row.db_code:
-        label = paper_type_label(resolve_paper_type(row.db_code, row.degree))
-    elif row.external_id:
-        label = "학술 저널"  # KCI articleSearch는 학술지 논문만 반환한다
+    label = _paper_type(row)
+    open_id = detail_id(row)
 
     return ResearcherPaperItem(
-        paper_id=internal_id,
+        # 기존 논문 카드(PaperCardResponse)와 같게, 상세·북마크에 바로 넣을 수 있는 ID다.
+        paper_id=open_id,
         external_id=row.external_id,
         title=row.title,
         journal_name=row.journal,
@@ -265,16 +310,23 @@ def _to_item(row: Any, bookmarked: dict[str, bool], reads: dict[str, str]) -> Re
         authors=_as_list(row.authors),
         abstract=row.abstract,
         keywords=_as_list(row.keywords),
-        # KCI는 미집계도 0으로 준다. 둘을 구분할 수 없으므로 0은 null로 보낸다 —
-        # '인용 0회'로 단정하는 것보다 '모른다'가 사실에 가깝다.
-        citation_count=row.citation_count if row.citation_count else None,
+        # 기존 논문 리스트와 같게 0은 0으로 보낸다(값이 없을 때만 null). 연구 흐름 카드도 같은 규칙이다.
+        citation_count=row.citation_count,
         paper_type=label,
-        kci_registered=bool(row.external_id) or row.db_code == "JAKO",
+        kci_registered=_kci_registered(row),
         sci_indexed=row.sci_indexed,
+        trust_badge=PaperCardTrustBadge(
+            kci=_kci_registered(row),
+            sci=row.sci_indexed,
+            citation_count=row.citation_count,
+            degree_type=label if label and "학위" in label else None,
+        ),
         doi=row.doi,
         external_url=row.url,
         is_internal=is_internal,
-        can_bookmark=is_internal,
+        detail_id=open_id,
+        can_open_detail=open_id is not None,
+        can_bookmark=open_id is not None,
         is_bookmarked=bool(internal_id and bookmarked.get(internal_id)),
         read_at=reads.get(internal_id) if internal_id else None,
         role=row.role,
@@ -332,8 +384,13 @@ async def get_papers(
     size: int = 6,
     coauthor_id: Optional[str] = None,
     user_id: Optional[UUID] = None,
+    year: Optional[int] = None,
+    paper_type: Optional[str] = None,
+    kci: Optional[bool] = None,
+    sci: Optional[bool] = None,
 ) -> ResearcherPaperListResponse:
     rows = await fetch_paper_rows(db, researcher_id, coauthor_id=coauthor_id)
+    rows = apply_filters(rows, year=year, paper_type=paper_type, kci=kci, sci=sci)
     citation_sort_available = (
         sum(1 for r in rows if r.citation_count) >= _CITATION_SORT_MIN_PAPERS
     )
@@ -362,9 +419,14 @@ async def get_papers_by_year(
     size: int = 20,
     coauthor_id: Optional[str] = None,
     user_id: Optional[UUID] = None,
+    year: Optional[int] = None,
+    paper_type: Optional[str] = None,
+    kci: Optional[bool] = None,
+    sci: Optional[bool] = None,
 ) -> ResearcherPaperYearListResponse:
     """08-03. 08-02와 같은 데이터를 연도로 묶기만 한다 — 두 화면이 어긋나지 않도록."""
     rows = await fetch_paper_rows(db, researcher_id, coauthor_id=coauthor_id)
+    rows = apply_filters(rows, year=year, paper_type=paper_type, kci=kci, sci=sci)
     ordered = _sort_rows(rows, "recent")
     window = ordered[(page - 1) * size : page * size]
     bookmarked, reads = await _decorate(db, window, user_id)
@@ -382,6 +444,16 @@ async def get_papers_by_year(
     )
 
 
+def _department_display(department: Optional[str], institution: Optional[str]) -> dict:
+    """전공이 있으면 전공, 없으면 소속. 어느 쪽인지도 함께 돌려준다 — 전공과 소속을 한 필드에 섞지 않으려고
+    원래 department는 그대로 두고 표시용 필드를 따로 둔다. 전공은 56%만 있다(2026-09-30)."""
+    if department and department.strip():
+        return {"department_display": department, "department_source": "department"}
+    if institution and institution.strip():
+        return {"department_display": institution, "department_source": "institution"}
+    return {"department_display": None, "department_source": None}
+
+
 async def get_coauthors(
     db: AsyncSession, researcher_id: str, *, limit: int = 20
 ) -> CoauthorListResponse:
@@ -397,6 +469,7 @@ async def get_coauthors(
                 department=r.department,
                 keywords=_as_list(r.keywords),
                 co_paper_count=r.co_paper_count,
+                **_department_display(r.department, r.institution),
             )
             for r in rows[:limit]
         ],
