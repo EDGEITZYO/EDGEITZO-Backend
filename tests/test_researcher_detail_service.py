@@ -8,7 +8,7 @@ from app.services import researcher_detail_service as service
 def make_row(**overrides):
     row = dict(
         internal_paper_id=None, external_id="ART000001", title="논문 제목",
-        journal="한국시험학회지", pubyear=2020, pubmonth="06", pubdate=None,
+        journal="한국시험학회지", pubyear=2020, pubmonth="06", pubdate=None, paper_source=None,
         authors=["홍길동", "김철수"], abstract=None, keywords=["키워드"],
         citation_count=0, db_code=None, degree=None, sci_indexed=None, doi=None,
         url="https://kci.example/ART000001", role=None, author_order=None,
@@ -25,6 +25,15 @@ class TestPublishedAt:
 
     def test_iso_날짜는_그대로_둔다(self):
         assert service._published_at(2022, "10", "2022-10-30") == "2022-10-30"
+
+    def test_KCI_출처는_적재가_채운_일자를_버린다(self):
+        # KCI API는 일자를 주지 않는데 적재가 01일을 채웠다
+        assert service._published_at(2012, "05", "2012-05-01", "kci") == "2012-05"
+        assert service._published_at(2012, "05", "2012.05.01", "kci_citation") == "2012-05"
+
+    def test_원본이_준_진짜_1일은_지킨다(self):
+        # ScienceON 코퍼스에는 원본에 일자까지 있는 1일 논문이 43편 있다
+        assert service._published_at(2023, "03", "2023.03.01", "knowledge_base") == "2023-03-01"
 
     def test_일자가_없으면_연월까지만_준다(self):
         # KCI는 발행일을 주지 않는 건이 많다
@@ -139,3 +148,34 @@ class TestEmailVisibility:
     @pytest.mark.asyncio
     async def test_없는_연구자는_None을_돌려준다(self):
         assert await service.get_profile(self.FakeDb(None), "kci:없음") is None
+
+
+class _FakeDB:
+    """researchers / researcher_id_aliases 두 표만 흉내 낸다."""
+
+    def __init__(self, researchers, aliases):
+        self.researchers, self.aliases = set(researchers), dict(aliases)
+
+    async def execute(self, _sql, params):
+        rid = params["rid"]
+        hit = rid if rid in self.researchers else self.aliases.get(rid)
+        row = SimpleNamespace(researcher_id=hit) if hit else None
+        return SimpleNamespace(first=lambda: row)
+
+
+class TestResolveResearcherId:
+    """중복 ID를 합친 뒤에도 옛 링크가 404가 되지 않아야 한다 (037)."""
+
+    @pytest.mark.asyncio
+    async def test_있는_ID는_그대로(self):
+        db = _FakeDB({"kci:a"}, {})
+        assert await service.resolve_researcher_id(db, "kci:a") == "kci:a"
+
+    @pytest.mark.asyncio
+    async def test_합쳐진_옛_ID는_남은_ID로(self):
+        db = _FakeDB({"kci:a"}, {"kci:old": "kci:a"})
+        assert await service.resolve_researcher_id(db, "kci:old") == "kci:a"
+
+    @pytest.mark.asyncio
+    async def test_없는_ID는_None(self):
+        assert await service.resolve_researcher_id(_FakeDB(set(), {}), "kci:x") is None

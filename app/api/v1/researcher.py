@@ -135,12 +135,17 @@ _RID = PathParam(
 )
 
 
-async def _ensure_exists(db: AsyncSession, researcher_id: str) -> None:
-    profile = await researcher_detail_service.get_profile(db, researcher_id)
-    if profile is None:
+async def _resolve(db: AsyncSession, researcher_id: str) -> str:
+    """실제 연구자 ID. 합쳐져 없어진 옛 ID면 남은 ID로 이어주고, 없는 ID면 404.
+
+    응답의 researcher_id는 항상 남은 ID라, 옛 ID로 들어온 쪽은 그 값으로 바꿔 쓰면 된다.
+    """
+    resolved = await researcher_detail_service.resolve_researcher_id(db, researcher_id)
+    if resolved is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="해당 연구자를 찾을 수 없습니다"
         )
+    return resolved
 
 
 @router.get(
@@ -158,6 +163,7 @@ async def _ensure_exists(db: AsyncSession, researcher_id: str) -> None:
         "ScienceON 연구자 색인이 불완전해(매칭률 46%) 적재를 늘려도 이 비율은 잘 오르지 않습니다\n"
         "- `total_citations`: `citation_source`가 kci면 국내 등재지, openalex면 국제 범위라 "
         "집계 기준이 다릅니다(중앙값 35배 차이). 출처가 다른 두 연구자의 값은 같은 척도가 아닙니다\n\n"
+        "합쳐져 없어진 옛 ID로 요청하면 남은 연구자로 응답하고, 응답의 `researcher_id`는 남은 ID입니다.\n\n"
         "**404** — 없는 researcher_id"
     ),
 )
@@ -165,11 +171,7 @@ async def get_researcher_profile(
     researcher_id: str = _RID,
     db: AsyncSession = Depends(get_db),
 ):
-    profile = await researcher_detail_service.get_profile(db, researcher_id)
-    if profile is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="해당 연구자를 찾을 수 없습니다"
-        )
+    profile = await researcher_detail_service.get_profile(db, await _resolve(db, researcher_id))
     return success_response(data=profile, message="researcher profile loaded")
 
 
@@ -193,6 +195,7 @@ async def get_researcher_profile(
         "- `citation_count`: null은 미집계(34%), 0은 집계 결과 0 — 다른 의미입니다\n"
         "- `sci_indexed`: null은 학술지 매칭 실패(9%), false는 비SCI 확정. is_internal과 무관하게 채워집니다\n"
         "- 논문이 없으면 `items: []`, `total: 0`\n\n"
+        "합쳐져 없어진 옛 ID로 요청하면 남은 연구자로 응답하고, 응답의 `researcher_id`는 남은 ID입니다.\n\n"
         "**404** — 없는 researcher_id"
     ),
 )
@@ -205,14 +208,17 @@ async def get_researcher_papers(
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db),
 ):
-    await _ensure_exists(db, researcher_id)
+    researcher_id = await _resolve(db, researcher_id)
     result = await researcher_detail_service.get_papers(
         db,
         researcher_id,
         sort=sort,
         page=page,
         size=size,
-        coauthor_id=coauthor_id,
+        coauthor_id=(
+            await researcher_detail_service.resolve_researcher_id(db, coauthor_id) or coauthor_id
+            if coauthor_id else None
+        ),
         user_id=current_user.id if current_user else None,
     )
     return success_response(data=result, message="researcher papers loaded")
@@ -230,6 +236,7 @@ async def get_researcher_papers(
         "- KCI는 발행일을 주지 않는 건이 많아 같은 달 안의 순서는 확정되지 않습니다\n"
         "- 발행연도가 없는 논문은 `year: null` 그룹으로 모입니다\n"
         "- 항목 필드 의미는 08-02와 동일합니다\n\n"
+        "합쳐져 없어진 옛 ID로 요청하면 남은 연구자로 응답하고, 응답의 `researcher_id`는 남은 ID입니다.\n\n"
         "**404** — 없는 researcher_id"
     ),
 )
@@ -241,13 +248,16 @@ async def get_researcher_papers_by_year(
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db),
 ):
-    await _ensure_exists(db, researcher_id)
+    researcher_id = await _resolve(db, researcher_id)
     result = await researcher_detail_service.get_papers_by_year(
         db,
         researcher_id,
         page=page,
         size=size,
-        coauthor_id=coauthor_id,
+        coauthor_id=(
+            await researcher_detail_service.resolve_researcher_id(db, coauthor_id) or coauthor_id
+            if coauthor_id else None
+        ),
         user_id=current_user.id if current_user else None,
     )
     return success_response(data=result, message="researcher papers by year loaded")
@@ -271,6 +281,7 @@ async def get_researcher_papers_by_year(
         "- 함께 쓴 논문 목록은 `GET /researchers/{researcher_id}/papers?coauthor_id=<공저자 id>`\n"
         "- `department`(전공)는 커버리지 17%라 대부분 null입니다\n"
         "- 공저자가 없으면 `total: 0` (연구자의 95.0%는 1명 이상 보유)\n\n"
+        "합쳐져 없어진 옛 ID로 요청하면 남은 연구자로 응답하고, 응답의 `researcher_id`는 남은 ID입니다.\n\n"
         "**404** — 없는 researcher_id"
     ),
 )
@@ -279,7 +290,7 @@ async def get_researcher_coauthors(
     limit: int = Query(20, ge=1, le=100, description="반환할 최대 공저자 수"),
     db: AsyncSession = Depends(get_db),
 ):
-    await _ensure_exists(db, researcher_id)
+    researcher_id = await _resolve(db, researcher_id)
     result = await researcher_detail_service.get_coauthors(db, researcher_id, limit=limit)
     return success_response(data=result, message="researcher coauthors loaded")
 
@@ -289,31 +300,30 @@ async def get_researcher_coauthors(
     dependencies=[Depends(limit_llm_calls)],
     response_model=ApiResponse[ResearchFlowResponse],
     responses={404: {"model": ApiErrorResponse}},
-    summary="연구 흐름 — 주제 묶음·연결·요약 (08-05, 08-06)",
+    summary="연구 흐름 — 분야별 논문·요약 (08-05, 08-06)",
     description=(
-        "연구자 논문의 주제 묶음과 논문 간 연결, 묶음별 요약을 반환합니다.\n\n"
-        "**`flow_level` — 이 응답으로 무엇까지 보여줄 수 있는지 먼저 보세요**\n"
-        "- `none`(논문 0~1편): 묶을 것이 없습니다. 전체의 17.8%\n"
-        "- `single`(2~4편): 묶음이 1개로 고정됩니다. 분야 구분이 아니라 **하나의 연구 주제**이고, "
-        "'분야가 옮겨갔다'는 말은 성립하지 않습니다. 전체의 12.3%\n"
-        "- `flow`(5편 이상): 묶음이 2개 이상 나올 수 있어 분야 단위 흐름이 성립합니다. 전체의 69.9%\n\n"
-        "**계산 방식**\n"
-        "- 논문의 제목+키워드를 BGE-m3-ko로 임베딩해 ward 연결로 묶습니다. "
-        "명세 원안인 '키워드 글자 공유'는 한 연구자의 논문 쌍 중 80~99%가 공유 0이라(실측) "
-        "연결이 거의 만들어지지 않습니다\n"
-        "- 묶음 개수는 `round(논문수 / 3)`이고 최대 6개입니다. **논문 1편짜리 묶음은 가장 가까운 "
-        "묶음에 흡수시킵니다** — 카드 한 장에 논문 한 편이면 '흐름'이 아니라 목록이기 때문입니다 "
-        "(표본 150명 실측: 흡수 전 6~7편 구간의 11%·8~14편의 8%가 1편 묶음, 흡수 후 전 구간 0%)\n"
-        "- `edges`는 각 논문에서 '같은 묶음의 앞선 논문 중 가장 가까운 한 편'으로 잇습니다. "
-        "방향은 항상 과거(`source`) → 최신(`target`)이고 `weight`는 코사인 유사도입니다\n"
-        "- `shared_keywords`는 실제 공유 키워드이며, 연결 근거가 의미 유사도라 비어 있을 수 있습니다\n\n"
-        "**요약 (08-06)**\n"
-        "- 묶음·시작/최근 논문·키워드는 전부 계산이 정하고, `topic`과 `summary`만 LLM이 문장화합니다 "
-        "(명세 08-06: 'AI는 문장화만 담당')\n"
+        "연구자의 논문을 의미가 가까운 것끼리 **분야**로 묶어, 분야마다 논문 목록과 설명 한 줄을, "
+        "전체에 대해 한 줄 요약을 반환합니다.\n\n"
+        "**분야 (`clusters`)**\n"
+        "- 논문의 영문 제목+키워드를 BGE-m3-ko로 임베딩하고(한글·영문 논문을 같은 언어로 비교하기 위해), 두 묶음의 논문 사이 평균 코사인 유사도가 "
+        "0.40 이상이면 같은 분야로 합칩니다. 개수는 내용이 정하며 **상한이 없습니다**\n"
+        "- 동떨어진 논문 1편은 억지로 합치지 않고 1편짜리 분야로 둡니다. 1편짜리 분야도 `topic`(분야 제목)은 "
+        "다른 분야와 같은 방식으로 쓰고, `description`은 항상 null입니다\n"
+        "- 순서는 **마지막 논문이 최근인 순**(`end_year` 내림차순, 같으면 마지막 논문 발행월, 그다음 논문 수)이고, "
+        "`cluster_id`는 이 순서의 0부터 시작하는 번호입니다\n"
+        "- `papers`는 그 분야의 논문 **전부**이며 발행연도 오름차순(연도 미상은 끝)입니다. "
+        "`citation_count`는 0이면 0, 못 불러온 경우만 null, `published_at`은 출처가 준 정밀도까지만(YYYY-MM-DD / YYYY-MM / YYYY)\n"
+        "- `paper_count`는 `papers`의 길이와 같습니다\n\n"
+        "**문장 (08-06)**\n"
+        "- 묶음·논문·키워드는 전부 계산이 정하고, `topic`(분야명)·`description`(분야 안의 흐름 한 문장)·"
+        "`summary`(전체 한 줄, 100자 이하)만 LLM이 씁니다 (명세 08-06: 'AI는 문장화만 담당')\n"
         "- `topic_keywords`가 `topic`의 근거입니다. 없는 주제가 섞였는지 이 값으로 대조할 수 있습니다\n"
-        "- `summary_source=rule`이면 LLM 예산 소진·응답 거부·파싱 실패로 규칙 기반 문장이 나간 것입니다\n\n"
+        "- `summary_source=rule`이면 LLM 예산 소진·응답 거부·파싱 실패로 규칙 기반 문장이 나간 것입니다. "
+        "이때 `topic`은 키워드 나열, `description`은 null입니다\n\n"
+        "**`flow_level`** — `none`(논문 0~1편) / `single`(한 분야) / `flow`(분야 2개 이상)\n\n"
         "논문이 0편이어도 200으로 응답합니다(명세: 논문 수와 무관하게 상시 제공). "
         "첫 호출은 임베딩·요약 생성으로 수 초 걸리고 결과를 저장하므로 이후에는 즉시 응답합니다.\n\n"
+        "합쳐져 없어진 옛 ID로 요청하면 남은 연구자로 응답하고, 응답의 `researcher_id`는 남은 ID입니다.\n\n"
         "**404** — 없는 researcher_id"
     ),
 )
@@ -321,7 +331,7 @@ async def get_researcher_research_flow(
     researcher_id: str = _RID,
     db: AsyncSession = Depends(get_db),
 ):
-    await _ensure_exists(db, researcher_id)
+    researcher_id = await _resolve(db, researcher_id)
     result = await researcher_flow_service.get_research_flow(db, researcher_id)
     return success_response(
         data=result,

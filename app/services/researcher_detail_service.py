@@ -38,6 +38,9 @@ _EMAIL_VISIBLE_CONFIDENCE = ("confirmed", "domain_verified")
 # 인용수가 있는 논문이 이보다 적으면 정렬 옵션 자체를 노출하지 않는다.
 _CITATION_SORT_MIN_PAPERS = 3
 
+# papers.pubdate의 일자를 적재가 지어 넣은 출처. 이 출처는 연월까지만 믿는다 — _published_at 참고.
+_DAY_FILLED_SOURCES = ("kci", "kci_citation")
+
 _PROFILE_SQL = """
 SELECT researcher_id, source, author_name_kor, author_name_eng,
        institution_current, author_inst_kor, institution_dept,
@@ -82,7 +85,7 @@ unioned AS (
 )
 SELECT u.external_id, u.internal_paper_id, u.title, u.journal, u.pubyear, u.pubmonth,
        u.citation_count, u.authors, u.keywords, u.doi, u.url,
-       p.abstract, p.db_code, p.degree, p.pubdate,
+       p.abstract, p.db_code, p.degree, p.pubdate, p.source AS paper_source, p.title_en,
        coalesce(j.sci_indexed, jn.sci_indexed) AS sci_indexed,
        rp.author_order, rp.role
 FROM unioned u
@@ -147,14 +150,24 @@ def _as_list(value: Any) -> list[str]:
     return [v for v in value if v]
 
 
-def _published_at(pubyear: Optional[int], pubmonth: Optional[str], pubdate: Optional[str]) -> Optional[str]:
+def _published_at(
+    pubyear: Optional[int],
+    pubmonth: Optional[str],
+    pubdate: Optional[str],
+    paper_source: Optional[str] = None,
+) -> Optional[str]:
     """표시용 발행일. KCI는 일자를 주지 않는 건이 많아 'YYYY-MM'까지만 나올 수 있다.
 
     papers.pubdate에는 '2022.10.30'(847건)과 '2022-10-30'(742건)이 섞여 있다.
     적재 시기별로 다른 파서가 채운 흔적이라, 응답 형식이 논문마다 달라지지 않도록
     여기서 대시로 통일한다.
+
+    KCI 출처 논문은 pubdate를 쓰지 않는다. KCI API는 일자를 주지 않는데 적재
+    (promote_researcher_papers·domestic_paper_service)가 01일을 채워 넣었다 — papers의
+    KCI 출처 68,755편이 전부 01일이다(2026-09-29 실측). 01일만 보고 버리면 안 된다:
+    ScienceON 코퍼스에는 원본이 일자까지 준 진짜 1일이 43편 있다. 그래서 값이 아니라 출처로 가른다.
     """
-    if pubdate and len(pubdate) >= 10:
+    if pubdate and len(pubdate) >= 10 and paper_source not in _DAY_FILLED_SOURCES:
         return pubdate[:10].replace(".", "-")
     if pubyear and pubmonth:
         return f"{pubyear}-{str(pubmonth).zfill(2)}"
@@ -248,7 +261,7 @@ def _to_item(row: Any, bookmarked: dict[str, bool], reads: dict[str, str]) -> Re
         journal_name=row.journal,
         pub_year=row.pubyear,
         pub_month=row.pubmonth,
-        published_at=_published_at(row.pubyear, row.pubmonth, row.pubdate),
+        published_at=_published_at(row.pubyear, row.pubmonth, row.pubdate, row.paper_source),
         authors=_as_list(row.authors),
         abstract=row.abstract,
         keywords=_as_list(row.keywords),
@@ -267,6 +280,26 @@ def _to_item(row: Any, bookmarked: dict[str, bool], reads: dict[str, str]) -> Re
         role=row.role,
         author_order=row.author_order,
     )
+
+
+async def resolve_researcher_id(db: AsyncSession, researcher_id: str) -> Optional[str]:
+    """요청 ID → 실제 연구자 ID. 중복 등록을 합치며 없어진 ID는 대응표로 이어준다(037).
+
+    공유된 링크·프런트 캐시에 옛 ID가 남아 있을 수 있어, 404 대신 합쳐진 연구자를 돌려준다.
+    없는 ID면 None.
+    """
+    row = (
+        await db.execute(
+            text(
+                "SELECT researcher_id FROM researchers WHERE researcher_id = :rid "
+                "UNION ALL "
+                "SELECT researcher_id FROM researcher_id_aliases WHERE alias_id = :rid "
+                "LIMIT 1"
+            ),
+            {"rid": researcher_id},
+        )
+    ).first()
+    return row.researcher_id if row else None
 
 
 async def get_profile(db: AsyncSession, researcher_id: str) -> Optional[ResearcherProfileResponse]:

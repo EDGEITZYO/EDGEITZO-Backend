@@ -162,86 +162,78 @@ class CoauthorListResponse(BaseModel):
 
 # ------------------------------------------------- 08-05 / 08-06 연구 흐름
 
-class ResearchFlowNode(BaseModel):
-    """논문 1편 = 노드 1개. 시간축 정렬에 쓸 값은 pub_year/pub_month다."""
+class ResearchFlowPaper(BaseModel):
+    """분야에 속한 논문 한 편. 08-02 논문 리스트 항목과 같은 이름·의미의 필드만 추렸다."""
 
-    node_id: str = Field(description="그래프 내 노드 키. paper_id가 있으면 그 값, 없으면 external_id", example="ART002780520")
-    paper_id: Optional[str] = Field(None, description="우리 DB 논문 ID. 없으면 null")
-    external_id: Optional[str] = None
-    title: Optional[str] = Field(None, description="논문 제목 전체")
-    authors: list[str] = Field(default_factory=list, description="저자 목록. 98.5%의 논문에 존재")
-    pub_year: Optional[int] = None
-    pub_month: Optional[str] = None
-    published_at: Optional[str] = None
-    cluster_id: Optional[int] = Field(None, description="속한 연구 주제 묶음. 어디에도 안 묶이면 null")
-    is_core: bool = Field(False, description="묶음의 중심 논문인지. 묶음 내 임베딩 중심에 가장 가까운 한 편")
-    is_internal: bool = Field(description="papers에 행이 있는지")
-    external_url: Optional[str] = None
-    citation_count: Optional[int] = None
-
-
-class ResearchFlowEdge(BaseModel):
-    """관련 있는 논문끼리의 연결. 방향은 항상 과거 → 최신이다."""
-
-    source: str = Field(description="과거 쪽 node_id")
-    target: str = Field(description="최신 쪽 node_id")
-    weight: float = Field(description="두 논문의 임베딩 코사인 유사도 (0~1)", example=0.78)
-    shared_keywords: list[str] = Field(
-        default_factory=list,
-        description="두 논문이 실제로 공유하는 키워드. 연결 근거는 의미 유사도라 비어 있을 수 있다",
+    node_id: str = Field(description="논문 키. paper_id가 있으면 그 값, 없으면 external_id라 항상 채워진다")
+    paper_id: Optional[str] = Field(None, description="우리 DB 논문 ID. 코퍼스 밖이면 null")
+    external_id: Optional[str] = Field(None, description="KCI 논문 ID")
+    title: Optional[str] = Field(None, description="논문 제목")
+    journal_name: Optional[str] = Field(None, description="학술지명. 없으면 null")
+    citation_count: Optional[int] = Field(
+        None, description="인용 수. 0이면 0, 값을 못 불러온 논문만 null이다"
     )
-
-
-class ResearchFlowClusterPaper(BaseModel):
-    node_id: str
-    paper_id: Optional[str] = None
-    title: Optional[str] = None
-    year: Optional[int] = None
+    pub_year: Optional[int] = Field(None, description="발행연도")
+    published_at: Optional[str] = Field(
+        None, description="발행일. 'YYYY-MM-DD' / 'YYYY-MM' / 'YYYY' — 출처가 준 정밀도까지만"
+    )
+    is_internal: bool = Field(description="papers에 행이 있는지. 논문 상세 조회 가능 여부와 같다")
+    external_url: Optional[str] = Field(None, description="KCI 원문 링크. is_internal이 false일 때의 이동 대상")
 
 
 class ResearchFlowCluster(BaseModel):
-    """연구 주제 묶음 하나 = 요약 카드 한 장 (08-06)."""
+    """의미가 가까운 논문끼리 묶은 분야 하나."""
 
     cluster_id: int
     topic: str = Field(
-        description="묶음의 대표 주제명. 아래 topic_keywords만 근거로 LLM이 문장화한 결과",
+        description="분야명. 아래 topic_keywords와 논문 제목만 근거로 LLM이 문장화한 결과",
         example="오가노이드 기반 재생의학 및 약물 독성 평가 연구",
+    )
+    description: Optional[str] = Field(
+        None,
+        description=(
+            "이 분야 안에서 연구가 시간에 따라 어떻게 흘러왔는지 한 문장(LLM). "
+            "'~ 연구로 시작해 ~로 변화한 흐름을 보여요' / '~에 관련한 연구를 지속해서 진행하고 있어요' 형태. "
+            "논문 제목·키워드에 있는 주제만 쓴다. **논문이 1편인 분야는 항상 null**(분야 제목과 논문만 제공). "
+            "생성에 실패해도 null"
+        ),
     )
     topic_keywords: list[str] = Field(
         default_factory=list,
-        description="주제명의 근거가 된 실제 논문 키워드. 지어낸 주제가 섞였는지 대조할 수 있게 함께 내보낸다",
+        description="분야명의 근거가 된 실제 논문 키워드. 지어낸 주제가 섞였는지 대조할 수 있게 함께 내보낸다",
     )
-    paper_count: int
-    start_paper: Optional[ResearchFlowClusterPaper] = Field(None, description="이 흐름의 시작 논문")
-    latest_paper: Optional[ResearchFlowClusterPaper] = Field(None, description="가장 최근 논문. 묶음에 1편뿐이면 null")
-    has_followup: bool = Field(description="후속 연구가 있는지. 묶음의 논문이 2편 이상이면 true")
-    node_ids: list[str] = Field(description="이 묶음에 속한 노드들")
+    paper_count: int = Field(description="이 분야에 속한 논문 수")
+    start_year: Optional[int] = Field(None, description="이 분야 논문 중 가장 이른 발행연도. 연도 미상뿐이면 null")
+    end_year: Optional[int] = Field(None, description="이 분야 논문 중 가장 늦은 발행연도")
+    papers: list[ResearchFlowPaper] = Field(
+        default_factory=list, description="이 분야의 논문 전부. 발행연도 오름차순(과거 → 최신), 연도 미상은 끝"
+    )
 
 
 class ResearchFlowResponse(BaseModel):
     """08-05 + 08-06. 논문이 0편이어도 200으로 응답한다(명세: 논문 수와 무관하게 상시 제공)."""
 
     researcher_id: str
-    total_papers: int = Field(description="그래프에 포함된 논문 수")
+    total_papers: int = Field(description="분야로 나눈 논문 수. 모든 분야의 paper_count 합과 같다")
     flow_level: Literal["none", "single", "flow"] = Field(
         description=(
-            "이 응답으로 무엇까지 보여줄 수 있는지. 논문 수에 따라 갈린다.\n"
-            "- `none` (0~1편): 묶을 것이 없다. nodes가 0~1개이고 clusters도 그만큼이다\n"
-            "- `single` (2~4편): 묶음이 1개로 고정된다. 분야 구분이 아니라 **하나의 연구 주제**다. "
-            "연도 흐름은 있지만 '분야가 옮겨갔다'는 말은 성립하지 않는다\n"
-            "- `flow` (5편 이상): 묶음이 2개 이상 나올 수 있는 구간. 분야 단위 흐름이 성립한다\n\n"
-            "묶음 개수 공식이 `round(논문수 / 3)`이라 4편까지는 계산상 1묶음이다. "
-            "백엔드가 낼 수 있는 것을 알리는 값이고, 화면을 어떻게 그릴지는 프런트가 정한다."
+            "이 응답에 분야가 몇 개로 나뉘었는지.\n"
+            "- `none`: 논문이 0~1편이라 묶을 것이 없다\n"
+            "- `single`: 논문이 2편 이상이지만 전부 한 분야로 묶였다\n"
+            "- `flow`: 분야가 2개 이상이다"
         )
     )
     summary: Optional[str] = Field(
         None,
-        description="연구 흐름 요약 1문장. 논문이 없거나 LLM 생성에 실패하면 null",
-        example="2006년 효소 분해 연구에서 출발해 최근에는 염료감응 태양전지로 관심이 옮겨갔습니다.",
+        description="연구자 전체 논문에 대한 한 줄 요약, 100자 이하. LLM 실패·100자 초과 시 규칙 기반 문장, 논문이 없으면 null",
+        example="역분화줄기세포 분화 조건 최적화와 오가노이드 기반 약물 평가 연구가 대부분이에요.",
     )
     summary_source: Literal["llm", "rule", "none"] = Field(
         description="요약 문장의 출처. LLM 예산 소진·응답 거부·파싱 실패 시 rule(규칙 기반)로 폴백한다"
     )
-    nodes: list[ResearchFlowNode]
-    edges: list[ResearchFlowEdge]
-    clusters: list[ResearchFlowCluster] = Field(description="주제 묶음 목록. 논문 수 내림차순")
+    clusters: list[ResearchFlowCluster] = Field(
+        description=(
+            "분야 목록. 각 분야의 마지막 논문이 최근인 순(end_year 내림차순, 같으면 마지막 논문의 발행월이 "
+            "최근인 쪽, 그다음 논문 수 많은 쪽). cluster_id가 이 순서의 번호다. 개수 상한 없음"
+        )
+    )
