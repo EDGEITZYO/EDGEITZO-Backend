@@ -51,6 +51,8 @@ class Researcher(Base):
     corpus_paper_count = Column(Integer, default=0, nullable=False)
     first_pubyear = Column(Integer, nullable=True)
     last_pubyear = Column(Integer, nullable=True)
+    # KCI 저자 번호(CRT…). 저자 번호로 판정한 연구자만 채워진다 (039, judge_by_kci_author_ids.py)
+    kci_cret_id = Column(String(20), nullable=True, index=True)
     papers_truncated = Column(Boolean, default=False, nullable=False)
     expanded_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -133,5 +135,18 @@ class ResearcherIdAlias(Base):
     researcher_id = Column(
         String(100), ForeignKey("researchers.researcher_id", ondelete="CASCADE"), nullable=False, index=True
     )
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class ResearcherPaperExclusion(Base):
+    """KCI 저자 번호로 '같은 이름의 다른 사람 논문'이라고 판정해 뺀 쌍. 정리 스크립트가 다시 붙이지 않는다 (039)."""
+
+    __tablename__ = "researcher_paper_exclusions"
+
+    researcher_id = Column(
+        String(100), ForeignKey("researchers.researcher_id", ondelete="CASCADE"), primary_key=True
+    )
+    external_id = Column(String(100), primary_key=True)
     reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

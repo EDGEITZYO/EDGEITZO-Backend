@@ -388,6 +388,9 @@ async def run(*, apply: bool, researcher_id: str | None, everyone: bool = False)
             people = (await session.execute(text(_TARGET_SQL))).all()
         art_map = dict((await session.execute(
             text("SELECT kci_art_id, id FROM papers WHERE kci_art_id IS NOT NULL"))).all())
+        # KCI 저자 번호로 다른 사람 논문이라 판정해 뺀 쌍(039) — 소속이 맞아도 다시 붙이지 않는다
+        excluded = {(e.researcher_id, e.external_id) for e in (await session.execute(
+            text("SELECT researcher_id, external_id FROM researcher_paper_exclusions"))).all()}
     print(f"[reconcile] 대상 {len(people):,}명 ({'반영' if apply else '시험 실행'})")
 
     cache = json.loads(CACHE.read_text()) if CACHE.exists() else {}
@@ -435,6 +438,7 @@ async def run(*, apply: bool, researcher_id: str | None, everyone: bool = False)
             if not other_person_evidence(person.author_name_kor, units, candidates[a])
         }
         keep |= unverified
+        keep -= {a for a in keep if (person.researcher_id, a) in excluded}
         drop = have - keep
         add = keep - have
         suspects = namesake_suspects(person.author_name_kor, candidates, verdict)
