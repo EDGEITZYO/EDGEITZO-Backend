@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     # KCI
     kci_api_key: str = ""
     kci_base_url: str = "https://open.kci.go.kr/po/openapi/openApiSearch.kci"
+    # 공공데이터포털 "한국연구재단_KCI 논문정보서비스" 키. 저자 번호(CRT…)는 이쪽에서만 받을 수 있다.
+    # 개발 계정 하루 5,000건 (scripts/collect_kci_author_ids.py)
+    kci_data_go_kr_key: str = ""
 
     # LLM
     anthropic_api_key: str = ""
