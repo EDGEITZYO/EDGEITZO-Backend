@@ -1,18 +1,16 @@
-"""연구 흐름 시각화 + 요약 카드 (명세 08-05 / 08-06).
+"""연구 흐름 — 분야 카드 + 요약 (명세 08-05 / 08-06).
 
-묶고 잇는 일은 계산이 하고, LLM은 문장화만 한다 — 명세 08-06의 원칙 그대로다.
-("키워드 및 변화 판단은 논문 데이터 기반이며 AI는 문장화만 담당")
+연구자의 논문을 의미가 가까운 것끼리 '분야'로 묶고, 분야마다 논문 목록과 설명 한 줄,
+전체에 대한 한 줄 요약을 낸다. 묶는 일은 계산이 하고 LLM은 문장화만 한다 —
+명세 08-06의 원칙 그대로다("키워드 및 변화 판단은 논문 데이터 기반이며 AI는 문장화만 담당").
 
-왜 키워드 글자 일치로 잇지 않는가:
+왜 키워드 글자 일치로 묶지 않는가:
   명세 원안은 "키워드 공유"인데, 한 연구자의 논문 쌍 중 80~99%가 공유 0으로 나온다(실측).
   '효소 분해'와 'Alcalase-enzymatic hydrolysate'처럼 같은 연구인데 표기가 다르면 안 잡힌다.
-  그래서 제목+키워드를 BGE-m3-ko로 임베딩해 의미 유사도로 잇는다.
+  그래서 제목+키워드를 BGE-m3-ko로 임베딩해 의미 유사도로 묶는다.
 
-왜 유사도 임계값을 고정하지 않는가:
-  논문 단위 임베딩은 연구자마다 유사도 분포가 다르다(p90이 0.49~0.52로 흔들린다).
-  0.7 같은 고정 임계값을 쓰면 노드의 77~100%가 고립돼 화면이 텅 빈다(실측).
-  그래서 절대값 대신 **상대 구조**를 쓴다 — 묶음은 클러스터링으로, 선은 각 논문에서
-  '같은 묶음의 직전 논문 중 가장 가까운 것'으로 잇는다. 고립 노드가 0~9%로 떨어진다.
+분야 경계는 묶음 평균 유사도에 임계값을 둔다(_MERGE_DISTANCE). 논문 한 쌍의 유사도는
+연구자마다 분포가 흔들려 고정 임계값으로 쓰기 어렵지만, 묶음 전체의 평균은 그보다 안정적이다.
 """
 from __future__ import annotations
 
@@ -21,7 +19,6 @@ import hashlib
 import json
 import logging
 import re
-from collections import Counter
 from typing import Any, Optional
 
 import numpy as np
@@ -31,62 +28,66 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.settings import settings
 from app.schemas.researcher_detail import (
     ResearchFlowCluster,
-    ResearchFlowClusterPaper,
-    ResearchFlowEdge,
-    ResearchFlowNode,
+    ResearchFlowPaper,
     ResearchFlowResponse,
 )
-from app.services.researcher_detail_service import fetch_paper_rows
+from app.services.researcher_detail_service import _published_at, detail_id, fetch_paper_rows
 
 logger = logging.getLogger(__name__)
 
 # 클러스터링 규칙이나 프롬프트를 바꾸면 올린다 — 기존 캐시가 자동으로 재생성된다.
 # v3: _PAPERS_PER_CLUSTER 4→3, 1편 묶음 흡수(_absorb_small) 추가 (2026-09-23)
-PROMPT_VERSION = "v3"
+# v4: 개수 공식(round(n/3), 최대 6) → 유사도 임계값, 1편 분야 허용, 분야 설명·논문 목록 추가 (2026-09-29)
+# v5: 카드 순서(마지막 연구가 최근인 순), 카드 설명을 흐름 문장으로, 인용 0 표기, 요약 100자 (2026-09-29)
+# v6: 논문 1편짜리 분야는 제목만 쓰고 설명(description)을 만들지 않는다 — 기획 확정 (2026-09-29)
+# v7: 논문에 detail_id 추가(캐시 payload 구조가 바뀌어 올림) (2026-09-30)
+PROMPT_VERSION = "v7"
 
-# 요약 카드 개수. 와이어프레임이 4장 안팎이고, 카드가 너무 잘게 쪼개지면
-# "연구 흐름"이 아니라 논문 목록이 된다.
+# 두 묶음을 같은 분야로 합치는 기준: 두 묶음 논문 사이 코사인 거리의 평균이 이 값 미만.
+# 즉 평균 유사도가 0.40 이상이면 같은 분야다. 논문 수로 개수를 정하지 않는다 —
+# 분야는 내용으로 나뉘어야 하고, 개수 상한도 없다(2026-09-29 기획 확정).
 #
-# 4에서 3으로 내렸다(2026-09-23). k = round(n/4)라 5편 이하는 묶음이 무조건 1개가 되어
-# "분야 단위 패널"이 성립하지 않았다. 연구자 150명·논문 2,516편 표본 실측:
+# 값은 사람 판단이 아니라 데이터에 이미 있는 근거로 골랐다. 연구자 130명 표본에서
+# 같은 연구자의 논문 쌍에 정답을 자동으로 붙이고, 기준값마다 맞힌 비율을 쟀다.
+#   같아야 할 쌍(6,421) — 흔하지 않은 저자 키워드를 공유 (전체 논문 0.1% 이하에 나오는 키워드)
+#   달라야 할 쌍(78,334) — KCI 학문 분류가 다름
 #
-#   논문 수   ppc=4              ppc=3 + 1편 묶음 흡수
-#   3-5편     1.0묶음            1.1묶음 · 실루엣 0.195 · 키워드 분리 8.4배
-#   8-14편    2.7묶음 (1편 8%)   3.1묶음 (1편 0%)
-#   15-29편   5.2묶음 (1편 2%)   5.6묶음 (1편 0%)
+#   거리   같아야 할 쌍   달라야 할 쌍   균형 정확도     (입력: 영문 제목 + 키워드)
+#   0.55   59.1%         91.6%         75.4%
+#   0.58   70.0%         84.9%         77.4%
+#   0.60   75.1%         80.9%         78.0%   ← 최대
+#   0.62   80.0%         71.4%         75.7%
+#   0.65   94.9%         50.1%         72.5%
 #
-# ppc=2도 재봤으나 6-7편 구간에서 키워드 분리배수가 12.1→3.3으로 무너져 채택하지 않았다.
-_PAPERS_PER_CLUSTER = 3
-_MAX_CLUSTERS = 6
-
-# 논문 1편짜리 묶음은 카드 한 장에 논문 한 편이라 "흐름"이 아니라 목록이다.
-# 이보다 작은 묶음은 가장 가까운 묶음에 흡수시킨다.
-_MIN_CLUSTER_SIZE = 2
+# 정답 쌍에 키워드를 썼으므로 입력에도 키워드가 있으면 순환이 된다. 키워드를 뺀 영문 제목만으로
+# 재도 최적점이 0.60~0.63(균형 73~74%)으로 같아 순환 때문에 나온 값이 아니다.
+# 0.60에서 분야 수: 5-9편 3.1개 / 10-19편 4.0개 / 20-49편 9.3개 / 50편+ 15.6개,
+# 1편 분야 비율 32~41%. 1편 분야는 실제로 동떨어진 논문이라 흡수하지 않는다(기획 결정).
+#
+# ward는 쓰지 않는다. ward의 합병 비용은 묶음이 클수록 커져서, 같은 임계값이라도 논문이 많은
+# 연구자일수록 분야가 잘게 쪼개진다 — 내용이 아니라 개수에 끌려가는 방식이다.
+_MERGE_DISTANCE = 0.60
 
 _MODEL = settings.llm_model_fast
-_MAX_TOKENS = 900
+_MAX_TOKENS_BASE = 400
+_MAX_TOKENS_CAP = 8000
 
 
-def _order_key(row: Any) -> tuple[int, int]:
-    """과거 → 최신. KCI가 일자를 주지 않아 같은 달 안의 순서는 정해지지 않는다."""
+def _order_key(row: Any) -> tuple[bool, int, int]:
+    """과거 → 최신, 연도 미상은 끝. KCI가 일자를 주지 않아 같은 달 안의 순서는 정해지지 않는다."""
     month = int(row.pubmonth) if row.pubmonth and str(row.pubmonth).isdigit() else 0
-    return (row.pubyear or 0, month)
+    return (row.pubyear is None, row.pubyear or 0, month)
 
 
 def _node_id(row: Any) -> str:
     return row.internal_paper_id or row.external_id or ""
 
 
-def _flow_level(paper_count: int) -> str:
-    """이 논문 수로 무엇까지 말할 수 있는지. 묶음 공식에서 그대로 따라 나온다.
-
-    k = round(n / _PAPERS_PER_CLUSTER)이므로 ppc=3에서는 5편부터 2묶음이 가능하다.
-    4편까지는 계산상 반드시 1묶음이라 "분야가 옮겨갔다"고 말할 수 없다 — 그런데도
-    지금까지 같은 응답을 내보내서, 화면에는 "연구 흐름"이라 써 있고 내용은 논문 목록이었다.
-    """
+def _flow_level(paper_count: int, cluster_count: int) -> str:
+    """이 결과로 무엇까지 말할 수 있는지. 논문 수가 아니라 실제로 나뉜 분야 수로 정한다."""
     if paper_count <= 1:
         return "none"
-    if paper_count < _PAPERS_PER_CLUSTER * 2 - 1:  # ppc=3 → 5편 미만
+    if cluster_count <= 1:
         return "single"
     return "flow"
 
@@ -104,10 +105,18 @@ def _paper_signature(rows: list[Any]) -> str:
 
 
 def _embed(rows: list[Any]) -> np.ndarray:
+    """영문 제목 + 키워드로 임베딩한다.
+
+    원래 제목을 쓰면 한글 논문과 영문 논문이 같은 주제여도 언어 차이로 멀어져 다른 분야로
+    갈라졌다. 영문 제목은 연구자 논문의 99.4%에 있어(영문 논문은 원제목 자체가 영문) 모든 논문이
+    같은 언어로 비교된다. 한글+영문 제목을 함께 넣는 방식은 영문 논문에 한글 제목이 없어 언어
+    차이가 남았다. 위 _MERGE_DISTANCE 실측에서 영문 제목 입력이 모든 기준값에서 1~3%p 앞섰다.
+    영문 제목이 없는 0.6%는 원래 제목을 쓴다. 초록은 70%에만 있어 넣지 않는다.
+    """
     from app.services.embedding_model import get_bge_model
 
     texts = [
-        f"{r.title or ''} {' '.join((r.keywords or [])[:10])}".strip() or "제목 없음"
+        f"{r.title_en or r.title or ''} {' '.join((r.keywords or [])[:10])}".strip() or "제목 없음"
         for r in rows
     ]
     return get_bge_model().encode(
@@ -116,84 +125,23 @@ def _embed(rows: list[Any]) -> np.ndarray:
 
 
 def _cluster(vectors: np.ndarray) -> np.ndarray:
-    """묶음 나누기. ward 연결을 쓴다.
-
-    average/cosine은 응집도가 높은 대신 한 덩어리로 뭉친다 — 341편 연구자에서 상위 묶음이
-    324편(95%)을 차지해, '연구 흐름 요약'이 아니라 논문 목록 전체를 가리키는 카드가 나왔다.
-    ward는 묶음 크기를 고르게 나눠(최대 묶음 30%) 카드가 각각 의미를 갖는다.
-    입력 벡터가 L2 정규화돼 있어 유클리드 거리가 코사인과 단조 관계라 ward를 그대로 쓸 수 있다.
-    """
+    """분야 나누기. average 연결 + 코사인 거리 임계값으로, 개수는 데이터가 정한다."""
     n = len(vectors)
-    if n <= 2:
+    if n <= 1:
         return np.zeros(n, dtype=int)
     from sklearn.cluster import AgglomerativeClustering
 
-    k = max(1, min(_MAX_CLUSTERS, round(n / _PAPERS_PER_CLUSTER), n))
-    labels = AgglomerativeClustering(n_clusters=k, linkage="ward").fit_predict(vectors)
-    return _absorb_small(labels, vectors)
+    return AgglomerativeClustering(
+        n_clusters=None,
+        distance_threshold=_MERGE_DISTANCE,
+        linkage="average",
+        metric="cosine",
+    ).fit_predict(vectors)
 
 
-def _absorb_small(labels: np.ndarray, vectors: np.ndarray) -> np.ndarray:
-    """_MIN_CLUSTER_SIZE 미만인 묶음을 중심이 가장 가까운 묶음에 흡수시킨다.
-
-    ward가 고른 크기로 나눠주긴 하지만 주제가 동떨어진 논문 한 편은 그대로 홀로 남는다.
-    그 카드는 "연구 흐름"이 아니라 논문 한 편을 가리키는 제목표라 화면에서 값이 없다.
-    표본 실측으로 1편 묶음이 6-7편 구간 11% · 8-14편 8%였고, 흡수를 넣으면 전 구간 0%가 된다.
-
-    한 번에 하나씩 흡수하고 다시 센다 — 작은 묶음 둘이 서로를 최근접으로 지목하면
-    한꺼번에 처리할 때 둘 다 사라지거나 엉뚱하게 합쳐진다.
-    """
-    labels = labels.copy()
-    while True:
-        sizes = Counter(labels.tolist())
-        if len(sizes) <= 1:
-            return labels
-        small = [lab for lab, count in sizes.items() if count < _MIN_CLUSTER_SIZE]
-        if not small:
-            return labels
-        centroids = {lab: vectors[labels == lab].mean(axis=0) for lab in sizes}
-        source = small[0]
-        target = max(
-            (lab for lab in sizes if lab != source),
-            key=lambda lab: float(centroids[source] @ centroids[lab]),
-        )
-        labels[labels == source] = target
-
-
-def _embed_and_cluster(rows: list[Any]) -> tuple[np.ndarray, np.ndarray]:
-    """스레드에서 한 번에 돌리는 무거운 계산 두 가지."""
-    vectors = _embed(rows)
-    return vectors, _cluster(vectors)
-
-
-def _build_edges(
-    rows: list[Any], vectors: np.ndarray, labels: np.ndarray
-) -> list[ResearchFlowEdge]:
-    """각 논문을 '같은 묶음의 앞선 논문 중 가장 가까운 것'과 잇는다.
-
-    묶음마다 과거에서 최신으로 흐르는 사슬이 하나 생긴다. 전부 잇지 않는 이유는
-    40편이면 선이 780개가 되어 화면이 까맣게 되기 때문이다(연구자 그래프에서 겪은 것과 같다).
-    """
-    sim = vectors @ vectors.T
-    edges: list[ResearchFlowEdge] = []
-    for i in range(len(rows)):
-        earlier = [j for j in range(i) if labels[j] == labels[i]]
-        if not earlier:
-            continue
-        j = max(earlier, key=lambda x: sim[i][x])
-        shared = sorted(
-            {k.lower() for k in (rows[i].keywords or [])}
-            & {k.lower() for k in (rows[j].keywords or [])}
-        )
-        edges.append(
-            ResearchFlowEdge(
-                source=_node_id(rows[j]),
-                target=_node_id(rows[i]),
-                weight=round(float(sim[i][j]), 4),
-                shared_keywords=shared[:5],
-            )
-        )
-    return edges
+def _embed_and_cluster(rows: list[Any]) -> np.ndarray:
+    """스레드에서 한 번에 돌리는 무거운 계산 두 가지. 벡터는 묶는 데만 쓰고 버린다."""
+    return _cluster(_embed(rows))
 
 
 def _cluster_keywords(rows: list[Any], indices: list[int], limit: int = 6) -> list[str]:
@@ -205,13 +153,21 @@ def _cluster_keywords(rows: list[Any], indices: list[int], limit: int = 6) -> li
     return [k for k, _ in sorted(counts.items(), key=lambda kv: -kv[1])][:limit]
 
 
-def _cluster_paper(rows: list[Any], index: int) -> ResearchFlowClusterPaper:
-    row = rows[index]
-    return ResearchFlowClusterPaper(
+def _flow_paper(row: Any) -> ResearchFlowPaper:
+    return ResearchFlowPaper(
         node_id=_node_id(row),
         paper_id=row.internal_paper_id,
+        external_id=row.external_id,
         title=row.title,
-        year=row.pubyear,
+        journal_name=row.journal,
+        # 기획 명세: 인용수를 못 불러오면 표기하지 않고, 0이면 0으로 표기한다 — 값이 없을 때만 null.
+        # (08-02 논문 리스트는 KCI 0을 '미집계일 수 있음'으로 보고 null로 보낸다. 규칙이 다르다.)
+        citation_count=row.citation_count,
+        pub_year=row.pubyear,
+        published_at=_published_at(row.pubyear, row.pubmonth, row.pubdate, row.paper_source),
+        is_internal=row.internal_paper_id is not None,
+        detail_id=detail_id(row),
+        external_url=row.url,
     )
 
 
@@ -220,54 +176,97 @@ def _rule_topic(keywords: list[str]) -> str:
     return " · ".join(keywords[:3]) if keywords else "주제 미상"
 
 
-def _rule_summary(clusters: list[ResearchFlowCluster], rows: list[Any]) -> Optional[str]:
-    if not rows:
+# 기획 명세: 전체 한 줄 요약은 100자 이하.
+_SUMMARY_MAX_CHARS = 100
+
+
+def _rule_summary(clusters: list[ResearchFlowCluster]) -> Optional[str]:
+    """LLM 없이 쓰는 전체 한 줄. 논문 수가 많은 분야의 대표 키워드를 나열한다(100자 이하)."""
+    if not clusters:
         return None
-    years = [r.pubyear for r in rows if r.pubyear]
-    if len(rows) == 1 or not clusters:
-        first = clusters[0].topic_keywords[:2] if clusters else []
-        return f"{min(years) if years else '연도 미상'}년 {' · '.join(first)} 연구 1편이 확인됩니다."
-    oldest = min(clusters, key=lambda c: c.start_paper.year or 9999 if c.start_paper else 9999)
-    newest = max(clusters, key=lambda c: c.latest_paper.year or 0 if c.latest_paper else 0)
-    return (
-        f"{oldest.start_paper.year if oldest.start_paper else '초기'}년 "
-        f"{_rule_topic(oldest.topic_keywords)} 연구에서 출발해, 최근에는 "
-        f"{_rule_topic(newest.topic_keywords)} 쪽 연구가 이어지고 있습니다."
-    )
+    if len(clusters) == 1:
+        keywords = clusters[0].topic_keywords[:2]
+        if not keywords:
+            return None
+        sentence = f"{' · '.join(keywords)} 관련 연구가 대부분이에요."
+        return sentence if len(sentence) <= _SUMMARY_MAX_CHARS else f"{keywords[0]} 관련 연구가 대부분이에요."
+    ranked = sorted(clusters, key=lambda c: -c.paper_count)
+    heads = [c.topic_keywords[0] for c in ranked if c.topic_keywords][:3]
+    while heads:
+        sentence = f"주로 {', '.join(heads)} 관련 연구를 해왔어요."
+        if len(sentence) <= _SUMMARY_MAX_CHARS:
+            return sentence
+        heads = heads[:-1]
+    return None
 
 
 def _system_prompt() -> str:
     return (
-        "너는 국내 학술 데이터베이스의 연구자 프로필을 쓰는 편집자다.\n"
-        "주어진 '연구 묶음'마다 한국어 주제명을 한 줄로 붙이고, 연구자의 관심 분야 변화를 "
-        "한 문장으로 정리한다.\n\n"
+        "너는 국내 학술 데이터베이스에서 한 연구자의 논문을 분야별로 정리하는 편집자다.\n"
+        "논문은 이미 의미가 가까운 것끼리 '분야'로 묶여 있다. 너는 묶음을 바꾸지 않고 문장만 쓴다.\n\n"
+        "분야마다 쓸 것:\n"
+        "- topic: 분야명. 명사구로 25자 이내. 예: '역분화줄기세포 분화 조건 최적화'\n"
+        "- description: 이 분야 안에서 연구가 **시간에 따라 어떻게 흘러왔는지** 한 문장, 70자 이내, 해요체. "
+        "논문은 연도순으로 주어진다. 앞 시기와 뒤 시기의 주제를 비교해서 쓴다.\n"
+        "  반드시 아래 세 형태 중 하나로 쓰고, 끝맺음 말은 **글자 그대로** 쓴다('확대됐어요'·'변화했어요' 등으로 바꾸지 않는다).\n"
+        "  · 주제가 옮겨 갔으면: '<앞 시기 주제> 연구로 시작해 <뒤 시기 주제>로 변화한 흐름을 보여요.'\n"
+        "  · 같은 주제가 이어지면: '<주제>에 관련한 연구를 지속해서 진행하고 있어요.'\n"
+        "  · **논문이 1편뿐인 분야(입력에 '1편 — 제목만'으로 표시)는 description을 쓰지 않는다.** topic만 쓴다.\n\n"
+        "전체로 쓸 것:\n"
+        "- summary: 이 연구자의 논문 전체가 주로 어떤 연구인지 한 줄, 공백 포함 100자 이하(가급적 80자 안), 해요체. "
+        "논문 수가 많은 분야를 중심으로 쓰고, 분야가 많아도 **대표 분야 3개까지만** 담는다 — "
+        "전부 나열하지 않는다. 'A, B, C 연구를 주로 해왔어요'처럼 나열해도 되고, "
+        "대부분 한 분야면 '~ 연구가 대부분이에요'처럼 쓴다. "
+        "연도에 따른 변화는 억지로 만들지 않는다.\n\n"
         "반드시 지킬 것:\n"
-        "1. 제시된 키워드와 논문 제목에 실제로 있는 내용만 쓴다. 없는 주제·분야·성과를 "
-        "지어내지 않는다.\n"
-        "2. 주제명은 명사구로 25자 이내. 예: '오가노이드 기반 재생의학 및 약물 독성 평가 연구'\n"
-        "3. 요약은 정확히 한 문장. 연도와 주제 변화가 드러나게 쓴다.\n"
-        "4. 연구자 이름·소속·평가(우수한, 활발한 등)는 쓰지 않는다.\n"
-        "5. 묶음이 하나뿐이면 변화가 아니라 그 주제가 이어져 왔다고 쓴다.\n\n"
-        '출력은 JSON만: {"topics": {"<묶음번호>": "<주제명>"}, "summary": "<한 문장>"}'
+        "1. 제시된 키워드와 논문 제목에 실제로 있는 내용만 쓴다. 없는 주제·방법·성과를 지어내지 않는다.\n"
+        "2. 연구자 이름·소속·평가(우수한, 활발한, 선도적인 등)는 쓰지 않는다.\n"
+        "3. 분야명은 서로 겹치지 않게, 그 분야를 다른 분야와 구분하는 말로 쓴다.\n"
+        "4. 논문이 1편뿐인 분야의 topic은 다른 분야와 같은 방식(명사구 분야명)으로 그 논문의 주제를 쓴다.\n\n"
+        '출력은 JSON만: {"clusters": {"<분야번호>": {"topic": "<분야명>", "description": "<한 문장>"}}, '
+        '"summary": "<한 줄>"}'
     )
 
 
-def _user_prompt(clusters: list[ResearchFlowCluster], rows: list[Any], labels: np.ndarray) -> str:
+# 분야 하나에 LLM에게 보여줄 논문 제목 수. 분야명·설명의 근거라 너무 적으면 한두 편에 끌려간다.
+_TITLES_PER_CLUSTER = 10
+
+
+def _spread(papers: list, limit: int) -> list:
+    """시기 전체에 고르게 뽑는다. 앞에서부터 자르면 초기 논문만 보여서 '흐름'을 쓸 수 없다."""
+    if len(papers) <= limit:
+        return papers
+    step = (len(papers) - 1) / (limit - 1)
+    return [papers[round(i * step)] for i in range(limit)]
+
+
+def _user_prompt(clusters: list[ResearchFlowCluster]) -> str:
+    total = sum(c.paper_count for c in clusters)
     blocks = []
     for cluster in clusters:
-        indices = [i for i in range(len(rows)) if labels[i] == cluster.cluster_id]
-        titles = [rows[i].title for i in indices if rows[i].title][:3]
-        years = [rows[i].pubyear for i in indices if rows[i].pubyear]
-        span = f" ({min(years)}~{max(years)}년)" if years else ""
-        blocks.append(
-            f"[묶음 {cluster.cluster_id}] 논문 {cluster.paper_count}편{span}\n"
-            f"  키워드: {', '.join(cluster.topic_keywords) or '없음'}\n"
-            f"  논문 제목: {' / '.join(titles) or '제목 없음'}"
+        titled = _spread([p for p in cluster.papers if p.title], _TITLES_PER_CLUSTER)
+        titles = [f"({p.pub_year}) {p.title}" if p.pub_year else p.title for p in titled]
+        span = (
+            f" ({cluster.start_year}~{cluster.end_year}년)"
+            if cluster.start_year and cluster.end_year
+            else ""
         )
-    return "다음 연구자의 연구 묶음이다.\n\n" + "\n\n".join(blocks)
+        single = " — 제목만" if cluster.paper_count == 1 else ""
+        blocks.append(
+            f"[분야 {cluster.cluster_id}] 논문 {cluster.paper_count}편{single}{span}\n"
+            f"  키워드: {', '.join(cluster.topic_keywords) or '없음'}\n"
+            "  논문 제목(연도순):\n" + "\n".join(f"  - {t}" for t in titles or ["제목 없음"])
+        )
+    return f"다음 연구자의 논문 {total}편을 {len(clusters)}개 분야로 묶은 결과다.\n\n" + "\n\n".join(blocks)
 
 
-def _parse_llm(raw: str) -> tuple[dict[int, str], Optional[str]]:
+def _max_tokens(cluster_count: int) -> int:
+    """분야 수에 상한이 없어 출력 길이도 분야 수에 비례한다. 분야 하나에 분야명+설명 약 120토큰."""
+    return min(_MAX_TOKENS_CAP, _MAX_TOKENS_BASE + 120 * cluster_count)
+
+
+def _parse_llm(raw: str) -> tuple[dict[int, str], dict[int, str], Optional[str]]:
+    """분야명, 분야 설명, 전체 요약. 일부 분야가 빠져 있어도 받은 만큼은 쓴다."""
     body = raw.strip()
     if body.startswith("```"):
         body = body.split("```")[1] if "```" in body[3:] else body.strip("`")
@@ -276,13 +275,21 @@ def _parse_llm(raw: str) -> tuple[dict[int, str], Optional[str]]:
     if start < 0 or end < 0:
         raise ValueError("JSON 객체를 찾지 못함")
     data = json.loads(body[start : end + 1])
-    topics = {}
-    for key, value in (data.get("topics") or {}).items():
+    topics: dict[int, str] = {}
+    descriptions: dict[int, str] = {}
+    for key, value in (data.get("clusters") or {}).items():
         cluster_id = _cluster_id_from_key(key)
-        if cluster_id is not None and value:
+        if cluster_id is None:
+            continue
+        if isinstance(value, dict):
+            if value.get("topic"):
+                topics[cluster_id] = str(value["topic"]).strip()
+            if value.get("description"):
+                descriptions[cluster_id] = str(value["description"]).strip()
+        elif value:  # 모델이 분야명만 문자열로 돌려준 경우
             topics[cluster_id] = str(value).strip()
     summary = (data.get("summary") or "").strip() or None
-    return topics, summary
+    return topics, descriptions, summary
 
 
 def _cluster_id_from_key(raw: Any) -> Optional[int]:
@@ -299,57 +306,78 @@ def _cluster_id_from_key(raw: Any) -> Optional[int]:
 
 
 async def _write_sentences(
-    clusters: list[ResearchFlowCluster], rows: list[Any], labels: np.ndarray
-) -> tuple[dict[int, str], Optional[str], str, Optional[str]]:
-    """LLM에게 주제명과 요약 문장만 맡긴다. 실패하면 규칙 기반으로 폴백한다 —
+    clusters: list[ResearchFlowCluster],
+) -> tuple[dict[int, str], dict[int, str], Optional[str], str, Optional[str]]:
+    """LLM에게 분야명·분야 설명·전체 요약만 맡긴다. 실패하면 규칙 기반으로 폴백한다 —
     명세가 요약 카드를 '상시 노출'로 요구하므로 문장이 없다고 화면을 비울 수는 없다."""
     from app.services.llm.client import LLMBudgetExceededError, LLMRefusalError, chat
 
     try:
         response = await chat(
-            messages=[{"role": "user", "content": _user_prompt(clusters, rows, labels)}],
+            messages=[{"role": "user", "content": _user_prompt(clusters)}],
             model=_MODEL,
             system=_system_prompt(),
             temperature=0.3,
-            max_tokens=_MAX_TOKENS,
+            max_tokens=_max_tokens(len(clusters)),
         )
-        topics, summary = _parse_llm(response.text)
-        return topics, summary, "llm", response.model
+        topics, descriptions, summary = _parse_llm(response.text)
+        return topics, descriptions, summary, "llm", response.model
     except LLMBudgetExceededError:
         logger.warning("연구 흐름 요약: 이번 달 LLM 예산 소진 — 규칙 기반으로 폴백")
     except LLMRefusalError:
         logger.warning("연구 흐름 요약: 모델이 응답을 거부 — 규칙 기반으로 폴백")
     except Exception as exc:  # 파싱 실패·네트워크 오류 등
         logger.warning("연구 흐름 요약 생성 실패(%s) — 규칙 기반으로 폴백", type(exc).__name__)
-    return {}, None, "rule", None
+    return {}, {}, None, "rule", None
 
 
-def _build_clusters(
-    rows: list[Any], vectors: np.ndarray, labels: np.ndarray
-) -> tuple[list[ResearchFlowCluster], set[int]]:
-    """묶음 카드와, 각 묶음의 대표 논문 인덱스(화면의 진한 초록)를 함께 돌려준다."""
+def _order_labels(rows: list[Any], labels: np.ndarray) -> np.ndarray:
+    """묶음 번호를 화면 순서로 다시 매긴다 — 0번이 가장 최근까지 이어진 분야.
+
+    기획 명세: "각 카드에서 가장 마지막으로 한 연구가 최근인 순" (2012~2026이 2021~2024보다 앞).
+    끝 연도가 같으면 그 카드의 마지막 논문이 더 최근인 쪽(같은 해 안의 발행월), 그래도 같으면
+    논문이 많은 쪽을 앞에 둔다. rows가 과거 → 최신 정렬이라 인덱스가 클수록 최근 논문이다.
+    연도를 모르는 논문뿐인 카드는 맨 뒤. cluster_id가 곧 순서라 오른쪽 목록과 왼쪽 카드가 같은 번호를 가리킨다.
+    """
+    groups: dict[int, list[int]] = {}
+    for i, label in enumerate(labels.tolist()):
+        groups.setdefault(label, []).append(i)
+
+    def key(label: int) -> tuple:
+        indices = groups[label]
+        dated = [i for i in indices if rows[i].pubyear]
+        if not dated:
+            return (1, 0, 0, -len(indices), indices[0])
+        last = max(dated)
+        return (0, -rows[last].pubyear, -last, -len(indices), indices[0])
+
+    remap = {old: new for new, old in enumerate(sorted(groups, key=key))}
+    return np.array([remap[label] for label in labels.tolist()], dtype=int)
+
+
+def _build_clusters(rows: list[Any], labels: np.ndarray) -> list[ResearchFlowCluster]:
+    """분야 카드.
+
+    rows는 과거 → 최신으로 정렬돼 들어오고 labels는 _order_labels를 거친 값이라,
+    번호 순으로 돌기만 하면 카드 순서와 카드 안 논문 순서가 모두 연도 오름차순이 된다.
+    """
     clusters: list[ResearchFlowCluster] = []
-    core_indices: set[int] = set()
     for label in sorted(set(labels.tolist())):
         indices = [i for i in range(len(rows)) if labels[i] == label]
         keywords = _cluster_keywords(rows, indices)
-        centroid = vectors[indices].mean(axis=0)
-        core = max(indices, key=lambda i: float(vectors[i] @ centroid))
+        years = [rows[i].pubyear for i in indices if rows[i].pubyear]
         clusters.append(
             ResearchFlowCluster(
                 cluster_id=int(label),
                 topic=_rule_topic(keywords),
                 topic_keywords=keywords,
                 paper_count=len(indices),
-                start_paper=_cluster_paper(rows, indices[0]),
-                latest_paper=_cluster_paper(rows, indices[-1]) if len(indices) > 1 else None,
-                has_followup=len(indices) > 1,
-                node_ids=[_node_id(rows[i]) for i in indices],
+                start_year=min(years, default=None),
+                end_year=max(years, default=None),
+                papers=[_flow_paper(rows[i]) for i in indices],
             )
         )
-        core_indices.add(core)
-    clusters.sort(key=lambda c: -c.paper_count)
-    return clusters, core_indices
+    return clusters
 
 
 async def _load_cache(
@@ -400,7 +428,7 @@ async def _save_cache(
 async def get_research_flow(
     db: AsyncSession, researcher_id: str, *, use_cache: bool = True
 ) -> ResearchFlowResponse:
-    """논문 수와 무관하게 항상 응답한다(명세: 그래프·요약 카드 상시 노출)."""
+    """논문 수와 무관하게 항상 응답한다(명세: 요약 카드 상시 노출)."""
     rows = sorted(await fetch_paper_rows(db, researcher_id), key=_order_key)
     if not rows:
         return ResearchFlowResponse(
@@ -409,8 +437,6 @@ async def get_research_flow(
             flow_level="none",
             summary=None,
             summary_source="none",
-            nodes=[],
-            edges=[],
             clusters=[],
         )
 
@@ -423,49 +449,28 @@ async def get_research_flow(
     # 임베딩과 클러스터링은 CPU를 오래 잡는 동기 코드다. 그대로 await 없이 부르면
     # 이벤트 루프가 멈춰 그동안 들어온 다른 요청까지 같이 밀린다
     # (실측: 73편 생성 중 프로필 조회가 1~3ms → 51ms). 스레드로 내보낸다.
-    vectors, labels = await asyncio.to_thread(_embed_and_cluster, rows)
-    clusters, core_indices = _build_clusters(rows, vectors, labels)
-    edges = _build_edges(rows, vectors, labels)
+    labels = _order_labels(rows, await asyncio.to_thread(_embed_and_cluster, rows))
+    clusters = _build_clusters(rows, labels)
 
-    topics, summary, source, model = await _write_sentences(clusters, rows, labels)
+    topics, descriptions, summary, source, model = await _write_sentences(clusters)
     for cluster in clusters:
         if cluster.cluster_id in topics:
             cluster.topic = topics[cluster.cluster_id]
+        # 1편짜리 분야는 설명 없이 논문만 보여준다(기획 확정). 모델이 써 와도 버린다.
+        cluster.description = descriptions.get(cluster.cluster_id) if cluster.paper_count > 1 else None
+    if summary is not None and len(summary) > _SUMMARY_MAX_CHARS:
+        logger.info("연구 흐름 요약이 %d자라 규칙 기반으로 대체", len(summary))
+        summary = None
     if summary is None:
-        summary = _rule_summary(clusters, rows)
+        summary = _rule_summary(clusters)
         source = "rule" if source == "llm" else source
-
-    nodes = [
-        ResearchFlowNode(
-            node_id=_node_id(row),
-            paper_id=row.internal_paper_id,
-            external_id=row.external_id,
-            title=row.title,
-            authors=[a for a in (row.authors or []) if a],
-            pub_year=row.pubyear,
-            pub_month=row.pubmonth,
-            published_at=(
-                f"{row.pubyear}-{str(row.pubmonth).zfill(2)}"
-                if row.pubyear and row.pubmonth
-                else (str(row.pubyear) if row.pubyear else None)
-            ),
-            cluster_id=int(labels[i]),
-            is_core=i in core_indices,
-            is_internal=row.internal_paper_id is not None,
-            external_url=row.url,
-            citation_count=row.citation_count if row.citation_count else None,
-        )
-        for i, row in enumerate(rows)
-    ]
 
     result = ResearchFlowResponse(
         researcher_id=researcher_id,
         total_papers=len(rows),
-        flow_level=_flow_level(len(rows)),
+        flow_level=_flow_level(len(rows), len(clusters)),
         summary=summary,
         summary_source=source,
-        nodes=nodes,
-        edges=edges,
         clusters=clusters,
     )
     try:
