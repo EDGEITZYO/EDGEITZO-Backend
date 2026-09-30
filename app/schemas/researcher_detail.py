@@ -24,7 +24,7 @@ class ResearcherProfileResponse(BaseModel):
     """
 
     researcher_id: str = Field(description="연구자 고유 ID", example="kci:c33f2b39da0f45a6")
-    name_kor: Optional[str] = Field(None, description="한글명. OpenAlex 출처 연구자는 없을 수 있음", example="이기한")
+    name_kor: Optional[str] = Field(None, description="한글명. 현재 연구자 전원이 보유", example="이기한")
     name_eng: Optional[str] = Field(None, description="영문명. 없으면 null", example="Lee, Ki-Han")
     institution: Optional[str] = Field(None, description="현재 소속 기관. 없으면 null", example="서울여자대학교")
     department: Optional[str] = Field(
@@ -37,15 +37,15 @@ class ResearcherProfileResponse(BaseModel):
         None,
         description=(
             "이메일. 출처 신뢰도가 confirmed/domain_verified인 경우에만 내려간다. "
-            "추정(inferred) 건은 남의 연락처가 잘못 노출될 수 있어 null 처리 — 화면은 '-'"
+            "추정(inferred) 건은 남의 연락처가 잘못 노출될 수 있어 null"
         ),
         example="lee@swu.ac.kr",
     )
     total_papers: Optional[int] = Field(None, description="총 논문 수", example=24)
-    total_citations: Optional[int] = Field(None, description="총 피인용 수. 미집계면 null → 화면 '데이터 없음'", example=480)
+    total_citations: Optional[int] = Field(None, description="총 피인용 수(연구자 논문의 KCI 피인용 합계). 집계가 없으면 null", example=480)
     citation_source: Optional[str] = Field(
         None,
-        description="피인용 집계 출처. 'kci'(국내 등재지) | 'openalex'(국제). 집계 범위가 달라 두 출처의 수치를 한 척도로 비교하면 안 됨",
+        description="피인용 집계 출처. 'kci'(국내 등재지 기준) | null(집계 없음)",
         example="kci",
     )
     corpus_paper_count: int = Field(0, description="우리 서비스 코퍼스에 있는 논문 수", example=2)
@@ -58,8 +58,8 @@ class ResearcherProfileResponse(BaseModel):
 class ResearcherPaperItem(BaseModel):
     """논문 한 편. 필드명은 기존 논문 카드 응답과 맞췄다.
 
-    연구자 논문의 93.6%는 코퍼스 밖(KCI 이력)이다. is_internal이 false면 papers 행이 없어
-    우리 논문 상세·북마크·읽음이 성립하지 않고, 이동 대상은 external_url뿐이다.
+    논문 상세·북마크는 paper_id(=detail_id)로 한다. papers에 행이 없어도(is_internal=false)
+    KCI ID면 상세·북마크 API가 그 자리에서 적재하므로 이동할 수 있다.
     """
 
     paper_id: Optional[str] = Field(
@@ -73,7 +73,7 @@ class ResearcherPaperItem(BaseModel):
     )
     external_id: Optional[str] = Field(
         None,
-        description="KCI 논문 ID. 코퍼스에만 있고 KCI 식별자가 없는 논문(372편)은 null",
+        description="KCI 논문 ID. KCI 식별자가 없는 코퍼스 논문(연구자-논문 연결 370건)은 null",
         example="ART002780520",
     )
     title: Optional[str] = Field(None, description="논문 제목")
@@ -82,10 +82,10 @@ class ResearcherPaperItem(BaseModel):
     pub_month: Optional[str] = Field(None, description="발행월 2자리. 없으면 null", example="06")
     published_at: Optional[str] = Field(
         None,
-        description="표시용 발행일. 'YYYY-MM-DD' 또는 'YYYY-MM'. KCI가 일자를 주지 않는 건은 월까지만",
+        description="표시용 발행일. 'YYYY-MM-DD' / 'YYYY-MM' / 'YYYY' — 출처가 준 정밀도까지만. KCI 출처는 일자를 주지 않아 월까지만",
         example="2024-06-30",
     )
-    authors: list[str] = Field(default_factory=list, description="저자 목록. 화면의 '홍길동 외 N인'은 이 배열로 조립")
+    authors: list[str] = Field(default_factory=list, description="저자 목록(논문에 적힌 순서)")
     abstract: Optional[str] = Field(
         None,
         description="초록. papers에 편입되지 않은 논문은 null (KCI articleDetail 적재 시 채워짐)",
@@ -101,7 +101,7 @@ class ResearcherPaperItem(BaseModel):
     sci_indexed: Optional[bool] = Field(
         None,
         description=(
-            "SCI 계열 등재 여부. journals 조인 결과로, 학술지명 매칭 실패(9%) 시 null. "
+            "SCI 계열 등재 여부. journals 조인 결과로, 학술지명 매칭 실패(5.0%) 시 null. "
             "false는 '비SCI 확정'이라 null과 의미가 다르다. papers 편입 여부와 무관하게 채워진다"
         ),
     )
@@ -199,7 +199,9 @@ class ResearchFlowPaper(BaseModel):
     """분야에 속한 논문 한 편. 08-02 논문 리스트 항목과 같은 이름·의미의 필드만 추렸다."""
 
     node_id: str = Field(description="논문 키. paper_id가 있으면 그 값, 없으면 external_id라 항상 채워진다")
-    paper_id: Optional[str] = Field(None, description="우리 DB 논문 ID. 코퍼스 밖이면 null")
+    paper_id: Optional[str] = Field(
+        None, description="우리 DB 논문 ID. papers에 행이 없으면 null — 논문 상세 이동은 detail_id로 한다"
+    )
     external_id: Optional[str] = Field(None, description="KCI 논문 ID")
     title: Optional[str] = Field(None, description="논문 제목")
     journal_name: Optional[str] = Field(None, description="학술지명. 없으면 null")
@@ -265,7 +267,7 @@ class ResearchFlowResponse(BaseModel):
         example="역분화줄기세포 분화 조건 최적화와 오가노이드 기반 약물 평가 연구가 대부분이에요.",
     )
     summary_source: Literal["llm", "rule", "none"] = Field(
-        description="요약 문장의 출처. LLM 예산 소진·응답 거부·파싱 실패 시 rule(규칙 기반)로 폴백한다"
+        description="summary의 출처. LLM 예산 소진·응답 거부·파싱 실패, 또는 LLM 요약이 100자를 넘으면 rule(규칙 기반). 논문이 없으면 none"
     )
     clusters: list[ResearchFlowCluster] = Field(
         description=(
