@@ -1,10 +1,15 @@
 """코퍼스 밖 논문 상세 조회의 순수 로직 테스트 (외부 API 호출 없음)."""
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 
 import app.services.paper_citation_external_service as svc
+import app.services.paper_citation_service as citation_svc
+from app.schemas.paper import PaperCardTrustBadge
+from app.schemas.paper_citation import PaperCitationCard
 from app.services.paper_citation_external_service import (
     _ENRICHED_FIELDS,
     _abstract_from_inverted,
@@ -190,3 +195,94 @@ async def test_get_external_detail_keeps_stored_type_and_date_on_realtime_fallba
 
     assert detail.paper_type == _paper_type_label("proceedings-article")
     assert detail.published_at == "2021-05"
+
+
+@pytest.mark.asyncio
+async def test_related_papers_include_complete_card_fields(monkeypatch):
+    async def fake_load_stored_rows(db, external_id):
+        return [SimpleNamespace(**_stored(title="외부 논문", abstract="외부 논문 초록"))]
+
+    async def fake_cards(db, paper_ids):
+        assert paper_ids == ["P1"]
+        badge = PaperCardTrustBadge(
+            kci=True,
+            sci=False,
+            citation_count=12,
+            degree_type=None,
+        )
+        return {
+            "P1": PaperCitationCard(
+                key="P1",
+                in_service=True,
+                paper_id="P1",
+                title="연관 논문",
+                authors=["저자 1", "저자 2"],
+                journal_name="학술지",
+                pub_year=2024,
+                keywords=["키워드"],
+                paper_type="학술 저널",
+                kci_registered=True,
+                sci_indexed=False,
+                citation_count=12,
+                trust_badge=badge,
+                is_bookmarked=False,
+            )
+        }
+
+    monkeypatch.setattr(svc, "get_redis", lambda db: _NoopRedis())
+    monkeypatch.setattr(svc, "_load_stored_rows", fake_load_stored_rows)
+    monkeypatch.setattr(svc, "_embed_and_search", lambda text, limit: [("P1", 0.32109)])
+    monkeypatch.setattr(citation_svc, "_build_in_service_cards", fake_cards)
+
+    response = await svc.get_related_corpus_papers("REF1", db=None)
+
+    item = response.items[0]
+    assert item.paper_id == "P1"
+    assert item.authors == ["저자 1", "저자 2"]
+    assert item.paper_type == "학술 저널"
+    assert item.citation_count == 12
+    assert item.kci_registered is True
+    assert item.sci_indexed is False
+    assert item.keywords == ["키워드"]
+    assert item.trust_badge == PaperCardTrustBadge(
+        kci=True,
+        sci=False,
+        citation_count=12,
+        degree_type=None,
+    )
+    assert item.distance == 0.3211
+
+
+@pytest.mark.asyncio
+async def test_addition_request_status_is_scoped_to_user(monkeypatch):
+    user_id = uuid4()
+    db = SimpleNamespace(scalar=AsyncMock(return_value=None))
+
+    async def fake_load_stored_rows(db, external_id):
+        return [SimpleNamespace(external_id=external_id)]
+
+    monkeypatch.setattr(svc, "_load_stored_rows", fake_load_stored_rows)
+
+    response = await svc.get_addition_request_status("REF1", user_id, db)
+
+    assert response.external_id == "REF1"
+    assert response.requested is False
+    db.scalar.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_addition_request_is_idempotent_at_database_level(monkeypatch):
+    user_id = uuid4()
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+
+    async def fake_load_stored_rows(db, external_id):
+        return [SimpleNamespace(external_id=external_id)]
+
+    monkeypatch.setattr(svc, "_load_stored_rows", fake_load_stored_rows)
+
+    response = await svc.create_addition_request("REF1", user_id, db)
+
+    assert response.requested is True
+    statement = db.execute.await_args.args[0]
+    assert "ON CONFLICT (user_id, external_id) DO NOTHING" in str(statement)
+    db.commit.assert_awaited_once()

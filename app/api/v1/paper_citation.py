@@ -6,11 +6,12 @@ from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user_optional
+from app.core.deps import get_current_user, get_current_user_optional
 from app.models.user import User
 from app.core.response import success_response
 from app.schemas.common import ApiErrorResponse, ApiResponse
 from app.schemas.paper_citation import (
+    PaperAdditionRequestStatus,
     RelatedCorpusPapersResponse,
     PaperCitationExpandRequest,
     PaperCitationExpandResponse,
@@ -18,6 +19,8 @@ from app.schemas.paper_citation import (
     PaperCitationGraphResponse,
 )
 from app.services.paper_citation_external_service import (
+    create_addition_request,
+    get_addition_request_status,
     get_external_paper_detail,
     get_related_corpus_papers,
 )
@@ -198,3 +201,50 @@ async def get_external_paper_related(
 ):
     result = await get_related_corpus_papers(external_id, db)
     return success_response(data=result, message="related corpus papers loaded")
+
+
+@router.get(
+    "/papers/citation-graph/external/{external_id}/addition-request",
+    response_model=ApiResponse[PaperAdditionRequestStatus],
+    responses={
+        401: {"model": ApiErrorResponse},
+        404: {"model": ApiErrorResponse},
+    },
+    summary="해외 논문 추가 요청 상태",
+    description="""현재 로그인 사용자(게스트 포함)가 해당 외부 논문의 서비스 편입을 이미 요청했는지 조회합니다.
+
+- `requested=false`: `추가 요청하기` 활성 버튼 표시
+- `requested=true`: `요청 완료` 비활성 버튼 표시
+- 요청 취소 기능은 제공하지 않습니다.
+""",
+)
+async def get_external_paper_addition_request(
+    external_id: str = Path(..., description="그래프 외부 논문 노드의 key"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await get_addition_request_status(external_id, current_user.id, db)
+    return success_response(data=result, message="paper addition request status loaded")
+
+
+@router.post(
+    "/papers/citation-graph/external/{external_id}/addition-request",
+    response_model=ApiResponse[PaperAdditionRequestStatus],
+    responses={
+        401: {"model": ApiErrorResponse},
+        404: {"model": ApiErrorResponse},
+    },
+    summary="해외 논문 추가 요청",
+    description="""외부 논문의 바이옴 서비스 편입 요청을 저장합니다.
+
+로그인 사용자와 외부 논문 조합당 한 번만 저장됩니다. 같은 요청을 다시 보내도 중복 행을 만들지 않고
+`requested=true`를 반환하는 멱등 API입니다. 회원과 게스트 사용자 모두 요청할 수 있으며 취소 기능은 없습니다.
+""",
+)
+async def create_external_paper_addition_request(
+    external_id: str = Path(..., description="그래프 외부 논문 노드의 key"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await create_addition_request(external_id, current_user.id, db)
+    return success_response(data=result, message="paper addition requested")
