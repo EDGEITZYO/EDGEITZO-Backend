@@ -344,8 +344,18 @@ class RelatedCorpusPaper(BaseModel):
 
     paper_id: str = Field(..., description="코퍼스 논문 id. 논문 상세(`GET /papers/{paper_id}`)로 그대로 쓴다")
     title: Optional[str] = Field(default=None, description="논문 제목")
+    authors: Optional[list[str]] = Field(default=None, description="저자 목록. 없으면 null")
     journal_name: Optional[str] = Field(default=None, description="학술지명")
     pub_year: Optional[int] = Field(default=None, description="발행연도")
+    paper_type: Optional[str] = Field(default=None, description="논문 유형. 없으면 null")
+    citation_count: Optional[int] = Field(default=None, description="인용 수. 미집계면 null")
+    kci_registered: Optional[bool] = Field(default=None, description="KCI 등재 여부. 확인 불가면 null")
+    sci_indexed: Optional[bool] = Field(default=None, description="SCI 계열 등재 여부. 확인 불가면 null")
+    keywords: Optional[list[str]] = Field(default=None, description="한국어 키워드. 없으면 null")
+    trust_badge: Optional[PaperCardTrustBadge] = Field(
+        default=None,
+        description="연관 논문 카드의 KCI/SCI/인용 수/학위 구분 뱃지 정보",
+    )
     distance: float = Field(
         ...,
         description="코사인 거리(0에 가까울수록 유사). 목록은 이 값 오름차순이다.\n\n"

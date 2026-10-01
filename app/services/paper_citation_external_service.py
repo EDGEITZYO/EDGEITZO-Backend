@@ -508,7 +508,7 @@ async def get_external_paper_detail(external_id: str, db: AsyncSession) -> Paper
 # ---------------------------------------------------------------------------
 
 def _related_cache_key(external_id: str) -> str:
-    return f"paper_citation:external_related:v1:{external_id}"
+    return f"paper_citation:external_related:v2:{external_id}"
 
 
 def _select_related(hits: list[tuple[str, float]]) -> list[tuple[str, float]]:
@@ -603,15 +603,26 @@ async def get_related_corpus_papers(
     selected = _select_related(hits)
     items: list[RelatedCorpusPaper] = []
     if selected:
-        meta = await _load_corpus_meta(db, [pid for pid, _ in selected])
+        # 인용 그래프와 같은 카드 생성 규칙을 재사용해 논문 유형과 뱃지 판정이
+        # 화면마다 달라지지 않게 한다.
+        from app.services.paper_citation_service import _build_in_service_cards
+
+        cards = await _build_in_service_cards(db, [pid for pid, _ in selected])
         for paper_id, distance in selected:
-            row = meta.get(paper_id)
+            card = cards.get(paper_id)
             items.append(
                 RelatedCorpusPaper(
                     paper_id=paper_id,
-                    title=row.title if row else None,
-                    journal_name=row.journal_name if row else None,
-                    pub_year=row.pubyear if row else None,
+                    title=card.title if card else None,
+                    authors=card.authors if card else None,
+                    journal_name=card.journal_name if card else None,
+                    pub_year=card.pub_year if card else None,
+                    paper_type=card.paper_type if card else None,
+                    citation_count=card.citation_count if card else None,
+                    kci_registered=card.kci_registered if card else None,
+                    sci_indexed=card.sci_indexed if card else None,
+                    keywords=card.keywords if card else None,
+                    trust_badge=card.trust_badge if card else None,
                     distance=round(float(distance), 4),
                 )
             )
