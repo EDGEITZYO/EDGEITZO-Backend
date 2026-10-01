@@ -384,3 +384,13 @@ class RelatedCorpusPapersResponse(BaseModel):
         description="초록까지 넣어 검색했는지. false면 제목만 쓴 것이다. "
         "실측상 초록 유무에 따른 정확도 차이는 크지 않다(Recall@10 53.3% vs 48.3%)",
     )
+
+
+class PaperAdditionRequestStatus(BaseModel):
+    """현재 사용자의 외부 논문 추가 요청 여부."""
+
+    external_id: str = Field(..., description="요청 대상 외부 논문 id")
+    requested: bool = Field(
+        ...,
+        description="현재 사용자가 이미 추가 요청했는지 여부. true면 요청 완료 버튼을 비활성화한다",
+    )

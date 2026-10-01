@@ -29,18 +29,22 @@ import json
 import logging
 import re
 from typing import Any, Optional
+from uuid import UUID
 
 import httpx
 import xmltodict
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from app.core.redis import get_redis
 from app.core.settings import settings
 from app.models.paper import PaperCitationExternalRef
+from app.models.paper_addition_request import PaperAdditionRequest
 from app.schemas.paper_citation import (
+    PaperAdditionRequestStatus,
     PaperCitationExternalDetail,
     RelatedCorpusPaper,
     RelatedCorpusPapersResponse,
@@ -641,14 +645,57 @@ async def get_related_corpus_papers(
     return response
 
 
-async def _load_corpus_meta(db: AsyncSession, paper_ids: list[str]):
-    """Chroma는 id와 거리만 준다. 화면에 뿌릴 제목·학술지·연도는 Postgres에서 한 번에 읽는다."""
-    from sqlalchemy import text as sa_text
-
-    rows = (
-        await db.execute(
-            sa_text("SELECT id, title, journal_name, pubyear FROM papers WHERE id = ANY(:ids)"),
-            {"ids": paper_ids},
+async def get_addition_request_status(
+    external_id: str,
+    user_id: UUID,
+    db: AsyncSession,
+) -> PaperAdditionRequestStatus:
+    """현재 사용자가 외부 논문의 서비스 편입을 이미 요청했는지 조회한다."""
+    rows = await _load_stored_rows(db, external_id)
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"external paper not found: {external_id}",
         )
-    ).all()
-    return {row.id: row for row in rows}
+
+    request_id = await db.scalar(
+        select(PaperAdditionRequest.id).where(
+            PaperAdditionRequest.user_id == user_id,
+            PaperAdditionRequest.external_id == external_id,
+        )
+    )
+    return PaperAdditionRequestStatus(
+        external_id=external_id,
+        requested=request_id is not None,
+    )
+
+
+async def create_addition_request(
+    external_id: str,
+    user_id: UUID,
+    db: AsyncSession,
+) -> PaperAdditionRequestStatus:
+    """외부 논문 추가 요청을 멱등 저장한다.
+
+    DB 유니크 제약과 ON CONFLICT를 함께 사용해 동시에 여러 번 눌러도 한 건만 남긴다.
+    """
+    rows = await _load_stored_rows(db, external_id)
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"external paper not found: {external_id}",
+        )
+
+    statement = (
+        insert(PaperAdditionRequest)
+        .values(user_id=user_id, external_id=external_id)
+        .on_conflict_do_nothing(
+            index_elements=[
+                PaperAdditionRequest.user_id,
+                PaperAdditionRequest.external_id,
+            ]
+        )
+    )
+    await db.execute(statement)
+    await db.commit()
+    return PaperAdditionRequestStatus(external_id=external_id, requested=True)
