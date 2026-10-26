@@ -18,6 +18,7 @@ from app.schemas.common import ApiErrorResponse, ApiResponse
 from app.schemas.auth import (
     EmailCheckRequest,
     LoginRequest,
+    PasswordResetConfirmRequest,
     ProfileCreateRequest,
     RegisterRequest,
     SendCodeRequest,
@@ -34,8 +35,11 @@ from app.services.auth_service import (
     oauth_callback_service,
     refresh_tokens,
     register_service,
+    reset_password_service,
     send_code_service,
+    send_password_reset_code_service,
     verify_code_service,
+    verify_password_reset_code_service,
 )
 
 _ACCESS_MAX_AGE = 60 * settings.jwt_access_expire_minutes
@@ -138,6 +142,76 @@ async def verify_code(
 ):
     result = await verify_code_service(redis, body.email, body.code)
     return success_response(data=result, message="인증이 완료되었습니다")
+
+
+@router.post(
+    "/password-reset/send-code",
+    summary="비밀번호 재설정 인증번호 발송",
+    description=(
+        "이메일·비밀번호로 가입한 계정에 6자리 인증번호를 발송합니다.\n\n"
+        "- 인증번호는 Redis에 15분간 저장\n"
+        "- 회원가입 인증과 분리된 비밀번호 재설정 전용 키 사용\n"
+        "- 재발송 시 기존 인증번호와 실패 횟수 초기화\n"
+        "- 계정 존재 여부 보호를 위해 미가입·소셜 계정에도 동일한 응답 반환"
+    ),
+    responses={
+        200: {"description": "인증번호 발송 성공"},
+        500: {"description": "이메일 발송 실패"},
+    },
+)
+async def send_password_reset_code(
+    body: SendCodeRequest,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis_client),
+):
+    result = await send_password_reset_code_service(db, redis, body.email)
+    return success_response(data=result, message="인증번호가 발송되었습니다")
+
+
+@router.post(
+    "/password-reset/verify-code",
+    summary="비밀번호 재설정 인증번호 검증",
+    description=(
+        "비밀번호 재설정을 위해 발송된 인증번호를 검증합니다.\n\n"
+        "- 인증번호 불일치 시 400 반환\n"
+        "- 5회 연속 실패 시 인증번호 무효화\n"
+        "- 성공한 인증은 15분간 유효"
+    ),
+    responses={
+        200: {"description": "인증 성공"},
+        400: {"description": "인증번호 불일치 / 만료 / 5회 초과"},
+    },
+)
+async def verify_password_reset_code(
+    body: VerifyCodeRequest,
+    redis: Redis = Depends(get_redis_client),
+):
+    result = await verify_password_reset_code_service(redis, body.email, body.code)
+    return success_response(data=result, message="인증이 완료되었습니다")
+
+
+@router.post(
+    "/password-reset/confirm",
+    summary="새 비밀번호 설정",
+    description=(
+        "비밀번호 재설정 이메일 인증을 완료한 계정의 비밀번호를 변경합니다.\n\n"
+        "- 인증 완료 상태는 15분간 유효하며 한 번만 사용 가능\n"
+        "- 비밀번호 조건: 대/소문자/특수문자 포함, 8~20자\n"
+        "- 비밀번호와 확인값이 일치해야 함"
+    ),
+    responses={
+        200: {"description": "비밀번호 재설정 성공"},
+        400: {"description": "이메일 인증 미완료 또는 재설정 불가 계정"},
+        422: {"description": "비밀번호 조건 미충족 또는 불일치"},
+    },
+)
+async def confirm_password_reset(
+    body: PasswordResetConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis_client),
+):
+    result = await reset_password_service(db, redis, body.email, body.new_password)
+    return success_response(data=result, message="비밀번호가 재설정되었습니다")
 
 
 @router.post(
