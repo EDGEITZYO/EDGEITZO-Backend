@@ -24,29 +24,53 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class RegisterRequest(BaseModel):
-    email: EmailStr
+def _validate_password_strength(value: str) -> str:
+    if (
+        len(value) < 8
+        or len(value) > 20
+        or not re.search(r"[A-Z]", value)
+        or not re.search(r"[a-z]", value)
+        or not re.search(r"[!@#$%^&*()\-_=+\[\]{};:'\",.<>?/\\|`~]", value)
+    ):
+        raise ValueError("대문자, 소문자, 특수문자를 포함해야 합니다")
+    return value
+
+
+class PasswordPairRequest(BaseModel):
     password: str
     confirm_password: str
 
     @field_validator("password")
     @classmethod
     def validate_password(cls, v: str) -> str:
-        if (
-            len(v) < 8
-            or len(v) > 20
-            or not re.search(r"[A-Z]", v)
-            or not re.search(r"[a-z]", v)
-            or not re.search(r"[!@#$%^&*()\-_=+\[\]{};:'\",.<>?/\\|`~]", v)
-        ):
-            raise ValueError("대문자, 소문자, 특수문자를 포함해야 합니다")
-        return v
+        return _validate_password_strength(v)
 
     @model_validator(mode="after")
-    def passwords_match(self) -> "RegisterRequest":
+    def passwords_match(self) -> "PasswordPairRequest":
         pw = getattr(self, "password", None)
         cpw = getattr(self, "confirm_password", None)
         if pw and cpw and pw != cpw:
+            raise ValueError("비밀번호가 일치하지 않습니다")
+        return self
+
+
+class RegisterRequest(PasswordPairRequest):
+    email: EmailStr
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    email: EmailStr
+    new_password: str
+    confirm_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        return _validate_password_strength(v)
+
+    @model_validator(mode="after")
+    def passwords_match(self) -> "PasswordResetConfirmRequest":
+        if self.new_password != self.confirm_password:
             raise ValueError("비밀번호가 일치하지 않습니다")
         return self
 

@@ -31,6 +31,15 @@ from app.repositories.user_repository import (
 
 _CODE_TTL = 900  # 15분
 _MAX_FAIL = 5
+_SIGNUP_PURPOSE = "signup"
+_PASSWORD_RESET_PURPOSE = "password_reset"
+
+
+def _verification_key(kind: str, email: str, purpose: str) -> str:
+    # 기존 회원가입 키는 배포 중 진행 중인 인증과의 호환성을 유지한다.
+    if purpose == _SIGNUP_PURPOSE:
+        return f"{kind}:{email}"
+    return f"{kind}:{purpose}:{email}"
 
 
 async def email_check_service(db: AsyncSession, email: str) -> dict[str, Any]:
@@ -43,28 +52,33 @@ async def email_check_service(db: AsyncSession, email: str) -> dict[str, Any]:
     return {"message": "사용 가능한 이메일입니다"}
 
 
-async def send_code_service(redis: Redis, email: str) -> dict[str, Any]:
+async def send_code_service(
+    redis: Redis, email: str, purpose: str = _SIGNUP_PURPOSE
+) -> dict[str, Any]:
     code = generate_code()
-    redis.setex(f"code:{email}", _CODE_TTL, code)
-    redis.delete(f"code_fail:{email}")
+    redis.setex(_verification_key("code", email, purpose), _CODE_TTL, code)
+    redis.delete(_verification_key("code_fail", email, purpose))
     await send_verification_email(email, code)
     return {"message": "인증번호가 발송되었습니다"}
 
 
-async def verify_code_service(redis: Redis, email: str, code: str) -> dict[str, Any]:
-    stored = redis.get(f"code:{email}")
+async def verify_code_service(
+    redis: Redis, email: str, code: str, purpose: str = _SIGNUP_PURPOSE
+) -> dict[str, Any]:
+    code_key = _verification_key("code", email, purpose)
+    fail_key = _verification_key("code_fail", email, purpose)
+    verify_key = _verification_key("verify", email, purpose)
+    stored = redis.get(code_key)
     if not stored:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="인증번호가 만료되었습니다. 재발송해주세요",
         )
 
-    fail_key = f"code_fail:{email}"
-
     if stored != code:
         fail_count = int(redis.get(fail_key) or 0) + 1
         if fail_count >= _MAX_FAIL:
-            redis.delete(f"code:{email}")
+            redis.delete(code_key)
             redis.delete(fail_key)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -76,10 +90,55 @@ async def verify_code_service(redis: Redis, email: str, code: str) -> dict[str, 
             detail="인증번호가 일치하지 않습니다",
         )
 
-    redis.delete(f"code:{email}")
+    redis.delete(code_key)
     redis.delete(fail_key)
-    redis.setex(f"verify:{email}", _CODE_TTL, "1")
+    redis.setex(verify_key, _CODE_TTL, "1")
     return {"message": "인증이 완료되었습니다"}
+
+
+def _is_email_password_user(user: User | None) -> bool:
+    return bool(user and not user.is_guest and user.hashed_password)
+
+
+async def send_password_reset_code_service(
+    db: AsyncSession, redis: Redis, email: str
+) -> dict[str, Any]:
+    user = await get_user_by_email(db, email)
+    if not _is_email_password_user(user):
+        # 계정 존재 여부와 가입 방식을 외부에 노출하지 않는다.
+        return {"message": "인증번호가 발송되었습니다"}
+    return await send_code_service(redis, email, purpose=_PASSWORD_RESET_PURPOSE)
+
+
+async def verify_password_reset_code_service(
+    redis: Redis, email: str, code: str
+) -> dict[str, Any]:
+    return await verify_code_service(
+        redis, email, code, purpose=_PASSWORD_RESET_PURPOSE
+    )
+
+
+async def reset_password_service(
+    db: AsyncSession, redis: Redis, email: str, new_password: str
+) -> dict[str, Any]:
+    verify_key = _verification_key("verify", email, _PASSWORD_RESET_PURPOSE)
+    if not redis.get(verify_key):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="비밀번호 재설정을 위한 이메일 인증이 필요합니다",
+        )
+
+    user = await get_user_by_email(db, email)
+    if not _is_email_password_user(user):
+        redis.delete(verify_key)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="비밀번호를 재설정할 수 없는 이메일입니다",
+        )
+
+    await update_user(db, user, hashed_password=hash_password(new_password))
+    redis.delete(verify_key)
+    return {"message": "비밀번호가 재설정되었습니다"}
 
 
 async def register_service(
