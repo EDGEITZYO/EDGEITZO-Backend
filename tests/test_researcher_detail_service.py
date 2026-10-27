@@ -231,6 +231,13 @@ class TestFilters:
     def test_연도는_그_해만(self):
         assert [r.external_id for r in service.apply_filters(self.rows, year=2020)] == ["ART1"]
 
+    def test_연도_범위는_양끝_포함(self):
+        got = service.apply_filters(self.rows, year_start=2020, year_end=2021)
+        assert len(got) == 3
+        assert [r.external_id for r in service.apply_filters(self.rows, year_end=2020)] == ["ART1"]
+        # 범위가 오면 예전 단일 연도 파라미터는 무시
+        assert len(service.apply_filters(self.rows, year=2020, year_start=2021)) == 2
+
     def test_논문_유형(self):
         assert len(service.apply_filters(self.rows, paper_type="박사학위 논문")) == 1
         assert len(service.apply_filters(self.rows, paper_type="전체")) == 3

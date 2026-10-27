@@ -10,6 +10,7 @@ from app.services.credibility_service import format_published_at
 from app.schemas.paper import PaperCardResponse, PaperCardTrustBadge
 from app.schemas.search import PaperSearchItem
 from app.services.bookmark_service import get_bookmarked_paper_ids
+from app.services.year_range import resolve_year_range, year_in_range
 
 # 필터값 → 허용 db_code 집합 (1차 pre-filter, degree 정보 없어도 가능)
 _PAPER_TYPE_TO_DB_CODES: dict[str, set[str]] = {
@@ -34,6 +35,8 @@ def apply_filters(
     items: list[PaperSearchItem],
     *,
     year: Optional[int] = None,
+    year_start: Optional[int] = None,
+    year_end: Optional[int] = None,
     paper_type: Optional[str] = None,
     kci: Optional[bool] = None,
     sci: Optional[bool] = None,
@@ -41,9 +44,11 @@ def apply_filters(
     """ChromaDB items 1차 필터. paper_type은 db_code 기준으로만 거름 (degree 미반영).
     degree 기반 세분화("박사학위 논문"/"석사학위 논문")는 build_paper_cards 후
     apply_paper_type_postfilter()로 처리.
+    연도는 year_start~year_end 범위(양 끝 포함). year는 예전 단일 연도 파라미터(그 해만).
     """
-    if year is not None:
-        items = [i for i in items if i.year == year]
+    start, end = resolve_year_range(year, year_start, year_end)
+    if start is not None or end is not None:
+        items = [i for i in items if year_in_range(i.year, start, end)]
 
     if paper_type and paper_type != "전체":
         allowed = _PAPER_TYPE_TO_DB_CODES.get(paper_type)

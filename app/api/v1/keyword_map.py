@@ -173,7 +173,8 @@ async def expand_node_in_place(node_key: str, request: KeywordMapExpandRequest):
 페이지네이션 없이 필터링된 전체 결과를 한 번에 반환합니다.
 
 **필터 파라미터**
-- `year`: 발행 연도 (예: `2020`) — 해당 연도에 발행된 논문만. null이면 전체
+- `year_start` / `year_end`: 발행 연도 범위, 양 끝 포함 (예: `2023`~`2025` → 2023·2024·2025년 논문). 한쪽이 null이면 그쪽은 제한 없음, 둘 다 null이면 전체. 연도 정보가 없는 논문은 범위가 걸리면 제외
+- `year`: (예전 방식) 해당 연도에 발행된 논문만. `year_start`/`year_end`가 하나라도 오면 무시
 - `paper_type`: `'학술 저널'` / `'박사학위 논문'` / `'석사학위 논문'` / null(전체)
 - `kci`: `true`(KCI만) / `false`(비KCI만) / null(전체)
 - `sci`: `true`(SCI 계열만) / null(전체)
@@ -187,7 +188,13 @@ async def expand_node_in_place(node_key: str, request: KeywordMapExpandRequest):
 )
 async def get_keyword_map_node_papers(
     node_key: str,
-    year: Optional[int] = Query(None, description="발행 연도 (예: 2020). null이면 전체"),
+    year_start: Optional[int] = Query(None, description="발행 연도 범위 시작(포함). 예: 2023. null이면 하한 없음"),
+    year_end: Optional[int] = Query(None, description="발행 연도 범위 끝(포함). 예: 2025. null이면 상한 없음"),
+    year: Optional[int] = Query(
+        None,
+        description="(예전 방식) 그 해 논문만. year_start/year_end가 하나라도 오면 무시됨",
+        deprecated=True,
+    ),
     paper_type: Optional[str] = Query(None, description="'학술 저널'|'박사학위 논문'|'석사학위 논문'"),
     kci: Optional[bool] = Query(None, description="KCI 등재 여부"),
     sci: Optional[bool] = Query(None, description="SCI 등재 여부"),
@@ -211,6 +218,8 @@ async def get_keyword_map_node_papers(
         keyword=display_keyword,
         keyword_en=display_keyword_en or "",
         year=year,
+        year_start=year_start,
+        year_end=year_end,
         paper_type=paper_type,
         kci=kci,
         sci=sci,

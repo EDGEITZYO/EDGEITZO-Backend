@@ -478,6 +478,8 @@ async def get_node_papers(
     keyword: str,
     keyword_en: str = "",
     year: Optional[int] = None,
+    year_start: Optional[int] = None,
+    year_end: Optional[int] = None,
     paper_type: Optional[str] = None,
     kci: Optional[bool] = None,
     sci: Optional[bool] = None,
@@ -504,7 +506,10 @@ async def get_node_papers(
         query = f"{keyword} {keyword_en}".strip()
         items = await service.search(query=query)
 
-    items = apply_filters(items, year=year, paper_type=paper_type, kci=kci, sci=sci)
+    items = apply_filters(
+        items, year=year, year_start=year_start, year_end=year_end,
+        paper_type=paper_type, kci=kci, sci=sci,
+    )
     items = apply_sort(items, sort)
 
     all_cards = await build_paper_cards(items, db, user_id=bookmark_user_id or user_id)
