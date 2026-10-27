@@ -145,6 +145,7 @@ def _apply_sort_order(items: list[PaperSearchItem], sort_order: str) -> list[Pap
 async def _search_chroma_local(
     query: str,
     pub_year_start: int | None = None,
+    pub_year_end: int | None = None,
     scope: str | None = None,
     paper_type: str | None = None,
 ) -> list[PaperSearchItem]:
@@ -152,7 +153,8 @@ async def _search_chroma_local(
         service = get_chroma_search_service()
         return await service.search(
             query=query,
-            pub_year=pub_year_start,
+            pub_year_start=pub_year_start,
+            pub_year_end=pub_year_end,
             scope=scope,
             paper_type=paper_type,
         )
@@ -167,9 +169,11 @@ async def search_papers_service(
 ) -> SearchPapersResponse:
     query_text = " ".join([request.query, *request.keywords]) if request.keywords else request.query
 
+    year_start, year_end = request.year_range()
     items = await _search_chroma_local(
         query=query_text,
-        pub_year_start=request.pub_year_start,
+        pub_year_start=year_start,
+        pub_year_end=year_end,
         paper_type=request.paper_type,
     )
 

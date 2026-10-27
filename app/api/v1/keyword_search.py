@@ -33,7 +33,13 @@ class KeywordPaperRequest(BaseModel):
     sort: Literal["relevance", "latest", "oldest", "citation"] = Field(
         "relevance", description="정렬 기준. 'relevance': 관련도순(기본값), 'latest': 최신순, 'oldest': 오래된순, 'citation': 인용수 내림차순"
     )
-    year: Optional[int] = Field(None, description="발행 연도 필터 (예: 2020). null이면 전체")
+    year_start: Optional[int] = Field(None, description="발행 연도 범위 시작(포함). 예: 2023. null이면 하한 없음")
+    year_end: Optional[int] = Field(None, description="발행 연도 범위 끝(포함). 예: 2025. null이면 상한 없음")
+    year: Optional[int] = Field(
+        None,
+        description="(예전 방식) 그 해 논문만. year_start/year_end가 하나라도 오면 무시됨",
+        deprecated=True,
+    )
     paper_type: Optional[str] = Field(None, description="논문 유형 필터. '학술 저널' | '박사학위 논문' | '석사학위 논문' | null(전체)")
     kci: Optional[bool] = Field(None, description="KCI 등재 필터. true(KCI만) / false(비KCI만) / null(전체)")
     sci: Optional[bool] = Field(None, description="SCI 계열 필터. true(SCI만) / null(전체)")
@@ -92,7 +98,8 @@ async def get_last_anchor(user_id: str, db: AsyncSession = Depends(get_db)):
 페이지네이션 없이 필터링된 전체 결과를 한 번에 반환합니다.
 
 **필터 파라미터**
-- `year`: 발행 연도 (예: `2020`) — 해당 연도에 발행된 논문만. null이면 전체
+- `year_start` / `year_end`: 발행 연도 범위, 양 끝 포함 (예: `2023`~`2025` → 2023·2024·2025년 논문). 한쪽이 null이면 그쪽은 제한 없음, 둘 다 null이면 전체. 연도 정보가 없는 논문은 범위가 걸리면 제외
+- `year`: (예전 방식) 해당 연도에 발행된 논문만. `year_start`/`year_end`가 하나라도 오면 무시
 - `paper_type`: `'학술 저널'` / `'박사학위 논문'` / `'석사학위 논문'` / null(전체)
 - `kci`: `true`(KCI만) / `false`(비KCI만) / null(전체)
 - `sci`: `true`(SCI 계열만) / null(전체)
@@ -111,6 +118,8 @@ async def search_papers_by_keyword(
         keyword=request.keyword,
         keyword_en=request.keyword_en,
         year=request.year,
+        year_start=request.year_start,
+        year_end=request.year_end,
         paper_type=request.paper_type,
         kci=request.kci,
         sci=request.sci,

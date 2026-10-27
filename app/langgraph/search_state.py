@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional
 
 from typing_extensions import TypedDict
 
+from app.services.year_range import resolve_year_range
+
 
 class KeywordCandidate(TypedDict):
     """node_keyword_extractor 내부 처리 전용 — SearchState(세션 영속)에는 저장 안 함."""
@@ -14,9 +16,11 @@ class KeywordCandidate(TypedDict):
 
 class FilterState(TypedDict):
     """연도/논문유형/인용수/KCI/SCI 5축 고정 + 누적 키워드"""
-    # 발행 연도 — 정확히 그 해만 매칭(범위 아님). 경로(LLM/칩/드롭다운)와 무관하게 의미가 하나다.
-    # 와이어 필드명은 프런트 호환 때문에 유지 중이나 "start"는 더 이상 범위를 뜻하지 않는다.
+    # 발행 연도 범위 — 양 끝 포함, 한쪽이 None이면 그쪽은 열림. 한 해만이면 양 끝이 같다.
+    # 경로(LLM/칩/슬라이더)와 무관하게 의미가 하나이고, 두 값은 항상 한 묶음으로 바뀐다
+    # (_apply_filter_update 참고).
     pub_year_start: Optional[int]
+    pub_year_end: Optional[int]
     paper_type: Optional[str]  # "학술 저널" | "박사학위 논문" | "석사학위 논문" (사용자 노출 레이블)
     citation_min: Optional[int]
     kci_only: Optional[bool]  # true면 KCI 등재만
@@ -99,6 +103,7 @@ class SearchState(TypedDict):
 def empty_filters() -> FilterState:
     return FilterState(
         pub_year_start=None,
+        pub_year_end=None,
         paper_type=None,
         citation_min=None,
         kci_only=None,
@@ -107,10 +112,24 @@ def empty_filters() -> FilterState:
     )
 
 
+YEAR_FIELDS = ("pub_year_start", "pub_year_end")
+
+
+def _touches_year(updates: Dict[str, Any]) -> bool:
+    return any(updates.get(f) is not None for f in YEAR_FIELDS)
+
+
 def _apply_filter_update(filters: FilterState, updates: Dict[str, Any]) -> FilterState:
-    """pub_year_start/paper_type/citation_min/kci_only/sci_only 중 None이 아닌 값만 반영한 새 filters 반환."""
+    """paper_type/citation_min/kci_only/sci_only는 None이 아닌 값만 반영한 새 filters 반환.
+
+    연도 범위는 양 끝을 한 묶음으로 바꾼다 — 한쪽이라도 값이 오면 다른 쪽 None은 '열림'이다.
+    필드별로 반영하면 "2022년 것만"(2022~2022) 다음에 "2020년 이후"(2020~None)를 말했을 때
+    끝이 2022로 남아 2020~2022로 잘린다."""
     new_filters = dict(filters)
-    for key in ("pub_year_start", "paper_type", "citation_min", "kci_only", "sci_only"):
+    if _touches_year(updates):
+        start, end = resolve_year_range(start=updates.get("pub_year_start"), end=updates.get("pub_year_end"))
+        new_filters["pub_year_start"], new_filters["pub_year_end"] = start, end
+    for key in ("paper_type", "citation_min", "kci_only", "sci_only"):
         if updates.get(key) is not None:
             new_filters[key] = updates[key]
     return FilterState(**new_filters)
@@ -121,8 +140,9 @@ def _release_panel_ownership(panel_owned: List[str], updates: Dict[str, Any]) ->
 
     패널이 연도를 걸어둔 상태에서 사용자가 채팅으로 다른 연도를 말하면, 그 필드의 주인은
     채팅으로 넘어간다. 그래야 이후 패널이 보내는 null이 채팅이 방금 건 값을 지우지 않는다.
-    _apply_filter_update와 항상 같이 호출할 것."""
-    return [f for f in panel_owned if updates.get(f) is None]
+    연도는 양 끝이 한 묶음이라 같이 뗀다. _apply_filter_update와 항상 같이 호출할 것."""
+    released = set(YEAR_FIELDS) if _touches_year(updates) else set()
+    return [f for f in panel_owned if f not in released and updates.get(f) is None]
 
 
 def _apply_keyword_addition(filters: FilterState, keyword: str) -> FilterState:

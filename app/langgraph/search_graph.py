@@ -120,7 +120,13 @@ async def node_keyword_extractor(state: SearchState) -> SearchState:
 
 [필터 조건 추출]
 입력에 아래 조건이 명시적으로 언급된 경우에만 채운다 (언급 안 된 필드는 null, 임의 추정 금지):
-- pub_year_start: 정수 연도. **사용자가 특정 연도 한 해를 지목했을 때만** 채운다 (예: "2022년 논문" → 2022). 연도 필터는 그 해만 매칭하는 단일 연도 선택이고 범위 검색이 없으므로, "최근 3년"/"2020년 이후"처럼 기간을 뜻하는 표현은 표현할 방법이 없다 — 이런 경우는 null로 두고 임의의 한 해로 좁히지 말 것(사용자가 요청하지 않은 연도로 결과가 잘린다).
+- pub_year_start / pub_year_end: 발행 연도 범위(양 끝 포함, 정수). 연도·기간이 언급됐을 때만 채우고, 열린 쪽은 null.
+  - 한 해 지목: "2022년 논문" → start 2022, end 2022
+  - 기간: "2018~2020년" → start 2018, end 2020
+  - 이후/부터: "2020년 이후", "2020년부터" → start 2020, end null
+  - 까지: "2020년까지" → start null, end 2020
+  - 최근 N년: 오늘 날짜의 연도 Y 기준 start Y-(N-1), end null (예: 오늘이 2026년이면 "최근 3년" → start 2024)
+  - "최근 논문"처럼 숫자 없이 모호하면 둘 다 null (임의 추정 금지)
 - paper_type: "학술 저널"(국내외 학술지·학술대회 포함) | "박사학위 논문" | "석사학위 논문" 중 하나, 언급 없으면 null
 - citation_min: 정수. "인용 많은"처럼 모호하면 null (숫자 임의 추정 금지)
 - kci_only: "KCI 등재 논문만" 같은 언급이 있으면 true, 언급 없으면 null
@@ -132,7 +138,7 @@ JSON만 반환:
     {{"ko": "키워드1", "en": "Keyword1", "desc": "설명"}},
     {{"ko": "키워드2", "en": "Keyword2", "desc": "설명"}}
   ],
-  "filter": {{"pub_year_start": null, "paper_type": null, "citation_min": null, "kci_only": null, "sci_only": null}}
+  "filter": {{"pub_year_start": null, "pub_year_end": null, "paper_type": null, "citation_min": null, "kci_only": null, "sci_only": null}}
 }}"""
 
     result = await _llm_json(_KEYWORD_SYSTEM, prompt)
@@ -166,7 +172,13 @@ async def node_free_input_classifier(state: SearchState) -> SearchState:
 - "주제변경": 완전히 다른 주제로 바꾸려는 요청
 
 [intent="좁히기"일 때] params.filter에 아래 중 해당하는 필드만 채운다 (언급 안 된 필드는 null):
-- pub_year_start: 정수 연도. **사용자가 특정 연도 한 해를 지목했을 때만** 채운다 (예: "2022년 논문" → 2022). 연도 필터는 그 해만 매칭하는 단일 연도 선택이고 범위 검색이 없으므로, "최근 3년"/"2020년 이후"처럼 기간을 뜻하는 표현은 표현할 방법이 없다 — 이런 경우는 null로 두고 임의의 한 해로 좁히지 말 것(사용자가 요청하지 않은 연도로 결과가 잘린다).
+- pub_year_start / pub_year_end: 발행 연도 범위(양 끝 포함, 정수). 연도·기간이 언급됐을 때만 채우고, 열린 쪽은 null.
+  - 한 해 지목: "2022년 논문" → start 2022, end 2022
+  - 기간: "2018~2020년" → start 2018, end 2020
+  - 이후/부터: "2020년 이후", "2020년부터" → start 2020, end null
+  - 까지: "2020년까지" → start null, end 2020
+  - 최근 N년: 오늘 날짜의 연도 Y 기준 start Y-(N-1), end null (예: 오늘이 2026년이면 "최근 3년" → start 2024)
+  - "최근 논문"처럼 숫자 없이 모호하면 둘 다 null (임의 추정 금지)
 - paper_type: "학술 저널"(국내외 학술지·학술대회 포함) | "박사학위 논문" | "석사학위 논문" 중 하나, 언급 없으면 null
 - citation_min: 정수. "인용 많은"처럼 모호하면 null (숫자 임의 추정 금지)
 - kci_only: "KCI 등재 논문만" 같은 언급이 있으면 true, 언급 없으면 null
@@ -186,7 +198,7 @@ JSON만 반환:
 {{
   "intent": "좁히기" | "확장" | "무관" | "주제변경",
   "params": {{
-    "filter": {{"pub_year_start": null, "paper_type": null, "citation_min": null, "kci_only": null, "sci_only": null}},
+    "filter": {{"pub_year_start": null, "pub_year_end": null, "paper_type": null, "citation_min": null, "kci_only": null, "sci_only": null}},
     "keywords": [{{"ko": "...", "en": "...", "desc": "..."}}]
   }}
 }}"""
@@ -288,10 +300,9 @@ def _build_narrow_chips(
     threshold = settings.chip_evenness_threshold
     candidates: list[tuple[float, NarrowChip]] = []
 
-    # 연도 필터는 "그 해만" 매칭하는 단일 연도 선택이라, 분위수 구간의 하한값을 집어
-    # "OOOO년 이후"로 제안하면 칩 라벨과 실제 동작이 어긋난다(구간을 뜻하는 값인데 한 해로 걸림).
-    # 논문유형 칩과 같은 방식으로 결과에서 가장 많은 연도를 제안한다 — 눌렀을 때 몇 건이
-    # 남는지가 라벨만 보고도 예측 가능해진다.
+    # 결과에서 가장 많은 연도 한 해(범위의 양 끝이 같은 값)를 제안한다 — 논문유형 칩과 같은
+    # 방식이라 눌렀을 때 몇 건이 남는지가 라벨만 보고도 예측 가능하다. 칩 값은 현재 결과에서
+    # 뽑으므로 이미 걸린 범위 안에 있고, 누르면 그 범위를 이 한 해로 좁힌다.
     years = [it["year"] for it in result_items if it.get("year") is not None]
     if years:
         year_counts = Counter(years)
@@ -300,7 +311,7 @@ def _build_narrow_chips(
             year_value = int(year_counts.most_common(1)[0][0])
             candidates.append((score, NarrowChip(
                 chip_id="narrow_year", chip_type="year", label=f"{year_value}년 논문만 보기",
-                value={"pub_year_start": year_value},
+                value={"pub_year_start": year_value, "pub_year_end": year_value},
             )))
 
     citations = [v for v in citation_lookup.values() if v is not None]
@@ -558,7 +569,8 @@ async def node_response_builder(state: SearchState) -> SearchState:
     with _stage("chroma_search", timings):
         items = await svc.search(
             query=" ".join(filters.get("keywords") or []),
-            pub_year=filters.get("pub_year_start"),
+            pub_year_start=filters.get("pub_year_start"),
+            pub_year_end=filters.get("pub_year_end"),
             paper_type=chroma_paper_type,
         )
 

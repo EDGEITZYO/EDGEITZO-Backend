@@ -2,11 +2,21 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.services.year_range import resolve_year_range
+
 
 class SearchPapersRequest(BaseModel):
     query: str = Field(..., min_length=1, description="사용자 검색어")
     pub_year_start: Optional[int] = Field(
-        None, description="발행 연도. **정확히 그 해만** 포함한다 (2022 → 2022년 논문만, 범위 아님). 미설정 시 전체 연도"
+        None,
+        description=(
+            "발행 연도 범위 시작(포함). pub_year_end와 함께 2023~2025 → 2023·2024·2025년 논문. "
+            "null이면 하한 없음. **pub_year_end 필드를 아예 안 보내면 예전 방식대로 이 연도 한 해만** 포함한다"
+        ),
+    )
+    pub_year_end: Optional[int] = Field(
+        None,
+        description="발행 연도 범위 끝(포함). null이면 상한 없음. 범위로 쓰려면 null이어도 필드를 포함해서 보낼 것",
     )
     paper_type: Optional[Literal["JAKO", "DIKO", "JAFO", "CFKO"]] = Field(
         None,
@@ -27,6 +37,12 @@ class SearchPapersRequest(BaseModel):
         default="relevance",
         description="정렬 기준. 'relevance': 관련도순(기본값) / 'year_desc': 최신순 / 'year_asc': 오래된순 / 'citation_desc': 인용수 높은순",
     )
+
+    def year_range(self) -> tuple[Optional[int], Optional[int]]:
+        """pub_year_end 필드가 없으면 예전 클라이언트 — pub_year_start 한 해만."""
+        if "pub_year_end" not in self.model_fields_set:
+            return resolve_year_range(year=self.pub_year_start)
+        return resolve_year_range(start=self.pub_year_start, end=self.pub_year_end)
 
 
 class PaperAuthor(BaseModel):

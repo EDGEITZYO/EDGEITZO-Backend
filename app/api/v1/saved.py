@@ -36,6 +36,7 @@ from app.services.credibility_service import (
     resolve_paper_type,
     format_published_at,
 )
+from app.services.year_range import resolve_year_range
 
 router = APIRouter(prefix="/saved", tags=["Saved"])
 
@@ -136,7 +137,9 @@ class BookmarkListResponse(BaseModel):
         "사용자가 북마크한 논문 목록을 반환합니다.\n\n"
         "**필터 파라미터**\n"
         "- `folder_id`: 폴더 UUID (미지정 시 전체)\n"
-        "- `year`: 발행 연도 (예: `2026`|`2025`|`2024` 등 정수값, 미지정 시 전체)\n"
+        "- `year_start` / `year_end`: 발행 연도 범위, 양 끝 포함 (예: `2023`~`2025` → 2023·2024·2025년). "
+        "한쪽이 없으면 그쪽은 제한 없음, 둘 다 없으면 전체\n"
+        "- `year`: (예전 방식) 그 해 논문만. `year_start`/`year_end`가 하나라도 오면 무시\n"
         "- `type`: `학술 저널`|`박사학위 논문`|`석사학위 논문` — 논문 유형\n"
         "- `kci`: `true`|`false` — KCI 등재 여부\n"
         "- `sci`: `true`|`false` — SCI 등재 여부\n\n"
@@ -149,7 +152,13 @@ async def get_saved_bookmarks(
     folder_id: Optional[UUID] = Query(default=None),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
-    year: Optional[int] = Query(default=None, description="발행 연도 (예: 2026, 2025, 2024 ...)"),
+    year_start: Optional[int] = Query(default=None, description="발행 연도 범위 시작(포함). 예: 2023"),
+    year_end: Optional[int] = Query(default=None, description="발행 연도 범위 끝(포함). 예: 2025"),
+    year: Optional[int] = Query(
+        default=None,
+        description="(예전 방식) 그 해 논문만. year_start/year_end가 하나라도 오면 무시됨",
+        deprecated=True,
+    ),
     type: Optional[str] = Query(default=None, description="학술 저널|박사학위 논문|석사학위 논문"),
     kci: Optional[bool] = Query(default=None),
     sci: Optional[bool] = Query(default=None),
@@ -170,8 +179,11 @@ async def get_saved_bookmarks(
         where.append(Paper.db_code == "DIKO")
         where.append(Paper.degree.contains("석사"))
 
-    if year is not None:
-        where.append(Paper.pubyear == year)
+    year_start, year_end = resolve_year_range(year, year_start, year_end)
+    if year_start is not None:
+        where.append(Paper.pubyear >= year_start)
+    if year_end is not None:
+        where.append(Paper.pubyear <= year_end)
 
     if kci is not None:
         where.append(Journal.id.is_not(None))

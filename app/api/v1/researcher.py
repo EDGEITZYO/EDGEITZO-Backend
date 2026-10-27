@@ -194,7 +194,7 @@ async def get_researcher_profile(
         "is_internal이 false면 papers에 행이 없어 초록도 없습니다\n"
         "- 항목 모양은 기존 논문 카드(`PaperCardResponse` — 키워드 검색·키워드맵 논문 목록)와 같은 필드명·의미이고 "
         "`trust_badge`도 같은 구조입니다. `paper_id`는 상세·북마크에 바로 넣을 수 있는 ID입니다\n"
-        "- 필터 `year`·`paper_type`·`kci`·`sci`는 키워드맵 논문 목록과 같은 이름·의미입니다. `total`은 필터 적용 후 건수입니다\n"
+        "- 필터 `year_start`·`year_end`(발행 연도 범위, 양 끝 포함)·`paper_type`·`kci`·`sci`는 키워드맵 논문 목록과 같은 이름·의미입니다. `year`(그 해만)는 예전 방식으로, 범위 값이 오면 무시됩니다. `total`은 필터 적용 후 건수입니다\n"
         "- `citation_count`: 0이면 0, 값이 없을 때만 null(기존 논문 리스트와 같은 규칙)\n"
         "- `sci_indexed`: null은 학술지 매칭 실패(5.0%), false는 비SCI 확정. is_internal과 무관하게 채워집니다\n"
         "- 논문이 없으면 `items: []`, `total: 0`\n\n"
@@ -208,7 +208,13 @@ async def get_researcher_papers(
     page: int = Query(1, ge=1),
     size: int = Query(6, ge=1, le=100, description="한 번에 반환할 논문 수"),
     coauthor_id: Optional[str] = Query(None, description="이 연구자와 공동 작성한 논문만 필터링"),
-    year: Optional[int] = Query(None, description="발행 연도. 그 해 논문만. null이면 전체"),
+    year_start: Optional[int] = Query(None, description="발행 연도 범위 시작(포함). 예: 2023. null이면 하한 없음"),
+    year_end: Optional[int] = Query(None, description="발행 연도 범위 끝(포함). 예: 2025. null이면 상한 없음"),
+    year: Optional[int] = Query(
+        None,
+        description="(예전 방식) 그 해 논문만. year_start/year_end가 하나라도 오면 무시됨",
+        deprecated=True,
+    ),
     paper_type: Optional[str] = Query(None, description="'학술 저널'|'박사학위 논문'|'석사학위 논문'. null·'전체'면 필터 없음"),
     kci: Optional[bool] = Query(None, description="true면 KCI 등재 논문만, false면 비등재만. null이면 전체"),
     sci: Optional[bool] = Query(None, description="true면 SCI 계열 논문만, false면 그 외만. null이면 전체"),
@@ -228,6 +234,8 @@ async def get_researcher_papers(
         ),
         user_id=current_user.id if current_user else None,
         year=year,
+        year_start=year_start,
+        year_end=year_end,
         paper_type=paper_type,
         kci=kci,
         sci=sci,
@@ -256,7 +264,13 @@ async def get_researcher_papers_by_year(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100, description="한 번에 반환할 논문 수. 연도 그룹으로 묶이므로 기본값이 더 큽니다"),
     coauthor_id: Optional[str] = Query(None, description="이 연구자와 공동 작성한 논문만 필터링"),
-    year: Optional[int] = Query(None, description="발행 연도. 그 해 논문만. null이면 전체"),
+    year_start: Optional[int] = Query(None, description="발행 연도 범위 시작(포함). 예: 2023. null이면 하한 없음"),
+    year_end: Optional[int] = Query(None, description="발행 연도 범위 끝(포함). 예: 2025. null이면 상한 없음"),
+    year: Optional[int] = Query(
+        None,
+        description="(예전 방식) 그 해 논문만. year_start/year_end가 하나라도 오면 무시됨",
+        deprecated=True,
+    ),
     paper_type: Optional[str] = Query(None, description="'학술 저널'|'박사학위 논문'|'석사학위 논문'. null·'전체'면 필터 없음"),
     kci: Optional[bool] = Query(None, description="true면 KCI 등재 논문만, false면 비등재만. null이면 전체"),
     sci: Optional[bool] = Query(None, description="true면 SCI 계열 논문만, false면 그 외만. null이면 전체"),
@@ -275,6 +289,8 @@ async def get_researcher_papers_by_year(
         ),
         user_id=current_user.id if current_user else None,
         year=year,
+        year_start=year_start,
+        year_end=year_end,
         paper_type=paper_type,
         kci=kci,
         sci=sci,
