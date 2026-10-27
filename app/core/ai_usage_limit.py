@@ -7,6 +7,7 @@
 실측 비용(선정 사유 1회 생성 기준): 새 채팅 약 $0.043, 확장 턴 약 $0.045, 좁히기 턴 $0.002~0.02.
 
 사용자 구분: 로그인(회원·게스트) 토큰의 user_id, 토큰이 없으면 IP.
+settings.ai_usage_unlimited_emails에 지정한 회원은 한도를 적용하지 않는다(팀 테스트 계정).
 카운트는 요청을 받는 순간 올리고, 검색이 실패하면 돌려준다(release) — 실패한 요청으로 횟수가
 깎이지 않게. Redis 장애 시에는 통과시킨다(기존 rate limit과 같은 정책, 최종 방어선은 LLM 예산 가드).
 """
@@ -22,6 +23,7 @@ from app.core.exceptions import AppHTTPException
 from app.core.rate_limit import get_client_ip
 from app.core.redis import get_redis
 from app.core.settings import settings
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,14 @@ class AiUsage:
     remaining_new_chats: Optional[int] = None
     remaining_turns: Optional[int] = None
     _consumed: list[str] = field(default_factory=list)
+
+
+def is_ai_usage_unlimited(user: Optional[User]) -> bool:
+    """settings.ai_usage_unlimited_emails에 든 회원이면 한도를 건너뛴다(대소문자 무시)."""
+    if user is None or user.is_guest or not user.email:
+        return False
+    emails = {e.strip().lower() for e in settings.ai_usage_unlimited_emails.split(",") if e.strip()}
+    return user.email.lower() in emails
 
 
 def usage_subject(request: Request, user_id: Optional[str]) -> str:

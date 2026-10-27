@@ -15,7 +15,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.ai_usage_limit import AiUsage, consume_ai_usage, release_ai_usage, usage_subject
+from app.core.ai_usage_limit import (
+    AiUsage,
+    consume_ai_usage,
+    is_ai_usage_unlimited,
+    release_ai_usage,
+    usage_subject,
+)
 from app.core.database import AsyncSessionLocal, get_db
 from app.core.rate_limit import limit_llm_calls
 from app.core.deps import get_current_user_optional
@@ -601,6 +607,8 @@ def _consume_chat_usage(
         kind = "turn"
     else:
         kind = "free"
+    if is_ai_usage_unlimited(current_user):
+        return session_id, existing, AiUsage()
     subject = usage_subject(http_request, str(current_user.id) if current_user else None)
     return session_id, existing, consume_ai_usage(subject, session_id, kind)
 
