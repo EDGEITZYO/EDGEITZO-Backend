@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     ai_new_chat_limit: int = 2
     ai_turns_per_chat_limit: int = 3
     ai_usage_window_seconds: int = 86400 * 90
+    # 위 한도를 적용하지 않을 회원 이메일(쉼표 구분) — 팀 테스트 계정용. 게스트는 넣어도 적용되지 않는다.
+    ai_usage_unlimited_emails: str = ""
     anon_llm_rate_limit_per_ip: int = 60
     llm_rate_window_seconds: int = 3600
     # X-Forwarded-For에서 오른쪽부터 몇 번째 값을 클라이언트 IP로 볼지 = 앞단 신뢰 프록시 수.

@@ -46,19 +46,19 @@ _RRF_K = 60  # RRF 상수 — 값이 클수록 하위 랭크 페널티 완화
 
 
 def _build_where_clause(
-    pub_year: Optional[int] = None,
+    pub_year_start: Optional[int] = None,
+    pub_year_end: Optional[int] = None,
     paper_type: Optional[str] = None,
 ) -> Optional[dict]:
     """Chroma where절 조립 — 연도/논문유형 필터.
 
     paper_type은 현재 $eq(단일값)만 지원. 다중 유형 배제 조건(예: 학위논문 제외)이 필요해지면 $in으로 확장 예정 — 지금은 미구현 (4단계 칩 생성 로직에서 실제 필요 여부 확인 후 확장).
 
-    연도는 **정확히 그 해만** 매칭한다(범위 없음). 예전에는 경로에 따라 "그 해만"($eq)과
-    "그 해 이상"($gte)이 갈렸고, 어느 쪽인지를 pub_year_exact 플래그 하나로 구분했다.
-    그런데 _apply_filter_update가 연도를 쓸 때마다 이 플래그를 False로 되돌려서,
-    드롭다운으로 2022를 골라도 같은 턴에 LLM이 연도를 다시 추출하면 $eq가 $gte로 뒤집혔다
-    — 2022를 골랐는데 2025가 섞여 나오고, LLM이 연도를 못 뽑은 턴에는 멀쩡한
-    "됐다 안 됐다"의 원인. 의미가 하나뿐이면 뒤집힐 것도 없으므로 플래그째 제거했다.
+    연도는 pub_year_start~pub_year_end 범위(양 끝 포함, 한쪽이 None이면 그쪽은 열림)로
+    매칭한다. 한 해만 원하면 양 끝을 같은 값으로 준다. 예전에는 값 하나(pub_year)에
+    "그 해만"($eq)과 "그 해 이상"($gte) 두 의미를 pub_year_exact 플래그로 얹었다가
+    플래그가 뒤집혀 2022를 골랐는데 2025가 섞이는 사고가 났다 — 지금은 양 끝을 각각
+    값으로 들고 다녀서 의미가 하나뿐이다.
 
     인용수(citation_min)는 여기서 다루지 않는다 — Chroma 메타데이터의 citation_count는
     1,000건 중 628건에만 키가 있고(나머지 372건은 PostgreSQL 기준 전부 0), $gte는 키가 없는
@@ -70,8 +70,10 @@ def _build_where_clause(
     스냅샷에 넣으면 갱신할 때마다 재적재가 필요해지는 것도 이유.
     """
     conditions = []
-    if pub_year:
-        conditions.append({"Pubyear": {"$eq": pub_year}})
+    if pub_year_start is not None:
+        conditions.append({"Pubyear": {"$gte": pub_year_start}})
+    if pub_year_end is not None:
+        conditions.append({"Pubyear": {"$lte": pub_year_end}})
     if paper_type:
         conditions.append({"DBCode": {"$eq": paper_type}})
     if not conditions:
@@ -304,7 +306,8 @@ class ChromaSearchService:
         self,
         query: str,
         n_results: Optional[int] = None,
-        pub_year: Optional[int] = None,
+        pub_year_start: Optional[int] = None,
+        pub_year_end: Optional[int] = None,
         scope: Optional[str] = None,
         paper_type: Optional[str] = None,
     ) -> list[PaperSearchItem]:
@@ -330,7 +333,7 @@ class ChromaSearchService:
 
         combined = _rrf_combine(semantic_results, bm25_results)
 
-        where_clause = _build_where_clause(pub_year, paper_type)
+        where_clause = _build_where_clause(pub_year_start, pub_year_end, paper_type)
         # BM25는 ChromaDB where절 대상이 아니라서, 어차피 동일 필터 기준 ID 집합을 따로 조회해야 한다.
         filtered_ids = (
             set(self._collection.get(where=where_clause, include=[])["ids"])
@@ -391,12 +394,13 @@ class ChromaSearchService:
         self,
         query: str,
         n_results: Optional[int] = None,
-        pub_year: Optional[int] = None,
+        pub_year_start: Optional[int] = None,
+        pub_year_end: Optional[int] = None,
         scope: Optional[str] = None,
         paper_type: Optional[str] = None,
     ) -> list[PaperSearchItem]:
         return await asyncio.to_thread(
-            self._sync_search, query, n_results, pub_year, scope, paper_type
+            self._sync_search, query, n_results, pub_year_start, pub_year_end, scope, paper_type
         )
 
     def _sync_get_by_ids(self, ids: list[str]) -> list[PaperSearchItem]:

@@ -122,6 +122,17 @@ def test_redis_outage_lets_request_through(monkeypatch):
     assert usage.remaining_new_chats is None
 
 
+def test_unlimited_emails_only_for_listed_members(monkeypatch):
+    from app.models.user import User
+
+    monkeypatch.setattr(settings, "ai_usage_unlimited_emails", " Biome@Email.com , b@x.com")
+    assert lim.is_ai_usage_unlimited(User(email="biome@email.com", is_guest=False))
+    assert lim.is_ai_usage_unlimited(User(email="B@X.COM", is_guest=False))
+    assert not lim.is_ai_usage_unlimited(User(email="other@x.com", is_guest=False))
+    assert not lim.is_ai_usage_unlimited(User(email="biome@email.com", is_guest=True))
+    assert not lim.is_ai_usage_unlimited(None)
+
+
 # ---------------------------------------------------------------------------
 # 충전 예산: 리셋 없이 충전액 기준으로 막는다
 # ---------------------------------------------------------------------------

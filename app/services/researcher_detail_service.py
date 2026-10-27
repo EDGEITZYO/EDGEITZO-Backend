@@ -29,6 +29,7 @@ from app.schemas.researcher_detail import (
 from app.schemas.paper import PaperCardTrustBadge
 from app.services.credibility_service import paper_type_label, resolve_paper_type
 from app.services.domestic_paper_service import is_domestic_key
+from app.services.year_range import resolve_year_range, year_in_range
 
 logger = logging.getLogger(__name__)
 
@@ -275,14 +276,18 @@ def apply_filters(
     rows: list[Any],
     *,
     year: Optional[int] = None,
+    year_start: Optional[int] = None,
+    year_end: Optional[int] = None,
     paper_type: Optional[str] = None,
     kci: Optional[bool] = None,
     sci: Optional[bool] = None,
 ) -> list[Any]:
     """논문 리스트 필터. 키워드맵 논문 목록(paper_filter_service.apply_filters)과 같은 이름·의미다.
-    year는 그 해만, paper_type '전체'·null은 필터 없음, kci/sci는 true·false일 때만 거른다."""
-    if year is not None:
-        rows = [r for r in rows if r.pubyear == year]
+    연도는 year_start~year_end 범위(양 끝 포함, year는 예전 단일 연도), paper_type '전체'·null은
+    필터 없음, kci/sci는 true·false일 때만 거른다."""
+    start, end = resolve_year_range(year, year_start, year_end)
+    if start is not None or end is not None:
+        rows = [r for r in rows if year_in_range(r.pubyear, start, end)]
     if paper_type and paper_type != "전체":
         rows = [r for r in rows if _paper_type(r) == paper_type]
     if kci is not None:
@@ -385,12 +390,17 @@ async def get_papers(
     coauthor_id: Optional[str] = None,
     user_id: Optional[UUID] = None,
     year: Optional[int] = None,
+    year_start: Optional[int] = None,
+    year_end: Optional[int] = None,
     paper_type: Optional[str] = None,
     kci: Optional[bool] = None,
     sci: Optional[bool] = None,
 ) -> ResearcherPaperListResponse:
     rows = await fetch_paper_rows(db, researcher_id, coauthor_id=coauthor_id)
-    rows = apply_filters(rows, year=year, paper_type=paper_type, kci=kci, sci=sci)
+    rows = apply_filters(
+        rows, year=year, year_start=year_start, year_end=year_end,
+        paper_type=paper_type, kci=kci, sci=sci,
+    )
     citation_sort_available = (
         sum(1 for r in rows if r.citation_count) >= _CITATION_SORT_MIN_PAPERS
     )
@@ -420,13 +430,18 @@ async def get_papers_by_year(
     coauthor_id: Optional[str] = None,
     user_id: Optional[UUID] = None,
     year: Optional[int] = None,
+    year_start: Optional[int] = None,
+    year_end: Optional[int] = None,
     paper_type: Optional[str] = None,
     kci: Optional[bool] = None,
     sci: Optional[bool] = None,
 ) -> ResearcherPaperYearListResponse:
     """08-03. 08-02와 같은 데이터를 연도로 묶기만 한다 — 두 화면이 어긋나지 않도록."""
     rows = await fetch_paper_rows(db, researcher_id, coauthor_id=coauthor_id)
-    rows = apply_filters(rows, year=year, paper_type=paper_type, kci=kci, sci=sci)
+    rows = apply_filters(
+        rows, year=year, year_start=year_start, year_end=year_end,
+        paper_type=paper_type, kci=kci, sci=sci,
+    )
     ordered = _sort_rows(rows, "recent")
     window = ordered[(page - 1) * size : page * size]
     bookmarked, reads = await _decorate(db, window, user_id)

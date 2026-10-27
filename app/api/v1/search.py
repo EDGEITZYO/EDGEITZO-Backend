@@ -15,7 +15,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.ai_usage_limit import AiUsage, consume_ai_usage, release_ai_usage, usage_subject
+from app.core.ai_usage_limit import (
+    AiUsage,
+    consume_ai_usage,
+    is_ai_usage_unlimited,
+    release_ai_usage,
+    usage_subject,
+)
 from app.core.database import AsyncSessionLocal, get_db
 from app.core.rate_limit import limit_llm_calls
 from app.core.deps import get_current_user_optional
@@ -28,6 +34,7 @@ from app.langgraph.search_state import (
     SearchState,
     _apply_filter_update,
     _apply_keyword_addition,
+    YEAR_FIELDS,
     _release_panel_ownership,
     empty_filters,
 )
@@ -44,6 +51,7 @@ from app.schemas.search import (
 from app.services.bookmark_service import get_bookmarked_paper_ids
 from app.services.search_service import search_papers_service
 from app.services.selection_reason_service import get_or_create_reasons
+from app.services.year_range import resolve_year_range
 
 router = APIRouter()
 
@@ -207,7 +215,7 @@ class ChatRequest(BaseModel):
         None,
         description=(
             "chip_id와 함께 전달. "
-            "'year'=발행연도 이하로 좁히기, "
+            "'year'=발행연도로 좁히기(칩이 제안한 연도 한 해), "
             "'paper_type'=논문유형(학술 저널/박사학위 논문/석사학위 논문)으로 좁히기, "
             "'citation'=인용수 이상으로 좁히기, "
             "'expand'=연관 키워드 추가로 확장. "
@@ -225,12 +233,20 @@ class ChatRequest(BaseModel):
     pub_year_start: Optional[int] = Field(
         None,
         description=(
-            "발행연도 필터 직접 지정 — **정확히 그 연도만** 매칭됨 (2022 → 2022년 논문만). "
-            "범위('이상') 검색은 없으며, 자연어·칩·드롭다운 어느 경로로 들어와도 의미가 같다. "
-            "드롭다운의 현재 선택값을 매 요청마다 그대로 보내면 됨. "
-            "필드 자체를 아예 안 보내면 이전 값 유지, 필드를 포함해서 null로 보내면 '전체'로 해제됨 "
-            "(즉 드롭다운에서 '전체'를 선택했을 때는 pub_year_start: null을 명시적으로 보낼 것 — "
-            "필드를 통째로 빼면 안 됨). 값을 보내면 LLM 분류 없이 세션에 즉시 반영되어 이후 턴에도 유지됨."
+            "발행연도 범위 시작(포함) 직접 지정. pub_year_end와 **한 쌍**으로 보낸다 — "
+            "2023~2025 → 2023·2024·2025년 논문. null이면 하한 없음. "
+            "두 필드를 모두 안 보내면 이전 범위 유지. 보내면 LLM 분류 없이 세션에 즉시 반영되고, "
+            "null도 '그쪽 끝 제한 없음'으로 그대로 반영된다. "
+            "적용 순서: 이 값 → 같은 요청의 칩(chip_id) → 같은 요청 message의 자연어 연도. "
+            "즉 칩·자연어로 연도를 좁히면 그쪽이 이긴다. 현재 걸린 범위는 응답 filters에 있다. "
+            "(예전 방식: pub_year_end 필드 없이 pub_year_start만 보내면 그 연도 한 해만 걸린다)"
+        ),
+    )
+    pub_year_end: Optional[int] = Field(
+        None,
+        description=(
+            "발행연도 범위 끝(포함) 직접 지정. null이면 상한 없음. 범위를 보낼 때는 null이어도 "
+            "필드를 포함할 것 — 이 필드가 있어야 범위 요청으로 본다. 나머지 규칙은 pub_year_start와 같다."
         ),
     )
     paper_type: Optional[Literal["학술 저널", "박사학위 논문", "석사학위 논문"]] = Field(
@@ -263,7 +279,8 @@ class ChatRequest(BaseModel):
 
 
 class FilterStateSchema(BaseModel):
-    pub_year_start: Optional[int] = Field(None, description="발행 연도 필터값. **정확히 그 해만** 매칭한다 (예: 2022 → 2022년 논문만, 2023년 이후는 포함되지 않음). 미설정 시 null — 이때는 연도 제한 없이 전체 연도가 나온다")
+    pub_year_start: Optional[int] = Field(None, description="현재 걸린 발행 연도 범위의 시작(포함). null이면 하한 없음")
+    pub_year_end: Optional[int] = Field(None, description="현재 걸린 발행 연도 범위의 끝(포함). null이면 상한 없음. 한 해만 걸렸으면 pub_year_start와 같다. 둘 다 null이면 연도 제한 없음")
     paper_type: Optional[str] = Field(None, description="'학술 저널'(국내외 학술지·학술대회 통합) | '박사학위 논문' | '석사학위 논문'. 미설정 시 null")
     citation_min: Optional[int] = Field(None, description="이 인용수 이상만 포함. 미설정 시 null")
     kci_only: Optional[bool] = Field(None, description="true면 KCI 등재 논문만 포함. 미설정 시 null")
@@ -274,7 +291,7 @@ class FilterStateSchema(BaseModel):
 class RefinementStepSchema(BaseModel):
     step_id: str = Field(description="이 스텝의 고유 ID. 프론트에서 '이 턴의 논문 보기' 등 과거 턴 참조용으로 사용")
     step_type: Literal["search", "narrow", "expand"] = Field(description="'search'=최초 검색 | 'narrow'=좁히기(연도/논문유형/인용수) | 'expand'=확장(키워드 추가)")
-    applied_filter: Optional[Dict[str, Any]] = Field(None, description="narrow 스텝에서 적용된 필터 값 (예: {'pub_year_start': 2021}). search/expand 스텝은 null")
+    applied_filter: Optional[Dict[str, Any]] = Field(None, description="narrow 스텝에서 적용된 필터 값 (예: {'pub_year_start': 2021, 'pub_year_end': 2023}). search/expand 스텝은 null")
     added_keyword: Optional[str] = Field(None, description="expand 스텝에서 추가된 키워드. search/narrow 스텝은 null")
     result_count: int = Field(description="이 스텝 적용 직후의 total_count")
     result_items: List[PaperSearchItem] = Field(description="이 스텝 시점의 검색 결과 스냅샷. result_items(최상위 필드)는 최신 턴 것만 담기지만, 여기엔 이 스텝 고유의 결과가 그대로 남아있어 과거 턴 결과를 재검색 없이 그대로 보여줄 수 있음")
@@ -288,7 +305,7 @@ class NarrowChipSchema(BaseModel):
     value: Dict[str, Any] = Field(
         description=(
             "클릭 시 filters에 반영될 값. "
-            "chip_type='year' → {'pub_year_start': int}, "
+            "chip_type='year' → {'pub_year_start': int, 'pub_year_end': int} (같은 연도 — 그 해만), "
             "chip_type='citation' → {'citation_min': int}, "
             "chip_type='paper_type' → {'paper_type': str} "
             "('학술 저널' | '박사학위 논문' | '석사학위 논문')"
@@ -371,7 +388,12 @@ def _load_state(session_id: str) -> Optional[SearchState]:
     raw = r.get(f"search_state:{session_id}")
     if not raw:
         return None
-    return json.loads(raw)
+    state = json.loads(raw)
+    filters = state.get("filters")
+    if filters is not None and "pub_year_end" not in filters:
+        # 연도가 범위로 바뀌기 전에 저장된 세션 — 그땐 pub_year_start가 '그 해만'이었다.
+        filters["pub_year_end"] = filters.get("pub_year_start")
+    return state
 
 
 def _save_state(session_id: str, state: SearchState) -> None:
@@ -482,7 +504,7 @@ def _apply_chip_action(
     }
 
 
-_DIRECT_FILTER_FIELDS = ("pub_year_start", "paper_type", "kci_only", "sci_only")
+_DIRECT_FILTER_FIELDS = ("pub_year_start", "pub_year_end", "paper_type", "kci_only", "sci_only")
 
 
 def _apply_direct_filters(state: SearchState, request: ChatRequest) -> SearchState:
@@ -501,8 +523,9 @@ def _apply_direct_filters(state: SearchState, request: ChatRequest) -> SearchSta
     (패널이 null이 아닌 '값'을 보내 채팅이 건 같은 축을 덮어쓰는 건 지금도 허용된다.
      이 부분은 채팅/패널 필터 소유권 모델이 정해지면 같이 정리할 것.)
 
-    연도는 경로와 무관하게 "정확히 그 해"로 매칭되므로 여기서 따로 표시할 플래그가 없다
-    (예전의 pub_year_exact는 같은 필드에 두 가지 의미를 얹어 뒤집히던 원인이라 제거됨).
+    연도는 범위 양 끝(pub_year_start/pub_year_end)을 한 묶음으로 다룬다 — 소유권도 둘이 함께
+    움직이고, '해제'는 양 끝이 모두 null일 때다. pub_year_end 키 없이 pub_year_start만 오면
+    예전 드롭다운 요청이라 그 해 한 해(start=end)로 받는다.
 
     message가 비어있으면(순수 필터 변경만) 칩 클릭과 동일하게 history에 narrow 스텝을 기록하고
     _skip_classification=True로 세팅해 자유입력 분류 노드가 이전 턴의 stale한 메시지를
@@ -517,9 +540,25 @@ def _apply_direct_filters(state: SearchState, request: ChatRequest) -> SearchSta
     filters = dict(state.get("filters") or empty_filters())
     panel_owned = list(state.get("panel_owned") or [])
     applied = {}
+
+    year_pair = None
+    if "pub_year_end" in touched:
+        year_pair = resolve_year_range(start=request.pub_year_start, end=request.pub_year_end)
+    elif "pub_year_start" in touched:
+        year_pair = (request.pub_year_start, request.pub_year_start)  # 예전 드롭다운: 그 해만
+    touched -= set(YEAR_FIELDS)
+    if year_pair is not None:
+        clearing = year_pair == (None, None)
+        if not (clearing and "pub_year_start" not in panel_owned):  # 채팅이 건 범위는 '전체'로 못 지운다
+            filters["pub_year_start"], filters["pub_year_end"] = year_pair
+            applied.update(pub_year_start=year_pair[0], pub_year_end=year_pair[1])
+            panel_owned = [f for f in panel_owned if f not in YEAR_FIELDS]
+            if not clearing:
+                panel_owned.extend(YEAR_FIELDS)
+
     for field in touched:
         value = getattr(request, field)
-        # 네 필드 모두 falsy가 곧 '조건 없음'이다 — 연도/유형은 null, KCI/SCI 토글은
+        # 세 필드 모두 falsy가 곧 '조건 없음'이다 — 유형은 null, KCI/SCI 토글은
         # null이거나 false(꺼짐). 토글을 끈 false도 null과 똑같이 해제 의도로 다뤄야
         # 한다. 안 그러면 프런트가 매 요청 보내는 false가 채팅이 건 KCI/SCI를 지운다.
         clearing = not value
@@ -601,6 +640,8 @@ def _consume_chat_usage(
         kind = "turn"
     else:
         kind = "free"
+    if is_ai_usage_unlimited(current_user):
+        return session_id, existing, AiUsage()
     subject = usage_subject(http_request, str(current_user.id) if current_user else None)
     return session_id, existing, consume_ai_usage(subject, session_id, kind)
 
