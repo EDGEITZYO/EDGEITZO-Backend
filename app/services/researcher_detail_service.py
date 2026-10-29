@@ -29,7 +29,7 @@ from app.schemas.researcher_detail import (
 from app.schemas.paper import PaperCardTrustBadge
 from app.services.credibility_service import paper_type_label, resolve_paper_type
 from app.services.domestic_paper_service import is_domestic_key
-from app.services.year_range import resolve_year_range, year_in_range
+from app.services.year_range import resolve_year_range, year_bounds, year_in_range
 
 logger = logging.getLogger(__name__)
 
@@ -397,6 +397,7 @@ async def get_papers(
     sci: Optional[bool] = None,
 ) -> ResearcherPaperListResponse:
     rows = await fetch_paper_rows(db, researcher_id, coauthor_id=coauthor_id)
+    year_min, year_max = year_bounds(r.pubyear for r in rows)
     rows = apply_filters(
         rows, year=year, year_start=year_start, year_end=year_end,
         paper_type=paper_type, kci=kci, sci=sci,
@@ -418,6 +419,8 @@ async def get_papers(
         sort=sort,
         citation_sort_available=citation_sort_available,
         items=[_to_item(r, bookmarked, reads) for r in window],
+        year_min=year_min,
+        year_max=year_max,
     )
 
 
@@ -438,6 +441,7 @@ async def get_papers_by_year(
 ) -> ResearcherPaperYearListResponse:
     """08-03. 08-02와 같은 데이터를 연도로 묶기만 한다 — 두 화면이 어긋나지 않도록."""
     rows = await fetch_paper_rows(db, researcher_id, coauthor_id=coauthor_id)
+    year_min, year_max = year_bounds(r.pubyear for r in rows)
     rows = apply_filters(
         rows, year=year, year_start=year_start, year_end=year_end,
         paper_type=paper_type, kci=kci, sci=sci,
@@ -455,7 +459,8 @@ async def get_papers_by_year(
         else:
             groups.append(ResearcherPaperYearGroup(year=row.pubyear, count=1, items=[item]))
     return ResearcherPaperYearListResponse(
-        researcher_id=researcher_id, total=len(rows), page=page, size=size, groups=groups
+        researcher_id=researcher_id, total=len(rows), page=page, size=size, groups=groups,
+        year_min=year_min, year_max=year_max,
     )
 
 

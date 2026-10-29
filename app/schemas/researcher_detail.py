@@ -9,6 +9,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 from app.schemas.paper import PaperCardTrustBadge
+from app.schemas.search import YearBounds
 
 
 PaperSortKey = Literal["recent", "citations"]
@@ -129,7 +130,7 @@ class ResearcherPaperItem(BaseModel):
     author_order: Optional[int] = Field(None, description="저자 순서. 없으면 null")
 
 
-class ResearcherPaperListResponse(BaseModel):
+class ResearcherPaperListResponse(YearBounds):
     """08-02 단순 리스트."""
 
     researcher_id: str
@@ -152,7 +153,7 @@ class ResearcherPaperYearGroup(BaseModel):
     items: list[ResearcherPaperItem]
 
 
-class ResearcherPaperYearListResponse(BaseModel):
+class ResearcherPaperYearListResponse(YearBounds):
     """08-03 연도별 논문 이력. 08-02와 같은 조회 결과를 연도로 묶은 것이라 두 응답이 어긋나지 않는다."""
 
     researcher_id: str

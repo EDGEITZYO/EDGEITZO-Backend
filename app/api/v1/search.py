@@ -47,6 +47,7 @@ from app.schemas.search import (
     SelectionReasonItem,
     SelectionReasonRequest,
     SelectionReasonResponse,
+    YearBounds,
 )
 from app.services.bookmark_service import get_bookmarked_paper_ids
 from app.services.search_service import search_papers_service
@@ -288,7 +289,7 @@ class FilterStateSchema(BaseModel):
     keywords: List[str] = Field(default_factory=list, description="누적된 검색/확장 키워드 목록")
 
 
-class RefinementStepSchema(BaseModel):
+class RefinementStepSchema(YearBounds):
     step_id: str = Field(description="이 스텝의 고유 ID. 프론트에서 '이 턴의 논문 보기' 등 과거 턴 참조용으로 사용")
     step_type: Literal["search", "narrow", "expand"] = Field(description="'search'=최초 검색 | 'narrow'=좁히기(연도/논문유형/인용수) | 'expand'=확장(키워드 추가)")
     applied_filter: Optional[Dict[str, Any]] = Field(None, description="narrow 스텝에서 적용된 필터 값 (예: {'pub_year_start': 2021, 'pub_year_end': 2023}). search/expand 스텝은 null")
@@ -328,7 +329,7 @@ class KeywordMapAnchorSchema(BaseModel):
     paper_count: int = Field(description="이 키워드에 연결된 논문 수")
 
 
-class ChatResponse(BaseModel):
+class ChatResponse(YearBounds):
     session_id: str = Field(description="세션 ID. 다음 턴 요청 시 재사용")
     filters: FilterStateSchema = Field(description="현재까지 누적된 검색 조건")
     sort_order: str = Field(
@@ -416,6 +417,8 @@ def _new_state(session_id: str, user_query: str) -> SearchState:
         history=[],
         result_items=[],
         total_count=0,
+        year_min=None,
+        year_max=None,
         type_distribution={},
         narrow_chips=[],
         expand_chips=[],
@@ -660,6 +663,8 @@ def _to_chat_response(session_id: str, state: SearchState) -> ChatResponse:
         history=list(state.get("history") or []),
         result_items=list(state.get("result_items") or []),
         total_count=state.get("total_count", 0),
+        year_min=state.get("year_min"),
+        year_max=state.get("year_max"),
         narrow_chips=list(state.get("narrow_chips") or []),
         expand_chips=list(state.get("expand_chips") or []),
         keyword_map_anchor=state.get("keyword_map_anchor"),

@@ -28,6 +28,7 @@ from app.services.paper_filter_service import (
     apply_sort,
     build_paper_cards,
 )
+from app.services.year_range import year_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -506,6 +507,7 @@ async def get_node_papers(
         query = f"{keyword} {keyword_en}".strip()
         items = await service.search(query=query)
 
+    year_min, year_max = year_bounds(i.year for i in items)
     items = apply_filters(
         items, year=year, year_start=year_start, year_end=year_end,
         paper_type=paper_type, kci=kci, sci=sci,
@@ -530,4 +532,7 @@ async def get_node_papers(
         except Exception:
             saved_search_id = None
 
-    return PaperListResponse(keyword=keyword, papers=all_cards, total=len(all_cards), search_id=saved_search_id)
+    return PaperListResponse(
+        keyword=keyword, papers=all_cards, total=len(all_cards), search_id=saved_search_id,
+        year_min=year_min, year_max=year_max,
+    )
