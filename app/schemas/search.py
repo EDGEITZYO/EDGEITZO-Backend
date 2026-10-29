@@ -106,7 +106,17 @@ class PaperSearchItem(BaseModel):
     )
 
 
-class SearchPapersResponse(BaseModel):
+class YearBounds(BaseModel):
+    """논문 목록 응답 공통 — 필터(연도·유형·KCI·SCI 등)를 걸기 전 전체 목록의 발행 연도 양 끝."""
+    year_min: Optional[int] = Field(
+        None, description="필터 적용 전 전체 목록에서 가장 오래된 논문의 발행 연도. 연도를 아는 논문이 없으면 null"
+    )
+    year_max: Optional[int] = Field(
+        None, description="필터 적용 전 전체 목록에서 가장 최근 논문의 발행 연도. 연도를 아는 논문이 없으면 null"
+    )
+
+
+class SearchPapersResponse(YearBounds):
     search_id: str = Field(description="검색 요청 식별자 (UUID). 요청마다 새로 발급됨")
     items: list[PaperSearchItem] = Field(description="검색 결과 논문 목록. score(관련도) 내림차순 정렬")
 

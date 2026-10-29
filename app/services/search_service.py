@@ -16,6 +16,7 @@ from app.repositories.paper_repository import get_paper_cards_batch
 from app.services.bookmark_service import get_bookmarked_paper_ids
 from app.services.chroma_search_service import get_chroma_search_service
 from app.services.credibility_service import enrich_items_with_credibility, paper_type_label, resolve_paper_type
+from app.services.year_range import year_bounds, year_in_range
 
 logger = logging.getLogger(__name__)
 
@@ -169,13 +170,14 @@ async def search_papers_service(
 ) -> SearchPapersResponse:
     query_text = " ".join([request.query, *request.keywords]) if request.keywords else request.query
 
+    # 연도 범위의 양 끝(year_min/year_max)은 필터 전 전체 결과 기준이라, 필터는 검색 뒤에 건다.
+    items = await _search_chroma_local(query=query_text)
+    year_min, year_max = year_bounds(i.year for i in items)
+
     year_start, year_end = request.year_range()
-    items = await _search_chroma_local(
-        query=query_text,
-        pub_year_start=year_start,
-        pub_year_end=year_end,
-        paper_type=request.paper_type,
-    )
+    items = [i for i in items if year_in_range(i.year, year_start, year_end)]
+    if request.paper_type:
+        items = [i for i in items if i.db_code == request.paper_type]
 
     if db is not None:
         try:
@@ -214,6 +216,8 @@ async def search_papers_service(
     return SearchPapersResponse(
         search_id=str(uuid.uuid4()),
         items=items,
+        year_min=year_min,
+        year_max=year_max,
     )
 
 

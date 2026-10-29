@@ -36,6 +36,7 @@ from app.services.keywords.keyword_db import is_usable_anchor_name
 from app.services.keywords.text_tokens import get_kiwi
 from app.services.llm.client import chat
 from app.services.search_service import _apply_sort_order, _SORT_LABELS, _sort_items
+from app.services.year_range import year_bounds, year_in_range
 
 logger = logging.getLogger(__name__)
 
@@ -544,6 +545,8 @@ async def node_response_builder(state: SearchState) -> SearchState:
             **state,
             "result_items": [],
             "total_count": 0,
+            "year_min": None,
+            "year_max": None,
             "type_distribution": {},
             "narrow_chips": [],
             "expand_chips": [],
@@ -555,24 +558,18 @@ async def node_response_builder(state: SearchState) -> SearchState:
         }
 
     svc = get_chroma_search_service()
-    # paper_type은 세션에 "학술 저널"/"박사학위 논문"/"석사학위 논문" 레이블로 저장되지만,
-    # Chroma의 DBCode 메타데이터는 원본 코드(JAKO/DIKO/JAFO/CFKO)라 여기선 매칭 안 됨.
-    # 박사/석사 구분은 degree 정보가 있어야 하는데 그건 PostgreSQL enrichment 이후에나 알 수 있으므로,
-    # 여기서는 DIKO(학위논문)로만 1차 축소하고, 실제 박사/석사/학술 저널 구분은
-    # 아래 enrichment 이후 it.paper_type 기준 2차 필터로 처리한다.
-    paper_type_filter = filters.get("paper_type")
-    chroma_paper_type = "DIKO" if paper_type_filter in ("박사학위 논문", "석사학위 논문") else None
     # similarity_score/snippet은 사전계산 캐시(scripts/embed_abstract_sentences.py)를 쓰므로
-    # 후보 수와 무관하게 빠름 — n_results 생략해 where절 필터를 통과한 전체 후보를 받는다.
-    # kci_only/sci_only/paper_type/citation_min은 뒤에서 전체 후보에 대해 적용된다.
+    # 후보 수와 무관하게 빠름 — n_results 생략해 전체 후보를 받는다.
+    # 연도 범위의 양 끝(year_min/year_max)은 필터 전 전체 결과 기준이라 Chroma where절로 거르지 않고,
+    # 연도/kci_only/sci_only/paper_type/citation_min 모두 뒤에서 전체 후보에 대해 적용한다.
     timings: Dict[str, int] = {}
     with _stage("chroma_search", timings):
-        items = await svc.search(
-            query=" ".join(filters.get("keywords") or []),
-            pub_year_start=filters.get("pub_year_start"),
-            pub_year_end=filters.get("pub_year_end"),
-            paper_type=chroma_paper_type,
-        )
+        items = await svc.search(query=" ".join(filters.get("keywords") or []))
+    year_min, year_max = year_bounds(it.year for it in items)
+    items = [
+        it for it in items
+        if year_in_range(it.year, filters.get("pub_year_start"), filters.get("pub_year_end"))
+    ]
 
     ids = [it.paper_id for it in items]
 
@@ -608,6 +605,8 @@ async def node_response_builder(state: SearchState) -> SearchState:
         items = [it for it in items if it.credibility.kci_registered]
     if filters.get("sci_only"):
         items = [it for it in items if it.credibility.sci_indexed]
+    # paper_type은 "학술 저널"/"박사학위 논문"/"석사학위 논문" 레이블이라 enrichment로 채운 it.paper_type과 비교한다.
+    paper_type_filter = filters.get("paper_type")
     if paper_type_filter:
         items = [it for it in items if it.paper_type == paper_type_filter]
     citation_min = filters.get("citation_min")
@@ -627,14 +626,18 @@ async def node_response_builder(state: SearchState) -> SearchState:
     total_count = len(result_items)
 
     history = list(state.get("history") or [])
+    step_result = {
+        "result_count": total_count, "result_items": result_items,
+        "year_min": year_min, "year_max": year_max,
+    }
     if history:
-        history[-1] = {**history[-1], "result_count": total_count, "result_items": result_items}
+        history[-1] = {**history[-1], **step_result}
     else:
         history.append(RefinementStep(
             step_id=str(uuid.uuid4()),
             step_type="search", applied_filter=None, added_keyword=None,
-            result_count=total_count, result_items=result_items,
             timestamp=datetime.now(timezone.utc).isoformat(),
+            **step_result,
         ))
 
     # 연도/유형 분위수는 result_items(=화면에 보이는 최종 결과)로 계산되는데 인용수만
@@ -677,6 +680,8 @@ async def node_response_builder(state: SearchState) -> SearchState:
         **state,
         "result_items": result_items,
         "total_count": total_count,
+        "year_min": year_min,
+        "year_max": year_max,
         "type_distribution": type_distribution,
         "narrow_chips": narrow_chips,
         "expand_chips": expand_chips,
