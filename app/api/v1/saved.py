@@ -23,6 +23,7 @@ from app.models.recent_read import RecentRead
 from app.models.user import User
 from app.schemas.bookmark_folder import BookmarkFolderResponse
 from app.schemas.common import ApiErrorResponse, ApiResponse
+from app.schemas.search import YearBounds
 from app.schemas.trust_badge import TrustBadge
 from app.services.bookmark_service import (
     _JOURNAL_JOIN,
@@ -121,7 +122,7 @@ def _period_range(
 
 # ── 북마크 탭 ──────────────────────────────────────────────────────────
 
-class BookmarkListResponse(BaseModel):
+class BookmarkListResponse(YearBounds):
     total: int
     page: int
     size: int
@@ -169,6 +170,15 @@ async def get_saved_bookmarks(
 
     if folder_id is not None:
         where.append(Bookmark.folder_id == folder_id)
+
+    # 연도 범위의 양 끝은 필터 전 전체 북마크(폴더 지정 시 그 폴더) 기준 — 아래 필터 조건을 붙이기 전에 구한다.
+    year_min, year_max = (
+        await db.execute(
+            select(func.min(Paper.pubyear), func.max(Paper.pubyear))
+            .join(Paper, Bookmark.paper_id == Paper.id)
+            .where(*where)
+        )
+    ).one()
 
     if type == "학술 저널":
         where.append(Paper.db_code.in_(["JAKO", "JAFO", "CFKO", "CFFO"]))
@@ -218,7 +228,9 @@ async def get_saved_bookmarks(
 
     items = [_to_card(p, j, bookmarked_at=bm.created_at) for bm, p, j in rows]
     return success_response(
-        data=BookmarkListResponse(total=total, page=page, size=size, items=items),
+        data=BookmarkListResponse(
+            total=total, page=page, size=size, items=items, year_min=year_min, year_max=year_max
+        ),
         message="ok",
     )
 

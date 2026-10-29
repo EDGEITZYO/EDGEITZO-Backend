@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 from app.services.year_range import resolve_year_range
 
@@ -38,6 +38,9 @@ class RefinementStep(TypedDict):
     added_keyword: Optional[str]
     result_count: int
     result_items: List[Dict[str, Any]]
+    # 이 스텝 시점 필터 전 전체 결과의 발행 연도 양 끝 — 결과가 채워질 때(node_response_builder) 같이 채운다
+    year_min: NotRequired[Optional[int]]
+    year_max: NotRequired[Optional[int]]
     timestamp: str
 
 
@@ -82,6 +85,8 @@ class SearchState(TypedDict):
     history: List[RefinementStep]  # 탐색 경로
     result_items: List[Dict[str, Any]]  # 최신 검색 결과 캐시
     total_count: int
+    year_min: Optional[int]  # 필터 전 전체 결과의 가장 오래된 발행 연도
+    year_max: Optional[int]  # 필터 전 전체 결과의 가장 최근 발행 연도
     type_distribution: Dict[str, int]
     narrow_chips: List[NarrowChip]
     expand_chips: List[ExpandChip]

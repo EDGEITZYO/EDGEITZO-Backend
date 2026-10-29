@@ -2,7 +2,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from app.schemas.search import CredibilityInfo
+from app.schemas.search import CredibilityInfo, YearBounds
 from app.schemas.trust_badge import TrustBadge
 
 
@@ -94,7 +94,7 @@ class PaperCardResponse(BaseModel):
     )
 
 
-class PaperListResponse(BaseModel):
+class PaperListResponse(YearBounds):
     """키워드 검색 / 키워드맵 노드 논문 목록 공통 응답 래퍼."""
     keyword: str = Field(
         description="검색에 사용한 키워드",

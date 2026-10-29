@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Iterable, Optional
 
 YearRange = tuple[Optional[int], Optional[int]]
 
@@ -23,6 +23,12 @@ def resolve_year_range(
     if start is not None and end is not None and start > end:
         return end, start
     return start, end
+
+
+def year_bounds(years: Iterable[Optional[int]]) -> YearRange:
+    """목록에서 가장 오래된·가장 최근 발행 연도. 연도를 아는 논문이 없으면 (None, None)."""
+    known = [y for y in years if y is not None]
+    return (min(known), max(known)) if known else (None, None)
 
 
 def year_in_range(year: Optional[int], start: Optional[int], end: Optional[int]) -> bool:
