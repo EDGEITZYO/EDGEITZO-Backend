@@ -1,0 +1,32 @@
+name: Neo4j keepalive
+
+# Neo4j Aura Free는 72시간 활동이 없으면 일시정지된다(30일 넘게 정지되면 삭제).
+# 이틀에 한 번 작은 쓰기 쿼리를 보내 활동 상태를 유지한다. 실패하면 GitHub이 메일로 알린다.
+# 필요한 저장소 시크릿: NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
+
+on:
+  schedule:
+    # 홀수 날 04:00 KST (UTC 19:00). 월말→월초는 간격이 1~2일로 줄 뿐 3일을 넘지 않는다.
+    - cron: "0 19 */2 * *"
+  workflow_dispatch:       # Actions 탭에서 수동 실행
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install neo4j driver
+        run: pip install --quiet neo4j
+
+      - name: Ping Neo4j
+        env:
+          NEO4J_URI: ${{ secrets.NEO4J_URI }}
+          NEO4J_USERNAME: ${{ secrets.NEO4J_USERNAME }}
+          NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
+        run: python scripts/neo4j_keepalive.py
