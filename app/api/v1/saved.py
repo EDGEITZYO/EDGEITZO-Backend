@@ -175,6 +175,7 @@ async def get_saved_bookmarks(
     year_min, year_max = (
         await db.execute(
             select(func.min(Paper.pubyear), func.max(Paper.pubyear))
+            .select_from(Bookmark)
             .join(Paper, Bookmark.paper_id == Paper.id)
             .where(*where)
         )
