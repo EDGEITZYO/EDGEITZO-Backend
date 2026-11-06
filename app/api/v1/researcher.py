@@ -19,14 +19,18 @@ from app.schemas.researcher import (
     SaveRecentResearcherSearchRequest,
 )
 from app.schemas.researcher_detail import (
+    COMMON_KEYWORD_LIMIT_MAX,
+    AuthorRoleFilter,
+    CoauthoredPaperListResponse,
     CoauthorListResponse,
+    CoauthorPairSummaryResponse,
     ResearchFlowResponse,
     PaperSortKey,
     ResearcherPaperListResponse,
     ResearcherPaperYearListResponse,
     ResearcherProfileResponse,
 )
-from app.services import researcher_detail_service, researcher_flow_service
+from app.services import coauthor_pair_service, researcher_detail_service, researcher_flow_service
 from app.services.researcher_search_service import (
     build_researcher_graph,
     get_recent_researcher_searches,
@@ -313,7 +317,9 @@ async def get_researcher_papers_by_year(
         "UNION해서 냅니다. 코퍼스 논문이 없는 연구자(공저자 확장으로 적재된 1,270명)도 "
         "외부 논문 쪽에서 관계가 잡혀 전원 공저자를 갖습니다\n"
         "- 명세 08-04가 요구하는 항목을 목록 응답에 모두 담아 항목별 추가 조회가 필요 없습니다\n"
-        "- 함께 쓴 논문 목록은 `GET /researchers/{researcher_id}/papers?coauthor_id=<공저자 id>`\n"
+        "- 공저자 페이지(두 사람 역할 포함)는 `GET /researchers/{researcher_id}/coauthors/{coauthor_id}`(요약)와 "
+        "`.../coauthors/{coauthor_id}/papers`(함께 작성한 논문). 역할 없는 단순 목록은 "
+        "`GET /researchers/{researcher_id}/papers?coauthor_id=<공저자 id>`\n"
         "- `department`(전공)는 연구자의 56%만 있습니다. `department_display`는 전공이 없으면 소속 기관을 담고, "
         "`department_source`가 어느 쪽인지 알려줍니다\n"
         "- 공저자가 없으면 `total: 0` (연구자의 94.3%는 1명 이상 보유)\n\n"
@@ -329,6 +335,123 @@ async def get_researcher_coauthors(
     researcher_id = await _resolve(db, researcher_id)
     result = await researcher_detail_service.get_coauthors(db, researcher_id, limit=limit)
     return success_response(data=result, message="researcher coauthors loaded")
+
+
+# ─────────────────────────── 공저자 페이지 (함께 작성한 논문) ───────────────────────────
+
+_CID = PathParam(..., description="공저자 연구자 ID. 공저자 목록(GET /researchers/{researcher_id}/coauthors)의 researcher_id")
+
+
+async def _resolve_pair(db: AsyncSession, researcher_id: str, coauthor_id: str) -> tuple[str, str]:
+    researcher_id = await _resolve(db, researcher_id)
+    coauthor_id = await _resolve(db, coauthor_id)
+    if researcher_id == coauthor_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="연구자와 공저자가 같은 사람입니다"
+        )
+    return researcher_id, coauthor_id
+
+
+@router.get(
+    "/{researcher_id}/coauthors/{coauthor_id}",
+    dependencies=[Depends(limit_llm_calls)],
+    response_model=ApiResponse[CoauthorPairSummaryResponse],
+    responses={400: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
+    summary="공저자 페이지 — 두 연구자 프로필·함께 작성한 논문 수·공동 연구 기간·공동 연구 키워드",
+    description=(
+        "공저자 목록에서 고른 연구자와 처음 탐색한 연구자의 공동 연구 요약입니다.\n\n"
+        "- `researcher`(처음 탐색한 연구자)·`coauthor`(공저자) 프로필. 상세페이지 이동은 각 `researcher_id`로 합니다\n"
+        "- `co_paper_count`: 함께 작성한 논문 수. 공저자 목록의 `co_paper_count`, "
+        "`/coauthors/{coauthor_id}/papers`의 필터 전 `total`과 같은 값입니다\n"
+        "- `period_start_year`~`period_end_year`: 함께 쓴 첫 논문 ~ 마지막 논문의 발행연도\n\n"
+        "**공동 연구 키워드 (`common_keywords`)** — 두 사람이 함께 쓴 논문들 사이에서 겹치는 키워드. "
+        "전부 함께 쓴 논문에 저자가 실제로 단 키워드이고, 키워드마다 `source`로 고른 근거를 밝힙니다\n"
+        "- 함께 쓴 논문이 1편: 그 논문의 키워드 그대로(`single_paper`). LLM을 부르지 않습니다\n"
+        "- 2편 이상: 2편 이상에 겹쳐 달린 키워드(`repeated`, 겹친 편수 많은 순)부터 채웁니다\n"
+        "- 그래도 `keyword_limit`보다 적으면 **남은 칸만** LLM이 함께 쓴 논문의 키워드 중에서 골라 채웁니다(`ai`). "
+        "LLM은 후보 번호만 돌려주고 후보 밖의 값은 버려 지어낸 말이 섞이지 않습니다. 마땅한 후보가 적다고 판단하면 덜 채웁니다\n"
+        "- LLM 예산 소진·실패 시 남은 칸은 최신 논문의 키워드 순(`recent`)으로 채우고, 다음 요청에 다시 시도합니다\n"
+        "- **한글·영문 번역쌍은 한 칸**: KCI는 논문마다 한글·영문 키워드를 같이 달아 '육계'·'broiler'가 따로 올라옵니다. "
+        "2편 이상인데 고른 키워드에 한글과 영문이 섞이면 LLM(품질 모델)이 번역쌍을 짝짓고, 짝지어진 것은 한글 표기 한 칸으로 합쳐 "
+        "`paper_count`는 두 키워드가 달린 논문의 합집합 편수가 됩니다. 빈 칸은 다음 순위로 채웁니다. "
+        "확인에 실패하면 합치지 않고 내려갑니다\n"
+        "- 겹치는 키워드로 3칸이 차는 쌍은 2편 15% / 3~5편 31% / 6편 이상 83%입니다(2026-11-07 실측, 공저 쌍 15,556)\n"
+        "- LLM 결과는 저장해 두고, 함께 쓴 논문이나 그 키워드가 바뀌면 다시 고릅니다. 첫 호출만 1~3초 걸립니다\n\n"
+        "합쳐져 없어진 옛 ID로 요청하면 남은 연구자로 응답합니다.\n\n"
+        "**400** — 두 ID가 같은 연구자 · **404** — 없는 researcher_id 또는 coauthor_id"
+    ),
+)
+async def get_coauthor_pair(
+    researcher_id: str = _RID,
+    coauthor_id: str = _CID,
+    keyword_limit: int = Query(
+        3, ge=1, le=COMMON_KEYWORD_LIMIT_MAX, description="공동 연구 키워드 표시 개수(칸 수)"
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    researcher_id, coauthor_id = await _resolve_pair(db, researcher_id, coauthor_id)
+    result = await coauthor_pair_service.get_coauthor_pair(
+        db, researcher_id, coauthor_id, keyword_limit=keyword_limit
+    )
+    return success_response(data=result, message="coauthor pair loaded")
+
+
+@router.get(
+    "/{researcher_id}/coauthors/{coauthor_id}/papers",
+    response_model=ApiResponse[CoauthoredPaperListResponse],
+    responses={400: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
+    summary="공저자 페이지 — 함께 작성한 논문 목록",
+    description=(
+        "두 연구자가 함께 작성한 논문 목록입니다. 항목은 연구자 논문 리스트(08-02)와 같은 필드이고 "
+        "(칩·연도·학술지·초록·키워드·북마크), 두 사람의 역할과 나머지 저자 수가 더해집니다.\n\n"
+        "**역할 (`researcher_role`·`coauthor_role`)**\n"
+        "- `roles`: `first`(제1저자) / `corresponding`(교신저자) / `co_corresponding`(공동 교신저자 — 그 논문의 "
+        "교신저자가 2명 이상) / `participant`(참여저자). `role_labels`가 표시 문구입니다\n"
+        "- 제1저자가 교신을 겸하면 `[first, corresponding]` 두 개가 옵니다\n"
+        "- 출처는 KCI 논문 상세의 저자 구분(제1저자/그 외)과 저자 역할(제1·교신·참여·단독)입니다. "
+        "KCI가 역할을 주지 않은 논문(주로 2015년 이전)에서 제1저자가 아닌 사람은 교신인지 알 수 없어 `roles: []`입니다\n"
+        "- `other_author_count`: 두 사람을 뺀 저자 수 — 카드의 '외 N인'\n\n"
+        "**필터**\n"
+        "- `sort`: 08-02와 같습니다(recent 기본, citations는 `citation_sort_available`이 false면 recent로 되돌림)\n"
+        "- `researcher_role`·`coauthor_role`: 처음 탐색한 연구자 / 공저자가 그 역할인 논문만. "
+        "`first`·`corresponding`·`participant` 세 가지이고 `corresponding`은 공동 교신저자를 포함합니다. "
+        "둘 다 보내면 둘 다 만족하는 논문입니다. 역할을 알 수 없는 논문은 역할 필터에 걸리지 않습니다\n"
+        "- `paper_type`: 08-02와 같습니다('학술 저널'|'박사학위 논문'|'석사학위 논문', null·'전체'면 필터 없음)\n"
+        "- `total`은 필터 적용 후 건수, 함께 쓴 논문이 없으면 `items: []`\n\n"
+        "합쳐져 없어진 옛 ID로 요청하면 남은 연구자로 응답합니다.\n\n"
+        "**400** — 두 ID가 같은 연구자 · **404** — 없는 researcher_id 또는 coauthor_id"
+    ),
+)
+async def get_coauthored_papers(
+    researcher_id: str = _RID,
+    coauthor_id: str = _CID,
+    sort: PaperSortKey = Query("recent", description="recent=최신순(기본) | citations=피인용순"),
+    researcher_role: Optional[AuthorRoleFilter] = Query(
+        None, description="처음 탐색한 연구자의 역할: first=제1저자 | corresponding=교신저자(공동 교신 포함) | participant=참여저자"
+    ),
+    coauthor_role: Optional[AuthorRoleFilter] = Query(
+        None, description="공저자의 역할: first=제1저자 | corresponding=교신저자(공동 교신 포함) | participant=참여저자"
+    ),
+    paper_type: Optional[str] = Query(None, description="'학술 저널'|'박사학위 논문'|'석사학위 논문'. null·'전체'면 필터 없음"),
+    page: int = Query(1, ge=1),
+    size: int = Query(6, ge=1, le=100, description="한 번에 반환할 논문 수"),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: AsyncSession = Depends(get_db),
+):
+    researcher_id, coauthor_id = await _resolve_pair(db, researcher_id, coauthor_id)
+    result = await researcher_detail_service.get_coauthored_papers(
+        db,
+        researcher_id,
+        coauthor_id,
+        sort=sort,
+        page=page,
+        size=size,
+        researcher_role=researcher_role,
+        coauthor_role=coauthor_role,
+        paper_type=paper_type,
+        user_id=current_user.id if current_user else None,
+    )
+    return success_response(data=result, message="coauthored papers loaded")
 
 
 @router.get(

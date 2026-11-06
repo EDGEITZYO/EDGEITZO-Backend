@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import REAL, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 from app.models.base import Base
 
@@ -149,4 +149,36 @@ class ResearcherPaperExclusion(Base):
     )
     external_id = Column(String(100), primary_key=True)
     reason = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class KciArticleAuthorRole(Base):
+    """논문 한 편의 저자 역할 — KCI articleDetail의 author-group 그대로 (041).
+
+    배열 세 개는 같은 길이·같은 순서(논문에 적힌 저자 순)다. 역할 해석(제1/교신/공동 교신/참여)은
+    researcher_detail_service가 한 곳에서 한다 — 원본 두 속성을 그대로 둬야 규칙을 바꿔도 다시 받지 않는다.
+    """
+
+    __tablename__ = "kci_article_author_roles"
+
+    art_id = Column(String(20), primary_key=True)  # KCI 논문 ID (ART…)
+    author_names = Column(ARRAY(String(300)), nullable=False)
+    author_institutions = Column(ARRAY(String(500)), nullable=False)
+    author_divisions = Column(ARRAY(String(2)), nullable=False)  # '1' 제1저자 / '2' 그 외 / null
+    author_parts = Column(ARRAY(String(10)), nullable=False)  # 제1 | 교신 | 참여 | 단독 | null
+    fetched_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class CoauthorKeywordCache(Base):
+    """공저자 페이지 공동 연구 키워드 중 LLM이 판단한 결과 (042). 두 연구자는 (작은 ID, 큰 ID) 순으로 저장한다."""
+
+    __tablename__ = "coauthor_keyword_cache"
+
+    researcher_a = Column(String(100), primary_key=True)
+    researcher_b = Column(String(100), primary_key=True)
+    prompt_version = Column(String(20), primary_key=True)
+    paper_signature = Column(String(64), nullable=False)
+    ranked_keywords = Column(JSONB, nullable=True)  # 모자란 칸 채우기 — LLM이 고른 순위
+    keyword_groups = Column(JSONB, nullable=True)  # 중복 확인 — {"keywords": 물어본 목록, "groups": 뜻이 같은 묶음}
+    model = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

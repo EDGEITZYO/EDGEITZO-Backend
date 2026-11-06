@@ -194,6 +194,129 @@ class CoauthorListResponse(BaseModel):
     items: list[CoauthorItem] = Field(description="함께 쓴 논문 수 내림차순")
 
 
+# ------------------------------------------------- 공저자 페이지 (함께 작성한 논문)
+
+# 논문 카드에 표시하는 역할. 교신저자가 한 논문에 2명 이상이면 각자 공동 교신저자다.
+# 제1저자가 교신을 겸하는 논문이 있어(KCI 표본 200편 중 5편) 한 사람에게 둘 이상 붙을 수 있다.
+AuthorRoleCode = Literal["first", "corresponding", "co_corresponding", "participant"]
+# 필터에서 고르는 역할. corresponding은 공동 교신저자까지 포함한다.
+AuthorRoleFilter = Literal["first", "corresponding", "participant"]
+CommonKeywordSource = Literal["repeated", "single_paper", "ai", "recent"]
+# keyword_limit 상한. LLM이 이만큼까지 순위를 매겨 두므로 어떤 표시 개수로 불러도 캐시 하나로 채운다.
+COMMON_KEYWORD_LIMIT_MAX = 10
+
+
+class CommonKeyword(BaseModel):
+    keyword: str = Field(
+        description=(
+            "저자가 논문에 실제로 단 키워드. 표기는 가장 최근 논문 것이고, 한글·영문 번역쌍을 한 칸으로 합쳤으면 한글 표기"
+        ),
+        example="오가노이드",
+    )
+    source: CommonKeywordSource = Field(
+        description=(
+            "이 키워드를 고른 근거.\n"
+            "- `repeated`: 함께 쓴 논문 2편 이상에 겹쳐 달린 키워드\n"
+            "- `single_paper`: 함께 쓴 논문이 1편이라 그 논문의 키워드를 그대로 쓴 것\n"
+            "- `ai`: 겹치는 키워드가 표시 개수보다 적어, 함께 쓴 논문의 키워드 중 LLM이 공동 연구를 대표한다고 고른 것\n"
+            "- `recent`: ai를 쓸 수 없을 때(LLM 예산 소진·실패) 함께 쓴 논문의 키워드를 최신 논문 순으로 채운 것"
+        )
+    )
+    paper_count: int = Field(
+        description="함께 쓴 논문 중 이 키워드가 달린 편수. 번역쌍을 합쳤으면 둘 중 하나라도 달린 편수", example=3
+    )
+
+
+class CoauthorPairPerson(BaseModel):
+    """페이지 상단 프로필 한 명. 상세페이지 이동은 프런트가 researcher_id로 한다."""
+
+    researcher_id: str = Field(description="연구자 ID. 이 값으로 연구자 상세(GET /researchers/{researcher_id})로 이동한다")
+    name: Optional[str] = Field(None, description="이름(한글명, 없으면 영문명)", example="김민준")
+    institution: Optional[str] = Field(None, description="소속 기관", example="한국대학교")
+    department: Optional[str] = Field(None, description="전공(학과). 연구자의 56%만 보유, 없으면 null", example="생명공학과")
+    department_display: Optional[str] = Field(
+        None, description="전공이 있으면 전공, 없으면 소속 기관. 공저자 목록(CoauthorItem)과 같은 규칙"
+    )
+    department_source: Optional[Literal["department", "institution"]] = Field(
+        None, description="department_display가 전공인지 소속인지"
+    )
+
+
+class CoauthorPairSummaryResponse(BaseModel):
+    """공저자 페이지 상단 — 두 사람 프로필, 함께 작성한 논문 수, 공동 연구 기간, 공동 연구 키워드."""
+
+    researcher: CoauthorPairPerson = Field(description="처음 탐색한 연구자(상세페이지 주인)")
+    coauthor: CoauthorPairPerson = Field(description="공저자 목록에서 고른 연구자")
+    co_paper_count: int = Field(
+        description="함께 작성한 논문 수. 공저자 목록의 co_paper_count, 함께 작성한 논문 목록의 필터 전 total과 같다",
+        example=5,
+    )
+    period_start_year: Optional[int] = Field(
+        None, description="공동 연구 기간 시작 — 함께 쓴 첫 논문의 발행연도. 연도를 아는 논문이 없으면 null", example=2023
+    )
+    period_end_year: Optional[int] = Field(
+        None, description="공동 연구 기간 끝 — 함께 쓴 마지막 논문의 발행연도", example=2025
+    )
+    common_keywords: list[CommonKeyword] = Field(
+        default_factory=list,
+        description=(
+            "공동 연구 키워드. 전부 함께 쓴 논문에 저자가 단 키워드이며 지어낸 말은 없다. "
+            "겹치는 키워드(repeated, 겹친 편수 많은 순)를 먼저 채우고, 표시 개수보다 적으면 남은 칸만 ai(또는 recent)로 채운다. "
+            "함께 쓴 논문이 1편이면 그 논문의 키워드(single_paper). 2편 이상에서 한글·영문 번역쌍('육계'·'broiler')은 "
+            "한 칸으로 합친다. 함께 쓴 논문에 키워드가 없으면 빈 배열"
+        ),
+    )
+
+
+class PaperAuthorRole(BaseModel):
+    """논문 카드의 저자 칩 하나 — 그 논문에서 이 사람이 몇 저자인지."""
+
+    researcher_id: str = Field(description="연구자 ID. 상단 프로필(researcher/coauthor)의 researcher_id와 같은 값")
+    name: Optional[str] = Field(None, description="이름. 위 프로필과 같은 값")
+    author_order: Optional[int] = Field(None, description="논문에 적힌 저자 순서(1부터). 저자 목록에서 못 찾으면 null")
+    roles: list[AuthorRoleCode] = Field(
+        default_factory=list,
+        description=(
+            "역할. first(제1저자) / corresponding(교신저자) / co_corresponding(공동 교신저자 — 교신저자가 2명 이상) / "
+            "participant(참여저자). 제1저자가 교신을 겸하면 [first, corresponding]. "
+            "KCI가 역할을 주지 않은 논문(주로 2015년 이전)에서 제1저자가 아닌 사람은 교신인지 알 수 없어 빈 배열"
+        ),
+        example=["first"],
+    )
+    role_labels: list[str] = Field(
+        default_factory=list, description="roles의 표시 문구. '제1저자'·'교신저자'·'공동 교신저자'·'참여저자'", example=["제1저자"]
+    )
+
+
+class CoauthoredPaperItem(ResearcherPaperItem):
+    """함께 작성한 논문 한 편. 연구자 논문 리스트 항목(08-02)에 두 사람의 역할과 나머지 저자 수를 더했다.
+
+    상속한 role·author_order는 08-02와 같은 값(코퍼스 논문에만 있음)이라, 이 화면은 researcher_role·coauthor_role을 쓴다.
+    """
+
+    role: Optional[str] = Field(
+        None,
+        description="(08-02와 같은 값, 코퍼스 논문에만 있음) 이 화면에서는 쓰지 않는다 — researcher_role·coauthor_role을 쓴다",
+    )
+    researcher_role: PaperAuthorRole = Field(description="처음 탐색한 연구자의 역할")
+    coauthor_role: PaperAuthorRole = Field(description="공저자의 역할")
+    author_count: int = Field(description="이 논문의 전체 저자 수", example=5)
+    other_author_count: int = Field(description="두 사람을 뺀 나머지 저자 수 — '외 N인'의 N", example=3)
+
+
+class CoauthoredPaperListResponse(BaseModel):
+    researcher_id: str = Field(description="처음 탐색한 연구자 ID")
+    coauthor_id: str = Field(description="공저자 ID")
+    total: int = Field(description="필터 적용 후 논문 수")
+    page: int = Field(description="요청한 페이지(1부터)")
+    size: int = Field(description="페이지 크기")
+    sort: PaperSortKey = Field(description="적용된 정렬")
+    citation_sort_available: bool = Field(
+        description="피인용순 정렬이 의미 있는지. 연구자 논문 리스트(08-02)와 같은 규칙 — 인용수가 있는 논문이 3편 미만이면 false"
+    )
+    items: list[CoauthoredPaperItem] = Field(description="함께 작성한 논문. sort 순서")
+
+
 # ------------------------------------------------- 08-05 / 08-06 연구 흐름
 
 class ResearchFlowPaper(BaseModel):

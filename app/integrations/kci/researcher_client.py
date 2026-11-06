@@ -97,8 +97,11 @@ class KCIAuthor:
     name: str
     name_eng: str | None = None
     institution: str | None = None
-    role: str | None = None  # 제1 | 교신 | 참여 | 단독
+    role: str | None = None  # 제1 | 교신 | 참여 | 단독 — <author author-part>. 2015년 이전 논문은 비어 오는 경우가 많다
     order: int = 0
+    # <author author-division>: '1' 제1저자 / '2' 그 외. author-part가 비어 있는 논문에도 온다
+    # (공저 논문 표본 200편 전부 보유, 2026-11-06 실측) — 제1저자 판정은 이 값이 더 넓게 된다.
+    division: str | None = None
 
 
 @dataclass
@@ -200,6 +203,7 @@ def parse_article_detail(xml_text: str) -> KCIArticle | None:
                     institution=(node.findtext("institution") or "").strip() or None,
                     role=node.get("author-part"),
                     order=idx,
+                    division=node.get("author-division"),
                 )
             )
 
