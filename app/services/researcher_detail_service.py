@@ -10,15 +10,24 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+import re
+import unicodedata
+from collections import defaultdict
+from typing import Any, Optional, Sequence
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.integrations.kci.researcher_client import institution_root
 from app.schemas.researcher_detail import (
+    AuthorRoleCode,
+    AuthorRoleFilter,
+    CoauthoredPaperItem,
+    CoauthoredPaperListResponse,
     CoauthorItem,
     CoauthorListResponse,
+    PaperAuthorRole,
     PaperSortKey,
     ResearcherPaperItem,
     ResearcherPaperListResponse,
@@ -233,6 +242,14 @@ def _sort_rows(rows: list[Any], sort: PaperSortKey) -> list[Any]:
     )
 
 
+def _resolve_sort(rows: list[Any], sort: PaperSortKey) -> tuple[PaperSortKey, bool]:
+    """(적용할 정렬, 피인용순 가능 여부). 명세 08-02: 피인용 데이터가 부족하면 기본 정렬로 되돌린다."""
+    available = sum(1 for r in rows if r.citation_count) >= _CITATION_SORT_MIN_PAPERS
+    if sort == "citations" and not available:
+        return "recent", available
+    return sort, available
+
+
 async def _decorate(
     db: AsyncSession, rows: list[Any], user_id: Optional[UUID]
 ) -> tuple[dict[str, bool], dict[str, str]]:
@@ -402,11 +419,7 @@ async def get_papers(
         rows, year=year, year_start=year_start, year_end=year_end,
         paper_type=paper_type, kci=kci, sci=sci,
     )
-    citation_sort_available = (
-        sum(1 for r in rows if r.citation_count) >= _CITATION_SORT_MIN_PAPERS
-    )
-    if sort == "citations" and not citation_sort_available:
-        sort = "recent"  # 명세 08-02: 데이터가 부족하면 기본 정렬로 되돌린다
+    sort, citation_sort_available = _resolve_sort(rows, sort)
 
     ordered = _sort_rows(rows, sort)
     window = ordered[(page - 1) * size : page * size]
@@ -493,4 +506,217 @@ async def get_coauthors(
             )
             for r in rows[:limit]
         ],
+    )
+
+
+# ─────────────────────────────── 공저자 페이지 (함께 작성한 논문) ───────────────────────────────
+#
+# 역할 출처는 kci_article_author_roles(041) — KCI articleDetail의 두 속성을 그대로 둔 것이다.
+#   author-division  '1' 제1저자 / '2' 그 외. 공저 논문 표본 200편 전부 보유
+#   author-part      제1 | 교신 | 참여 | 단독. 2015년 이전 논문은 27%가 비어 온다(2026-11-06 실측)
+# KCI ID가 없는 공저 논문(20,367편 중 68편)은 코퍼스 적재 때 받은 researcher_papers.role로 대신한다.
+
+_ROLE_LABELS: dict[str, str] = {
+    "first": "제1저자",
+    "corresponding": "교신저자",
+    "co_corresponding": "공동 교신저자",
+    "participant": "참여저자",
+}
+# 필터 값 → 걸리는 역할. 필터의 교신저자는 공동 교신저자를 포함한다(필터는 세 가지, 카드는 네 가지).
+_ROLE_FILTER_MATCH: dict[str, frozenset[str]] = {
+    "first": frozenset({"first"}),
+    "corresponding": frozenset({"corresponding", "co_corresponding"}),
+    "participant": frozenset({"participant"}),
+}
+_DIVISION_FIRST = "1"
+_PART_FIRST = frozenset({"제1", "단독"})
+_PART_CORRESPONDING = "교신"
+_PART_PARTICIPANT = "참여"
+
+_AUTHOR_ROLES_SQL = """
+SELECT art_id, author_names, author_institutions, author_divisions, author_parts
+FROM kci_article_author_roles
+WHERE art_id = ANY(:ids)
+"""
+
+_CORPUS_ROLES_SQL = """
+SELECT paper_id, researcher_id, author_order, role
+FROM researcher_papers
+WHERE paper_id = ANY(:ids)
+"""
+
+
+def _display_name(person: ResearcherProfileResponse) -> Optional[str]:
+    return person.name_kor or person.name_eng
+
+
+def _name_key(name: Optional[str]) -> str:
+    return re.sub(r"[\s·,.\-]", "", unicodedata.normalize("NFKC", name or "")).lower()
+
+
+def _find_author(
+    person: ResearcherProfileResponse, names: Sequence[str], institutions: Sequence[Optional[str]]
+) -> Optional[int]:
+    """저자 목록에서 이 연구자의 자리(0부터). 이름이 한 번만 나오면 그 자리, 같은 이름이 둘 이상이면
+    소속 기관으로 좁힌다. 그래도 못 가르면 None — 엉뚱한 사람의 역할을 붙이는 것보다 비워 두는 게 낫다."""
+    root = institution_root(person.institution)
+    for candidate in (person.name_kor, person.name_eng):
+        key = _name_key(candidate)
+        if not key:
+            continue
+        hits = [i for i, name in enumerate(names) if _name_key(name) == key]
+        if len(hits) == 1:
+            return hits[0]
+        if len(hits) > 1:
+            narrowed = [i for i in hits if root and institutions[i] and root in institutions[i]]
+            return narrowed[0] if len(narrowed) == 1 else None
+    return None
+
+
+def _roles_from(
+    division: Optional[str], part: Optional[str], paper_parts: Sequence[Optional[str]]
+) -> list[AuthorRoleCode]:
+    """KCI 두 속성 → 표시 역할.
+
+    - 제1저자: division '1' 또는 part 제1·단독. part가 비어 있는 옛 논문도 division으로 잡힌다
+    - 교신저자: part 교신. 그 논문의 교신이 2명 이상이면 공동 교신저자
+    - 참여저자: part 참여, 또는 part가 비었어도 그 논문에 교신 표시가 있으면(교신이 아님이 확정이라) 참여
+    - 그 밖(논문에 교신 표시가 아예 없고 제1저자도 아님)은 교신인지 알 수 없어 빈 배열
+    """
+    roles: list[AuthorRoleCode] = []
+    if division == _DIVISION_FIRST or part in _PART_FIRST:
+        roles.append("first")
+    if part == _PART_CORRESPONDING:
+        multiple = sum(1 for p in paper_parts if p == _PART_CORRESPONDING) > 1
+        roles.append("co_corresponding" if multiple else "corresponding")
+    if not roles and (part == _PART_PARTICIPANT or _PART_CORRESPONDING in paper_parts):
+        roles.append("participant")
+    return roles
+
+
+def _author_role(
+    person: ResearcherProfileResponse, order: Optional[int], roles: list[AuthorRoleCode]
+) -> PaperAuthorRole:
+    return PaperAuthorRole(
+        researcher_id=person.researcher_id,
+        name=_display_name(person),
+        author_order=order,
+        roles=roles,
+        role_labels=[_ROLE_LABELS[r] for r in roles],
+    )
+
+
+async def _pair_roles(
+    db: AsyncSession,
+    rows: list[Any],
+    researcher: ResearcherProfileResponse,
+    coauthor: ResearcherProfileResponse,
+) -> dict[str, tuple[PaperAuthorRole, PaperAuthorRole, int]]:
+    """논문 키 → (연구자 역할, 공저자 역할, 전체 저자 수)."""
+    art_ids = [r.external_id for r in rows if r.external_id]
+    kci = (
+        {r.art_id: r for r in (await db.execute(text(_AUTHOR_ROLES_SQL), {"ids": art_ids})).all()}
+        if art_ids
+        else {}
+    )
+
+    def kci_row(row: Any) -> Any:
+        found = kci.get(row.external_id) if row.external_id else None
+        return found if found is not None and found.author_names else None
+
+    fallback_ids = [r.internal_paper_id for r in rows if r.internal_paper_id and kci_row(r) is None]
+    corpus: dict[str, dict[str, Any]] = defaultdict(dict)
+    if fallback_ids:
+        for r in (await db.execute(text(_CORPUS_ROLES_SQL), {"ids": fallback_ids})).all():
+            corpus[r.paper_id][r.researcher_id] = r
+
+    people = (researcher, coauthor)
+    result: dict[str, tuple[PaperAuthorRole, PaperAuthorRole, int]] = {}
+    for row in rows:
+        found = kci_row(row)
+        if found is not None:
+            roles = []
+            for person in people:
+                idx = _find_author(person, found.author_names, found.author_institutions)
+                roles.append(
+                    _author_role(person, None, [])
+                    if idx is None
+                    else _author_role(
+                        person,
+                        idx + 1,
+                        _roles_from(found.author_divisions[idx], found.author_parts[idx], found.author_parts),
+                    )
+                )
+            author_count = len(found.author_names)
+        else:
+            linked = corpus.get(row.internal_paper_id, {}) if row.internal_paper_id else {}
+            paper_parts = [r.role for r in linked.values()]
+            roles = []
+            for person in people:
+                link = linked.get(person.researcher_id)
+                roles.append(
+                    _author_role(person, None, [])
+                    if link is None
+                    else _author_role(person, link.author_order, _roles_from(None, link.role, paper_parts))
+                )
+            author_count = len(_as_list(row.authors))
+        result[_paper_key(row)] = (roles[0], roles[1], author_count)
+    return result
+
+
+def _role_matches(role: PaperAuthorRole, wanted: Optional[AuthorRoleFilter]) -> bool:
+    return wanted is None or bool(_ROLE_FILTER_MATCH[wanted] & set(role.roles))
+
+
+async def get_coauthored_papers(
+    db: AsyncSession,
+    researcher_id: str,
+    coauthor_id: str,
+    *,
+    sort: PaperSortKey = "recent",
+    page: int = 1,
+    size: int = 6,
+    researcher_role: Optional[AuthorRoleFilter] = None,
+    coauthor_role: Optional[AuthorRoleFilter] = None,
+    paper_type: Optional[str] = None,
+    user_id: Optional[UUID] = None,
+) -> CoauthoredPaperListResponse:
+    """함께 작성한 논문 목록. 정렬·논문 유형은 연구자 논문 리스트(08-02)와 같은 함수를 쓴다."""
+    researcher = await get_profile(db, researcher_id)
+    coauthor = await get_profile(db, coauthor_id)
+    rows = await fetch_paper_rows(db, researcher_id, coauthor_id=coauthor_id)
+    rows = apply_filters(rows, paper_type=paper_type)
+    roles = await _pair_roles(db, rows, researcher, coauthor)
+    rows = [
+        r
+        for r in rows
+        if _role_matches(roles[_paper_key(r)][0], researcher_role)
+        and _role_matches(roles[_paper_key(r)][1], coauthor_role)
+    ]
+    sort, citation_sort_available = _resolve_sort(rows, sort)
+
+    window = _sort_rows(rows, sort)[(page - 1) * size : page * size]
+    bookmarked, reads = await _decorate(db, window, user_id)
+    items = []
+    for row in window:
+        researcher_role_item, coauthor_role_item, author_count = roles[_paper_key(row)]
+        items.append(
+            CoauthoredPaperItem(
+                **_to_item(row, bookmarked, reads).model_dump(),
+                researcher_role=researcher_role_item,
+                coauthor_role=coauthor_role_item,
+                author_count=author_count,
+                # 카드에 두 사람만 칩으로 나오고 나머지는 '외 N인'이다.
+                other_author_count=max(author_count - len((researcher_role_item, coauthor_role_item)), 0),
+            )
+        )
+    return CoauthoredPaperListResponse(
+        researcher_id=researcher_id,
+        coauthor_id=coauthor_id,
+        total=len(rows),
+        page=page,
+        size=size,
+        sort=sort,
+        citation_sort_available=citation_sort_available,
+        items=items,
     )
