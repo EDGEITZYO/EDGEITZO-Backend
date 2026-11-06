@@ -37,3 +37,14 @@ def test_모든_상세_엔드포인트가_404를_문서화한다():
 def test_설명이_비어_있지_않다():
     for suffix in ("", "/papers", "/papers/by-year", "/coauthors", "/research-flow"):
         assert paths()[BASE + suffix]["get"].get("description"), f"{suffix} 설명 없음"
+
+
+def test_공저자_페이지_엔드포인트와_필터():
+    registered = paths()
+    summary = BASE + "/coauthors/{coauthor_id}"
+    papers = summary + "/papers"
+    assert summary in registered and papers in registered
+    params = {p["name"] for p in registered[papers]["get"]["parameters"]}
+    assert {"sort", "researcher_role", "coauthor_role", "paper_type", "page", "size"} <= params
+    for path in (summary, papers):
+        assert {"400", "404"} <= set(registered[path]["get"]["responses"])
