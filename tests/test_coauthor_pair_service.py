@@ -1,5 +1,6 @@
 """공저자 페이지(함께 작성한 논문) — 역할 해석·저자 찾기·공동 연구 키워드."""
 import asyncio
+from types import SimpleNamespace
 
 from app.schemas.researcher_detail import ResearcherProfileResponse
 from app.services import coauthor_pair_service as pair_service
@@ -265,3 +266,65 @@ class TestRoleFilter:
     def test_표시_문구(self):
         role = service._author_role(person(), 1, ["first", "corresponding"])
         assert role.role_labels == ["제1저자", "교신저자"]
+
+
+class TestFetchMissingRoles:
+    """역할이 없는 공저 논문은 요청 중에 KCI에서 받아 저장한다."""
+
+    class FakeDb:
+        def __init__(self):
+            self.saved = []
+            self.committed = False
+
+        async def execute(self, stmt, params=None):
+            self.saved.extend(params or [])
+
+        async def commit(self):
+            self.committed = True
+
+        async def rollback(self):
+            pass
+
+    def article(self, *authors):
+        from app.integrations.kci.researcher_client import KCIArticle, KCIAuthor
+
+        return SimpleNamespace(
+            article=KCIArticle(
+                art_id="x",
+                authors=[KCIAuthor(name=n, division=d, role=p, order=i) for i, (n, d, p) in enumerate(authors, 1)],
+            )
+        )
+
+    def run(self, rows, known, fetched, monkeypatch):
+        calls = []
+
+        async def fake_fetch(art_id, client=None, **_):
+            calls.append(art_id)
+            return fetched.get(art_id)
+
+        monkeypatch.setattr(service, "fetch_kci_paper", fake_fetch)
+        db = self.FakeDb()
+        asyncio.run(service._fetch_missing_roles(db, rows, known))
+        return calls, db
+
+    def test_없는_것만_받아_저장하고_바로_쓴다(self, monkeypatch):
+        rows = [make_row(external_id="ART000000001"), make_row(external_id="ART000000002")]
+        known = {"ART000000001": object()}
+        fetched = {"ART000000002": self.article(("김민준", "1", "제1"), ("이준호", "2", "교신"))}
+        calls, db = self.run(rows, known, fetched, monkeypatch)
+        assert calls == ["ART000000002"]
+        assert db.committed and db.saved[0]["parts"] == ["제1", "교신"]
+        assert known["ART000000002"].author_divisions == ["1", "2"]
+
+    def test_KCI_ID가_아니면_부르지_않는다(self, monkeypatch):
+        calls, db = self.run([make_row(external_id=None), make_row(external_id="REF123")], {}, {}, monkeypatch)
+        assert calls == [] and db.saved == []
+
+    def test_한_요청_상한까지만_받는다(self, monkeypatch):
+        rows = [make_row(external_id=f"ART{i:09d}", pubyear=2000 + i % 20) for i in range(50)]
+        calls, _ = self.run(rows, {}, {}, monkeypatch)
+        assert len(calls) == service._ROLE_FETCH_MAX_PER_REQUEST
+
+    def test_못_받으면_저장하지_않는다(self, monkeypatch):
+        calls, db = self.run([make_row(external_id="ART000000003")], {}, {}, monkeypatch)
+        assert calls == ["ART000000003"] and db.saved == []

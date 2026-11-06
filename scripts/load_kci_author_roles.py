@@ -8,6 +8,10 @@ KCI 이력(researcher_external_papers)은 articleSearch로 받아 역할이 없�
   --scope all         연구자 논문 전부(KCI ID가 있는 것). 같은 날 기준 67,735편
 
 이미 받은 논문(kci_article_author_roles에 행이 있는 것)은 건너뛰므로 끊겨도 다시 돌리면 이어서 받는다.
+
+연구자를 새로 적재한 뒤 이 스크립트를 꼭 돌릴 필요는 없다 — 함께 작성한 논문 API가 역할 없는 논문을 만나면
+그 자리에서 받아 저장한다(researcher_detail_service._fetch_missing_roles, 한 요청 20편까지). 이 스크립트는
+많은 양을 미리 채워 첫 조회를 빠르게 하고 싶을 때 쓴다.
 네트워크 오류로 끝내 못 받은 논문은 행을 남기지 않는다 — 다음 실행에서 다시 시도한다.
 
 사용법:
@@ -34,6 +38,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.core.database import AsyncSessionLocal  # noqa: E402
 from app.integrations.kci.researcher_client import KCIResearcherClient  # noqa: E402
+from app.services.researcher_detail_service import UPSERT_AUTHOR_ROLES_SQL, author_roles_row  # noqa: E402
 
 # 몇 편마다 커밋할지. 끊겨도 잃는 양이 이 정도다.
 COMMIT_EVERY = 50
@@ -60,17 +65,6 @@ _TARGETS_SQL = {
     """,
 }
 
-_INSERT_SQL = """
-INSERT INTO kci_article_author_roles
-    (art_id, author_names, author_institutions, author_divisions, author_parts)
-VALUES (:art_id, :names, :insts, :divs, :parts)
-ON CONFLICT (art_id) DO UPDATE SET
-    author_names = EXCLUDED.author_names,
-    author_institutions = EXCLUDED.author_institutions,
-    author_divisions = EXCLUDED.author_divisions,
-    author_parts = EXCLUDED.author_parts,
-    fetched_at = now()
-"""
 
 
 async def _targets(scope: str) -> tuple[list[str], int]:
@@ -118,7 +112,7 @@ async def run(scope: str, limit: int | None) -> None:
         if not pending:
             return
         async with AsyncSessionLocal() as session:
-            await session.execute(text(_INSERT_SQL), pending)
+            await session.execute(text(UPSERT_AUTHOR_ROLES_SQL), pending)
             await session.commit()
         pending.clear()
 
@@ -132,15 +126,7 @@ async def run(scope: str, limit: int | None) -> None:
                 # 행을 남기지 않고 다음 실행에 다시 시도한다.
                 failed += 1
                 continue
-            pending.append(
-                {
-                    "art_id": art_id,
-                    "names": [a.name for a in article.authors],
-                    "insts": [a.institution for a in article.authors],
-                    "divs": [a.division for a in article.authors],
-                    "parts": [a.role for a in article.authors],
-                }
-            )
+            pending.append(author_roles_row(art_id, article))
             saved += 1
             if len(pending) >= COMMIT_EVERY:
                 await flush()
