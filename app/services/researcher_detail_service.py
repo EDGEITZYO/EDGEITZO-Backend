@@ -9,17 +9,21 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import unicodedata
 from collections import defaultdict
+from types import SimpleNamespace
 from typing import Any, Optional, Sequence
 from uuid import UUID
 
+import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.integrations.kci.researcher_client import institution_root
+from app.core.settings import settings
+from app.integrations.kci.researcher_client import KCIArticle, institution_root
 from app.schemas.researcher_detail import (
     AuthorRoleCode,
     AuthorRoleFilter,
@@ -37,7 +41,7 @@ from app.schemas.researcher_detail import (
 )
 from app.schemas.paper import PaperCardTrustBadge
 from app.services.credibility_service import paper_type_label, resolve_paper_type
-from app.services.domestic_paper_service import is_domestic_key
+from app.services.domestic_paper_service import fetch_kci_paper, is_domestic_key
 from app.services.year_range import resolve_year_range, year_bounds, year_in_range
 
 logger = logging.getLogger(__name__)
@@ -539,6 +543,76 @@ FROM kci_article_author_roles
 WHERE art_id = ANY(:ids)
 """
 
+# 저장 SQL과 행 모양(author_roles_row)은 일괄 수집(scripts/load_kci_author_roles.py)과 요청 중 보충이 같이 쓴다.
+UPSERT_AUTHOR_ROLES_SQL = """
+INSERT INTO kci_article_author_roles
+    (art_id, author_names, author_institutions, author_divisions, author_parts)
+VALUES (:art_id, :names, :insts, :divs, :parts)
+ON CONFLICT (art_id) DO UPDATE SET
+    author_names = EXCLUDED.author_names,
+    author_institutions = EXCLUDED.author_institutions,
+    author_divisions = EXCLUDED.author_divisions,
+    author_parts = EXCLUDED.author_parts,
+    fetched_at = now()
+"""
+
+# 역할이 아직 없는 공저 논문 — 연구자를 새로 적재하면 생긴다 — 은 요청 중에 KCI에서 받아 저장한다.
+# 그래서 적재 뒤 수집 스크립트를 돌리지 않아도 처음 조회될 때 채워진다. 한 요청에서 받는 편수에 상한을 둬
+# 응답 시간을 묶고, 넘는 편은 다음 요청에 받는다. articleDetail은 0.1~0.3초(domestic_paper_service 실측)라
+# 동시 5개로 20편이면 약 1초다.
+_ROLE_FETCH_MAX_PER_REQUEST = 20
+_ROLE_FETCH_CONCURRENCY = 5
+
+
+def author_roles_row(art_id: str, article: KCIArticle) -> dict[str, Any]:
+    return {
+        "art_id": art_id,
+        "names": [a.name for a in article.authors],
+        "insts": [a.institution for a in article.authors],
+        "divs": [a.division for a in article.authors],
+        "parts": [a.role for a in article.authors],
+    }
+
+
+async def _fetch_missing_roles(db: AsyncSession, rows: list[Any], known: dict[str, Any]) -> None:
+    """known(art_id → 역할 행)에 없는 KCI 논문의 역할을 받아 저장하고 known에도 넣는다.
+    받지 못한 논문은 domestic_paper_service가 5분간 다시 부르지 않으므로 그동안은 역할 없이 나간다."""
+    missing = list(
+        dict.fromkeys(
+            r.external_id
+            for r in _sort_rows(rows, "recent")  # 화면 앞쪽(최신) 논문부터
+            if is_domestic_key(r.external_id) and r.external_id not in known
+        )
+    )[:_ROLE_FETCH_MAX_PER_REQUEST]
+    if not missing:
+        return
+
+    gate = asyncio.Semaphore(_ROLE_FETCH_CONCURRENCY)
+    async with httpx.AsyncClient(timeout=settings.paper_citation_external_fetch_timeout_seconds) as client:
+
+        async def fetch(art_id: str) -> tuple[str, Any]:
+            async with gate:
+                return art_id, await fetch_kci_paper(art_id, client)
+
+        fetched = await asyncio.gather(*(fetch(a) for a in missing))
+    payload = [author_roles_row(art_id, paper.article) for art_id, paper in fetched if paper is not None]
+    if not payload:
+        return
+    try:
+        await db.execute(text(UPSERT_AUTHOR_ROLES_SQL), payload)
+        await db.commit()
+    except Exception:
+        logger.exception("저자 역할 저장 실패 — 이번 응답에는 받은 값을 그대로 쓴다")
+        await db.rollback()
+    for item in payload:
+        known[item["art_id"]] = SimpleNamespace(
+            art_id=item["art_id"],
+            author_names=item["names"],
+            author_institutions=item["insts"],
+            author_divisions=item["divs"],
+            author_parts=item["parts"],
+        )
+
 _CORPUS_ROLES_SQL = """
 SELECT paper_id, researcher_id, author_order, role
 FROM researcher_papers
@@ -619,6 +693,7 @@ async def _pair_roles(
         if art_ids
         else {}
     )
+    await _fetch_missing_roles(db, rows, kci)
 
     def kci_row(row: Any) -> Any:
         found = kci.get(row.external_id) if row.external_id else None
