@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 ResearcherSearchType = Literal["name", "field"]
-ResearcherSearchSort = Literal["relevance", "paper_count"]
+ResearcherSearchSort = Literal["relevance", "paper_count", "citation_count"]
 
 
 class ResearcherSearchItem(BaseModel):
