@@ -219,6 +219,45 @@ def test_name_detection_sql_uses_exact_and_prefix_not_substring():
     assert "LIKE :norm_pattern" not in name_sql
 
 
+@pytest.mark.asyncio
+async def test_name_search_uses_citation_order_before_pagination():
+    db = FakeSearchDb(name_count=3, rows=[])
+
+    await service.search_researchers(db, "kim", page=2, size=1, sort="citation_count")
+
+    sql, params = db.execute_calls[0]
+    assert sql is service._NAME_SEARCH_BY_CITATION_COUNT_SQL
+    ordering = str(sql).split("ORDER BY", 1)[1]
+    assert ordering.lstrip().startswith("r.total_citations DESC NULLS LAST,")
+    assert ordering.index("r.total_citations") < ordering.index("LIMIT :limit OFFSET :offset")
+    assert params["limit"] == 1
+    assert params["offset"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("page, expected", [(1, ["high", "tie"]), (2, ["low", "zero"]), (3, ["missing"])])
+async def test_field_citation_sort_handles_ties_nulls_and_pagination(monkeypatch, page, expected):
+    db = FakeSearchDb(name_count=0, rows=[
+        _field_row("missing", relevance_score=1, total_citations=None, total_count=5),
+        _field_row("zero", relevance_score=1, total_citations=0, total_count=5),
+        _field_row("low", relevance_score=1, total_citations=5, total_count=5),
+        _field_row("tie", relevance_score=1, total_citations=32, total_count=5),
+        _field_row("high", relevance_score=1, total_citations=32, total_count=5),
+    ])
+
+    async def fake_affinity(*args):
+        return [{"researcher_id": row["researcher_id"], "affinity": score}
+                for row, score in zip(db.rows, [0.99, 0.9, 0.8, 0.2, 0.3])]
+
+    monkeypatch.setattr(service, "field_affinity", fake_affinity)
+    response = await service.search_researchers(db, "biology", page=page, size=2, sort="citation_count")
+
+    assert response.total == 5
+    assert [item.researcher_id for item in response.items] == expected
+    if page == 1:
+        assert [item.total_citations for item in response.items] == [32, 32]
+
+
 def test_recent_researcher_searches_use_separate_key_limit_and_dedupe(monkeypatch):
     fake = FakeRedis()
     monkeypatch.setattr(service, "get_redis", lambda db: fake)

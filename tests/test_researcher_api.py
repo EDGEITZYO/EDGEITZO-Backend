@@ -22,3 +22,10 @@ def test_researcher_routes_are_registered_in_openapi():
     assert {"query", "limit"} <= graph_params
     assert "get" in paths["/api/v1/researchers/recent-searches"]
     assert "post" in paths["/api/v1/researchers/recent-searches"]
+
+
+def test_researcher_search_sort_options_include_citations_and_keep_default():
+    parameters = app.openapi()["paths"]["/api/v1/researchers/search"]["get"]["parameters"]
+    sort = next(param for param in parameters if param["name"] == "sort")
+    assert sort["schema"]["enum"] == ["relevance", "paper_count", "citation_count"]
+    assert sort["schema"]["default"] == "relevance"
