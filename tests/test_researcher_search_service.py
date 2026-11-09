@@ -165,7 +165,7 @@ async def test_field_search_executes_sql_and_ranks_by_embedding_affinity(monkeyp
 
     monkeypatch.setattr(service, "field_affinity", fake_field_affinity)
 
-    response = await service.search_researchers(db, "biology", page=1, size=1)
+    response = await service.search_researchers(db, "biology", page=1, size=1, sort="relevance")
 
     assert response.search_type == "field"
     assert response.total == 2
@@ -232,6 +232,32 @@ async def test_name_search_uses_citation_order_before_pagination():
     assert ordering.index("r.total_citations") < ordering.index("LIMIT :limit OFFSET :offset")
     assert params["limit"] == 1
     assert params["offset"] == 1
+
+
+@pytest.mark.asyncio
+async def test_name_search_defaults_to_citation_count():
+    db = FakeSearchDb(name_count=1, rows=[])
+    await service.search_researchers(db, "kim")
+    assert db.execute_calls[0][0] is service._NAME_SEARCH_BY_CITATION_COUNT_SQL
+
+
+@pytest.mark.asyncio
+async def test_field_search_defaults_to_citation_count(monkeypatch):
+    db = FakeSearchDb(name_count=0, rows=[
+        _field_row("relevant", relevance_score=1, total_citations=5),
+        _field_row("cited", relevance_score=1, total_citations=32),
+    ])
+
+    async def fake_affinity(*args):
+        return [
+            {"researcher_id": "relevant", "affinity": 0.9},
+            {"researcher_id": "cited", "affinity": 0.2},
+        ]
+
+    monkeypatch.setattr(service, "field_affinity", fake_affinity)
+    response = await service.search_researchers(db, "biology", size=1)
+    assert response.total == 2
+    assert [item.researcher_id for item in response.items] == ["cited"]
 
 
 @pytest.mark.asyncio

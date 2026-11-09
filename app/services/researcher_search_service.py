@@ -351,7 +351,7 @@ async def search_researchers(
     *,
     page: int = 1,
     size: int = 20,
-    sort: ResearcherSearchSort = "relevance",
+    sort: ResearcherSearchSort = "citation_count",
 ) -> ResearcherSearchResponse:
     cleaned = _clean_query(query)
     search_type: ResearcherSearchType = "name" if await _has_name_matches(db, cleaned) else "field"

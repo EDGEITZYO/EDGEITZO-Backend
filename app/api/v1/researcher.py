@@ -56,10 +56,10 @@ async def search_researcher_endpoint(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     sort: ResearcherSearchSort = Query(
-        "relevance",
+        "citation_count",
         description=(
-            "정렬 기준: relevance=관련도순(기본) | paper_count=논문개수순 | "
-            "citation_count=인용 높은 순(total_citations 내림차순, 값이 없으면 마지막)"
+            "정렬 기준: citation_count=인용 높은 순(기본, total_citations 내림차순, 값이 없으면 마지막) | "
+            "relevance=관련도순 | paper_count=논문개수순"
         ),
     ),
     current_user: Optional[User] = Depends(get_current_user_optional),
@@ -91,7 +91,7 @@ async def get_researcher_field_graph(
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await search_researchers(db, query, page=1, size=limit)
+    result = await search_researchers(db, query, page=1, size=limit, sort="relevance")
     graph = build_researcher_graph(result.query, result.items)
     if current_user:
         save_recent_researcher_search(str(current_user.id), result.query, "field")
