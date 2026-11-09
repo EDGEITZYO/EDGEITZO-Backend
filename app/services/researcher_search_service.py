@@ -121,6 +121,21 @@ _NAME_SEARCH_BY_PAPER_COUNT_SQL = text(
 )
 
 
+_NAME_SEARCH_BY_CITATION_COUNT_SQL = text(
+    str(_NAME_SEARCH_SQL).split("    ORDER BY", 1)[0]
+    + """
+    ORDER BY
+        r.total_citations DESC NULLS LAST,
+        name_score DESC,
+        coalesce(r.total_papers, r.corpus_paper_count, 0) DESC,
+        r.author_name_kor ASC NULLS LAST,
+        r.author_name_eng ASC NULLS LAST,
+        r.researcher_id ASC
+    LIMIT :limit OFFSET :offset
+    """
+)
+
+
 _FIELD_SEARCH_SQL = text(
     """
     WITH internal_matches AS (
@@ -345,7 +360,10 @@ async def search_researchers(
 
     if search_type == "name":
         params = _name_params(cleaned) | {"limit": limit, "offset": offset}
-        sql = _NAME_SEARCH_BY_PAPER_COUNT_SQL if sort == "paper_count" else _NAME_SEARCH_SQL
+        sql = {
+            "paper_count": _NAME_SEARCH_BY_PAPER_COUNT_SQL,
+            "citation_count": _NAME_SEARCH_BY_CITATION_COUNT_SQL,
+        }.get(sort, _NAME_SEARCH_SQL)
         rows = (await db.execute(sql, params)).mappings().all()
         items = [_item_from_row(row, field=False) for row in rows]
     else:
@@ -360,6 +378,19 @@ async def search_researchers(
         ranked_items = _rank_field_items_by_affinity(all_items, affinity_rows)
         if sort == "paper_count":
             ranked_items = _sort_field_items_by_paper_count(ranked_items)
+        elif sort == "citation_count":
+            ranked_items = sorted(
+                ranked_items,
+                key=lambda item: (
+                    item.total_citations is None,
+                    -(item.total_citations or 0),
+                    -(item.relevance_score or 0.0),
+                    -(item.field_paper_count or 0),
+                    -item.total_papers,
+                    _display_name(item),
+                    item.researcher_id,
+                ),
+            )
         items = ranked_items[offset : offset + limit]
 
     total = int(rows[0]["total_count"]) if rows else 0
