@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.email import generate_code, send_verification_email
+from app.core.exceptions import AppHTTPException
 from app.core.security import (
     _decode_without_blacklist_check,
     add_to_blacklist,
@@ -104,9 +105,18 @@ async def send_password_reset_code_service(
     db: AsyncSession, redis: Redis, email: str
 ) -> dict[str, Any]:
     user = await get_user_by_email(db, email)
+    if user is None or user.is_guest:
+        raise AppHTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="가입되지 않은 이메일이에요.",
+            error_code="EMAIL_NOT_REGISTERED",
+        )
     if not _is_email_password_user(user):
-        # 계정 존재 여부와 가입 방식을 외부에 노출하지 않는다.
-        return {"message": "인증번호가 발송되었습니다"}
+        raise AppHTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="소셜 계정으로 가입된 이메일입니다.",
+            error_code="SOCIAL_ACCOUNT",
+        )
     return await send_code_service(redis, email, purpose=_PASSWORD_RESET_PURPOSE)
 
 
