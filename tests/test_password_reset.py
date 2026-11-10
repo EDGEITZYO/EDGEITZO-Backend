@@ -51,21 +51,16 @@ def test_password_reset_schema_uses_registration_password_policy():
     assert PasswordResetConfirmRequest(
         email="member@example.com",
         new_password=valid,
-        confirm_password=valid,
     )
 
     with pytest.raises(ValidationError):
         PasswordResetConfirmRequest(
             email="member@example.com",
             new_password="weak",
-            confirm_password="weak",
         )
+    assert set(PasswordResetConfirmRequest.model_fields) == {"email", "new_password"}
     with pytest.raises(ValidationError):
-        PasswordResetConfirmRequest(
-            email="member@example.com",
-            new_password=valid,
-            confirm_password="Different1!",
-        )
+        RegisterRequest(email="member@example.com", password=valid, confirm_password="Different1!")
 
 
 def test_signup_and_password_reset_codes_use_separate_keys(monkeypatch):
@@ -142,20 +137,45 @@ def test_fifth_failed_attempt_invalidates_password_reset_code():
     assert code_key not in redis.store
 
 
-def test_send_password_reset_code_hides_non_password_account(monkeypatch):
+@pytest.mark.parametrize("user, code, message", [
+    (None, "EMAIL_NOT_REGISTERED", "가입되지 않은 이메일이에요."),
+    (SimpleNamespace(hashed_password=None, is_guest=True), "EMAIL_NOT_REGISTERED", "가입되지 않은 이메일이에요."),
+    (SimpleNamespace(hashed_password=None, is_guest=False), "SOCIAL_ACCOUNT", "소셜 계정으로 가입된 이메일입니다."),
+])
+def test_send_password_reset_code_rejects_ineligible_account(monkeypatch, user, code, message):
     async def fake_get_user(db, email):
-        return SimpleNamespace(hashed_password=None, is_guest=False)
+        return user
 
     monkeypatch.setattr(auth_service, "get_user_by_email", fake_get_user)
 
     redis = FakeRedis()
-    result = _run(
-        auth_service.send_password_reset_code_service(
-            None, redis, "social@example.com"
+    with pytest.raises(HTTPException) as exc:
+        _run(
+            auth_service.send_password_reset_code_service(None, redis, "social@example.com")
         )
-    )
-    assert result["message"] == "인증번호가 발송되었습니다"
+    assert exc.value.status_code == 400
+    assert exc.value.error_code == code
+    assert exc.value.detail == message
     assert redis.store == {}
+
+
+def test_send_password_reset_code_sends_to_email_account(monkeypatch):
+    async def fake_get_user(db, email):
+        return _email_user()
+
+    sent = []
+
+    async def fake_send(email, code):
+        sent.append((email, code))
+
+    monkeypatch.setattr(auth_service, "get_user_by_email", fake_get_user)
+    monkeypatch.setattr(auth_service, "send_verification_email", fake_send)
+    monkeypatch.setattr(auth_service, "generate_code", lambda: "123456")
+    redis = FakeRedis()
+    result = _run(auth_service.send_password_reset_code_service(None, redis, "member@example.com"))
+    assert result["message"] == "인증번호가 발송되었습니다"
+    assert sent == [("member@example.com", "123456")]
+    assert redis.store["code:password_reset:member@example.com"] == "123456"
 
 
 def test_reset_password_requires_verification(monkeypatch):
@@ -213,3 +233,43 @@ def test_password_reset_routes_are_documented():
     }
     paths = {route.path for route in auth_router.routes}
     assert expected <= paths
+
+
+@pytest.mark.parametrize("user, error_code", [
+    (None, "EMAIL_NOT_REGISTERED"),
+    (SimpleNamespace(hashed_password=None, is_guest=False), "SOCIAL_ACCOUNT"),
+])
+def test_password_reset_account_errors_are_returned_to_client(monkeypatch, user, error_code):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.core.database import get_db
+    from app.core.redis_client import get_redis_client
+    from app.core.exceptions import http_exception_handler
+
+    async def fake_get_user(db, email):
+        return user
+
+    monkeypatch.setattr(auth_service, "get_user_by_email", fake_get_user)
+    app = FastAPI()
+    app.include_router(auth_router, prefix="/api/v1")
+    app.add_exception_handler(HTTPException, http_exception_handler)
+    app.dependency_overrides[get_db] = lambda: None
+    app.dependency_overrides[get_redis_client] = lambda: FakeRedis()
+    with TestClient(app) as client:
+        response = client.post("/api/v1/auth/password-reset/send-code", json={"email": "user@example.com"})
+    assert response.status_code == 400
+    assert response.json()["error_code"] == error_code
+    assert response.json()["success"] is False
+
+
+def test_password_reset_openapi_has_single_password_and_account_errors():
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(auth_router, prefix="/api/v1")
+    schema = app.openapi()
+    confirm = schema["components"]["schemas"]["PasswordResetConfirmRequest"]
+    assert set(confirm["properties"]) == {"email", "new_password"}
+    assert set(confirm["required"]) == {"email", "new_password"}
+    send_code = schema["paths"]["/api/v1/auth/password-reset/send-code"]["post"]
+    assert "400" in send_code["responses"]
