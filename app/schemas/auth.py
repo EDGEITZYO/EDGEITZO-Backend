@@ -61,18 +61,11 @@ class RegisterRequest(PasswordPairRequest):
 class PasswordResetConfirmRequest(BaseModel):
     email: EmailStr
     new_password: str
-    confirm_password: str
 
     @field_validator("new_password")
     @classmethod
     def validate_password(cls, v: str) -> str:
         return _validate_password_strength(v)
-
-    @model_validator(mode="after")
-    def passwords_match(self) -> "PasswordResetConfirmRequest":
-        if self.new_password != self.confirm_password:
-            raise ValueError("비밀번호가 일치하지 않습니다")
-        return self
 
 
 class TokenResponse(BaseModel):

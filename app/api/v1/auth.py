@@ -152,10 +152,12 @@ async def verify_code(
         "- 인증번호는 Redis에 15분간 저장\n"
         "- 회원가입 인증과 분리된 비밀번호 재설정 전용 키 사용\n"
         "- 재발송 시 기존 인증번호와 실패 횟수 초기화\n"
-        "- 계정 존재 여부 보호를 위해 미가입·소셜 계정에도 동일한 응답 반환"
+        "- 미가입 이메일: 400, error_code=EMAIL_NOT_REGISTERED, '가입되지 않은 이메일이에요.'\n"
+        "- 소셜 계정: 400, error_code=SOCIAL_ACCOUNT, '소셜 계정으로 가입된 이메일입니다.'"
     ),
     responses={
         200: {"description": "인증번호 발송 성공"},
+        400: {"description": "미가입 이메일(EMAIL_NOT_REGISTERED) 또는 소셜 계정(SOCIAL_ACCOUNT)"},
         500: {"description": "이메일 발송 실패"},
     },
 )
@@ -197,12 +199,12 @@ async def verify_password_reset_code(
         "비밀번호 재설정 이메일 인증을 완료한 계정의 비밀번호를 변경합니다.\n\n"
         "- 인증 완료 상태는 15분간 유효하며 한 번만 사용 가능\n"
         "- 비밀번호 조건: 대/소문자/특수문자 포함, 8~20자\n"
-        "- 비밀번호와 확인값이 일치해야 함"
+        "- 요청 필드: email, new_password (비밀번호 확인값 불필요)"
     ),
     responses={
         200: {"description": "비밀번호 재설정 성공"},
         400: {"description": "이메일 인증 미완료 또는 재설정 불가 계정"},
-        422: {"description": "비밀번호 조건 미충족 또는 불일치"},
+        422: {"description": "비밀번호 조건 미충족 또는 요청 필드 오류"},
     },
 )
 async def confirm_password_reset(
