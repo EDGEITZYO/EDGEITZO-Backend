@@ -6,7 +6,7 @@ import json
 import random
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -21,7 +21,9 @@ from app.models.journal import Journal
 from app.models.paper import Paper
 from app.models.recent_read import RecentRead
 from app.models.user import User
+from app.schemas.common import ApiResponse
 from app.schemas.paper import PaperCardTrustBadge
+from app.services import search_suggestion_service
 
 router = APIRouter()
 
@@ -62,6 +64,35 @@ class HomeResponse(BaseModel):
     recent_papers: List[RecentPaperItem] = Field(description="최근 열람 논문 (최대 10건, 최신순)")
 
 
+class SuggestedKeyword(BaseModel):
+    name: str = Field(description="칩에 표시할 키워드. 키워드 검색 DB(Neo4j Keyword 노드)에 있는 이름 그대로, 띄어쓰기 없는 한 단어")
+    key: str = Field(description="키워드 노드 key. 칩 클릭 시 `GET /api/v1/keyword-map?key=` 에 그대로 전달 (name으로 다시 찾지 말 것)")
+
+
+class SearchSuggestionsResponse(BaseModel):
+    basis: Literal["onboarding", "history", "none"] = Field(
+        description=(
+            "추천 근거. 'onboarding': 온보딩 입력(연구 분야·탐색 목적) 기반 — 열람 이력이 없는 신규 사용자 / "
+            "'history': 논문 열람 이력 기반 — 기존 사용자 / "
+            "'none': 근거가 없어 추천을 만들지 못함(온보딩 연구 분야 미입력 등). 이때 ai_query·keyword 모두 null"
+        ),
+    )
+    ai_query: Optional[str] = Field(
+        None,
+        description=(
+            "AI 검색 추천 문장. 질문·요청 어조의 한 문장, 공백 포함 24자 이하. "
+            "칩 클릭 시 AI 검색(`POST /api/v1/search/chat` 또는 `/search/chat/stream`)의 메시지로 그대로 사용. 생성 실패 시 null"
+        ),
+    )
+    keyword: Optional[SuggestedKeyword] = Field(None, description="키워드 검색 추천어 1개. DB에서 찾지 못하면 null")
+    history_start: Optional[str] = Field(
+        None, description="basis='history'일 때 집계에 쓴 열람 기간 시작 (ISO8601). 그 외 null",
+    )
+    history_end: Optional[str] = Field(
+        None, description="basis='history'일 때 집계에 쓴 열람 기간 끝 (ISO8601). 그 외 null",
+    )
+
+
 class RecordReadRequest(BaseModel):
     paper_id: str = Field(description="열람한 논문 ID", example="JAKO202312345678")
     search_id: str | None = Field(default=None, description="연결된 탐색 세션 ID (recent_searches 갱신용)")
@@ -98,6 +129,8 @@ def _personalized_message(name: str) -> str:
 - `recent_searches`: 최근 탐색 이력 최대 10건 (Redis, 7일 TTL)
   - `type`이 `keyword`이면 `keyword_path` 사용, `ai`이면 `recommended_keywords` 사용
 - `recent_papers`: 최근 열람 논문 최대 10건 (DB, 최신순)
+
+검색 필드 아래 추천 검색어 칩은 `GET /home/search-suggestions`로 따로 조회합니다.
 """,
     response_model=None,
 )
@@ -193,6 +226,48 @@ async def get_home(
             recent_papers=recent_papers,
         ),
         message="home data fetched",
+    )
+
+
+@router.get(
+    "/home/search-suggestions",
+    response_model=ApiResponse[SearchSuggestionsResponse],
+    summary="홈 검색어 추천 칩",
+    description="""홈 검색 필드 아래에 띄울 추천 검색어 칩(AI 검색 문장 1개 + 키워드 1개)을 반환합니다.
+**Authorization 헤더에 Bearer 토큰 필요.** LLM 호출이 있어 `GET /home`과 분리했습니다 — 홈을 먼저 그리고 이 API는 따로 불러 주세요.
+
+**신규 사용자** (논문 열람 이력 없음) → `basis: "onboarding"`
+- 온보딩 입력(연구 분야·논문 탐색 목적)으로 LLM이 생성
+- 온보딩에서 연구 분야를 입력하지 않았으면 `basis: "none"`, 두 칩 모두 null
+
+**기존 사용자** (열람 이력 있음) → `basis: "history"`
+- 최근 2주 동안 열람한 논문의 키워드를 열람 수(재열람 포함)로 집계해, 많이 본 키워드 후보 중 LLM이 키워드를 고르고 그 분야로 AI 검색 문장을 생성
+- 최근 2주에 열람이 없으면 **마지막 열람일 기준 이전 2주**를 집계. 실제 집계 기간은 `history_start`~`history_end`
+- 최근 열람 목록에서 삭제한 논문은 집계에서 제외
+- 열람한 논문에 쓸 만한 키워드가 하나도 없으면 신규 사용자와 같은 방식(onboarding)으로 대체
+
+**출력 형식** (신규·기존 동일)
+- `ai_query`: 질문·요청 어조의 한 문장, 공백 포함 24자 이하. 조건에 맞는 문장을 못 만들면 null
+- `keyword`: 키워드 검색 DB에 있는 띄어쓰기 없는 한 단어. 클릭 시 `GET /api/v1/keyword-map?key={keyword.key}`
+
+입력(온보딩 값 또는 집계된 키워드 후보)이 같으면 24시간 동안 같은 추천을 돌려줍니다(LLM 응답 캐시).
+LLM·키워드 DB 장애 시에도 200으로 응답하며, 만들지 못한 칩만 null입니다.
+""",
+)
+async def get_search_suggestions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await search_suggestion_service.get_search_suggestions(db, current_user)
+    return success_response(
+        data=SearchSuggestionsResponse(
+            basis=result.basis,
+            ai_query=result.ai_query,
+            keyword=SuggestedKeyword(name=result.keyword.name, key=result.keyword.key) if result.keyword else None,
+            history_start=result.history_start.isoformat() if result.history_start else None,
+            history_end=result.history_end.isoformat() if result.history_end else None,
+        ),
+        message="search suggestions fetched",
     )
 
 

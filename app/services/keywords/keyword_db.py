@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -161,6 +162,32 @@ def search_keywords(
 
     _record_miss(query)
     return []
+
+
+def keyword_key(name: str, lang: str = "ko") -> str:
+    """키워드 이름 → Neo4j Keyword 노드 key. 적재 스크립트(scripts/load_neo4j_graph.py)의
+    _clean_text + _keyword_key와 같은 규칙이어야 같은 노드를 가리킨다."""
+    cleaned = " ".join(unicodedata.normalize("NFKC", name).split()).strip()
+    return f"{lang}:{cleaned.casefold()}"
+
+
+def get_keywords_by_keys(keys: list[str]) -> dict[str, Keyword]:
+    """key 여러 개를 한 번에 조회. DB에 없는 key는 결과에서 빠진다."""
+    if not keys:
+        return {}
+    cypher = """
+    MATCH (k:Keyword) WHERE k.key IN $keys
+    OPTIONAL MATCH (p:Paper)-[:HAS_KEYWORD]->(k)
+    RETURN k, count(DISTINCT p) AS paper_count
+    """
+    driver = get_neo4j_driver()
+    try:
+        with driver.session() as session:
+            records = list(session.run(cypher, keys=list(dict.fromkeys(keys))))
+    finally:
+        driver.close()
+    found = (_to_keyword(dict(r["k"]), r["paper_count"]) for r in records)
+    return {k.key: k for k in found}
 
 
 def get_keyword(key: str) -> Keyword | None:
